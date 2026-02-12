@@ -127,6 +127,19 @@ export {
   updateTaxonomy,
 } from "../shared/taxonomies";
 
+// Portfolio Target Commands
+export {
+  getPortfolioTargets,
+  getPortfolioTarget,
+  createPortfolioTarget,
+  updatePortfolioTarget,
+  deletePortfolioTarget,
+  getTargetAllocations,
+  upsertTargetAllocation,
+  deleteTargetAllocation,
+  getAllocationDeviations,
+} from "../shared/portfolio-targets";
+
 // Portfolio Commands
 export {
   calculateAccountsSimplePerformance,
