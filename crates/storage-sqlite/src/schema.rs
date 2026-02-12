@@ -295,6 +295,30 @@ diesel::table! {
 }
 
 diesel::table! {
+    portfolio_target_allocations (id) {
+        id -> Text,
+        target_id -> Text,
+        category_id -> Text,
+        target_percent -> Integer,
+        is_locked -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::table! {
+    portfolio_targets (id) {
+        id -> Text,
+        name -> Text,
+        account_id -> Text,
+        taxonomy_id -> Text,
+        is_active -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::table! {
     platforms (id) {
         id -> Text,
         name -> Nullable<Text>,
@@ -462,6 +486,8 @@ diesel::joinable!(brokers_sync_state -> import_runs (last_run_id));
 diesel::joinable!(goals_allocation -> accounts (account_id));
 diesel::joinable!(goals_allocation -> goals (goal_id));
 diesel::joinable!(import_runs -> accounts (account_id));
+diesel::joinable!(portfolio_targets -> taxonomies (taxonomy_id));
+diesel::joinable!(portfolio_target_allocations -> portfolio_targets (target_id));
 diesel::joinable!(quotes -> assets (asset_id));
 diesel::joinable!(taxonomy_categories -> taxonomies (taxonomy_id));
 
@@ -489,6 +515,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     import_runs,
     market_data_providers,
     platforms,
+    portfolio_target_allocations,
+    portfolio_targets,
     quote_sync_state,
     quotes,
     sync_applied_events,
