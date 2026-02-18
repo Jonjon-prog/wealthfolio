@@ -138,6 +138,10 @@ export {
   upsertTargetAllocation,
   deleteTargetAllocation,
   getAllocationDeviations,
+  getHoldingTargets,
+  upsertHoldingTarget,
+  batchSaveHoldingTargets,
+  deleteHoldingTarget,
 } from "../shared/portfolio-targets";
 
 // Portfolio Commands
