@@ -143,6 +143,7 @@ export {
   upsertHoldingTarget,
   batchSaveHoldingTargets,
   deleteHoldingTarget,
+  calculateRebalancingPlan,
 } from "../shared/portfolio-targets";
 
 // Portfolio Commands

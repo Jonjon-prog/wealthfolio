@@ -149,6 +149,7 @@ export const COMMANDS: CommandMap = {
   upsert_holding_target: { method: "POST", path: "/portfolio-targets/holdings" },
   batch_save_holding_targets: { method: "POST", path: "/portfolio-targets/holdings/batch" },
   delete_holding_target: { method: "DELETE", path: "/portfolio-targets/holdings" },
+  calculate_rebalancing_plan: { method: "POST", path: "/portfolio-targets/rebalancing/calculate" },
   // Health Center
   get_health_status: { method: "GET", path: "/health/status" },
   run_health_checks: { method: "POST", path: "/health/check" },
@@ -943,6 +944,15 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "delete_holding_target": {
       const { id } = payload as { id: string };
       url += `/${encodeURIComponent(id)}`;
+      break;
+    }
+    case "calculate_rebalancing_plan": {
+      const { targetId, availableCash, baseCurrency } = payload as {
+        targetId: string;
+        availableCash: number;
+        baseCurrency: string;
+      };
+      body = JSON.stringify({ targetId, availableCash, baseCurrency });
       break;
     }
     // Health Center commands
