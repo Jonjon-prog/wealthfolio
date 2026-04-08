@@ -500,17 +500,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    rebalancing_strategies (id) {
-        id -> Text,
-        name -> Text,
-        account_id -> Nullable<Text>,
-        is_active -> Integer,
-        created_at -> Text,
-        updated_at -> Text,
-    }
-}
-
-diesel::table! {
     taxonomies (id) {
         id -> Text,
         name -> Text,

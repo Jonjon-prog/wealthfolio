@@ -57,6 +57,7 @@ impl PortfolioTargetServiceTrait for PortfolioTargetService {
 
     async fn delete_target(&self, id: &str) -> Result<usize> {
         debug!("Deleting portfolio target: {}", id);
+        self.repository.delete_allocations_by_target(id).await?;
         self.repository.delete_target(id).await
     }
 
@@ -83,6 +84,9 @@ impl PortfolioTargetServiceTrait for PortfolioTargetService {
     }
 
     async fn delete_allocation(&self, id: &str) -> Result<usize> {
+        self.repository
+            .delete_holding_targets_by_allocation(id)
+            .await?;
         self.repository.delete_allocation(id).await
     }
 
