@@ -1,0 +1,35 @@
+{
+  "name": "nordigen-sync-addon",
+  "version": "1.0.0",
+  "description": "Free EU bank sync via GoCardless (Nordigen) Bank Account Data API",
+  "type": "module",
+  "main": "dist/addon.js",
+  "author": "Personal",
+  "license": "MIT",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "clean": "rm -rf dist",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@wealthfolio/addon-sdk": "workspace:*",
+    "@wealthfolio/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^20.19.33",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@wealthfolio/addon-dev-tools": "workspace:*",
+    "rollup-plugin-external-globals": "^0.13.0",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

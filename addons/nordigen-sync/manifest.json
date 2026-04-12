@@ -1,0 +1,22 @@
+{
+  "id": "nordigen-sync-addon",
+  "name": "GoCardless Bank Sync",
+  "version": "1.0.0",
+  "description": "Free EU bank sync via GoCardless (Nordigen) Bank Account Data API. No subscription required.",
+  "author": "Personal",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.0.0",
+  "enabled": true,
+  "permissions": [
+    {
+      "category": "accounts",
+      "functions": ["getAll"],
+      "purpose": "List Wealthfolio accounts to map to bank accounts"
+    },
+    {
+      "category": "ui",
+      "functions": ["sidebar.addItem", "router.add"],
+      "purpose": "Add bank sync page to sidebar"
+    }
+  ]
+}
