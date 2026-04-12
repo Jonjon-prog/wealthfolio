@@ -24,6 +24,7 @@ pub mod holdings;
 pub mod import_csv;
 pub mod income;
 pub mod performance;
+pub mod portfolio_targets;
 pub mod record_activities;
 pub mod record_activity;
 pub mod valuation;
@@ -41,6 +42,7 @@ pub use holdings::GetHoldingsTool;
 pub use import_csv::ImportCsvTool;
 pub use income::GetIncomeTool;
 pub use performance::GetPerformanceTool;
+pub use portfolio_targets::GetPortfolioTargetsTool;
 pub use record_activities::RecordActivitiesTool;
 pub use record_activity::RecordActivityTool;
 pub use valuation::GetValuationHistoryTool;
@@ -65,6 +67,7 @@ pub struct ToolSet<E: AiEnvironment> {
     pub record_activities: RecordActivitiesTool<E>,
     pub import_csv: ImportCsvTool<E>,
     pub health_status: GetHealthStatusTool<E>,
+    pub portfolio_targets: GetPortfolioTargetsTool<E>,
 }
 
 impl<E: AiEnvironment> ToolSet<E> {
@@ -82,7 +85,8 @@ impl<E: AiEnvironment> ToolSet<E> {
             record_activity: RecordActivityTool::new(env.clone()),
             record_activities: RecordActivitiesTool::new(env.clone()),
             import_csv: ImportCsvTool::new(env.clone(), base_currency),
-            health_status: GetHealthStatusTool::new(env),
+            health_status: GetHealthStatusTool::new(env.clone()),
+            portfolio_targets: GetPortfolioTargetsTool::new(env),
         }
     }
 
@@ -143,6 +147,9 @@ impl<E: AiEnvironment> ToolSet<E> {
         }
         if is_allowed("get_health_status") {
             out.push(("get_health_status", Box::new(self.health_status)));
+        }
+        if is_allowed("get_portfolio_targets") {
+            out.push(("get_portfolio_targets", Box::new(self.portfolio_targets)));
         }
         out
     }

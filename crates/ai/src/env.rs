@@ -14,7 +14,7 @@ use wealthfolio_core::{
     portfolio::{
         allocation::AllocationServiceTrait, holdings::HoldingsServiceTrait,
         income::IncomeServiceTrait, performance::PerformanceServiceTrait,
-        valuation::ValuationServiceTrait,
+        targets::PortfolioTargetServiceTrait, valuation::ValuationServiceTrait,
     },
     quotes::QuoteServiceTrait,
     secrets::SecretStore,
@@ -74,6 +74,9 @@ pub trait AiEnvironment: Send + Sync {
 
     /// Get the health service for portfolio health diagnostics.
     fn health_service(&self) -> Arc<dyn HealthServiceTrait>;
+
+    /// Get the portfolio target service for allocation targets and rebalancing.
+    fn portfolio_target_service(&self) -> Arc<dyn PortfolioTargetServiceTrait>;
 }
 
 #[cfg(test)]
@@ -106,6 +109,10 @@ pub mod test_env {
         portfolio::allocation::{AllocationHoldings, AllocationServiceTrait, PortfolioAllocations},
         portfolio::income::{IncomeServiceTrait, IncomeSummary},
         portfolio::performance::{PerformanceMetrics, PerformanceServiceTrait},
+        portfolio::targets::{
+            DeviationReport, HoldingTarget, NewHoldingTarget, NewPortfolioTarget,
+            NewTargetAllocation, PortfolioTarget, PortfolioTargetServiceTrait, TargetAllocation,
+        },
         quotes::{
             LatestQuotePair, LatestQuoteSnapshot, ProviderInfo, Quote, QuoteImport,
             QuoteServiceTrait, QuoteSyncState, SymbolSearchResult, SymbolSyncPlan, SyncMode,
@@ -1255,6 +1262,10 @@ pub mod test_env {
         fn health_service(&self) -> Arc<dyn HealthServiceTrait> {
             self.health_service.clone()
         }
+
+        fn portfolio_target_service(&self) -> Arc<dyn PortfolioTargetServiceTrait> {
+            Arc::new(MockPortfolioTargetService)
+        }
     }
 
     #[derive(Default)]
@@ -1329,6 +1340,102 @@ pub mod test_env {
 
         async fn update_config(&self, _config: HealthConfig) -> CoreResult<()> {
             Ok(())
+        }
+    }
+
+    pub struct MockPortfolioTargetService;
+
+    #[async_trait::async_trait]
+    impl PortfolioTargetServiceTrait for MockPortfolioTargetService {
+        fn get_targets_by_account(&self, _account_id: &str) -> CoreResult<Vec<PortfolioTarget>> {
+            Ok(Vec::new())
+        }
+
+        fn get_target(&self, _id: &str) -> CoreResult<Option<PortfolioTarget>> {
+            Ok(None)
+        }
+
+        async fn create_target(&self, _target: NewPortfolioTarget) -> CoreResult<PortfolioTarget> {
+            Err(CoreError::Database(DatabaseError::NotFound(
+                "mock".to_string(),
+            )))
+        }
+
+        async fn update_target(&self, _target: PortfolioTarget) -> CoreResult<PortfolioTarget> {
+            Err(CoreError::Database(DatabaseError::NotFound(
+                "mock".to_string(),
+            )))
+        }
+
+        async fn delete_target(&self, _id: &str) -> CoreResult<usize> {
+            Ok(0)
+        }
+
+        fn get_allocations_by_target(&self, _target_id: &str) -> CoreResult<Vec<TargetAllocation>> {
+            Ok(Vec::new())
+        }
+
+        async fn upsert_allocation(
+            &self,
+            _allocation: NewTargetAllocation,
+        ) -> CoreResult<TargetAllocation> {
+            Err(CoreError::Database(DatabaseError::NotFound(
+                "mock".to_string(),
+            )))
+        }
+
+        async fn batch_save_target_allocations(
+            &self,
+            _allocations: Vec<NewTargetAllocation>,
+        ) -> CoreResult<Vec<TargetAllocation>> {
+            Ok(Vec::new())
+        }
+
+        async fn delete_allocation(&self, _id: &str) -> CoreResult<usize> {
+            Ok(0)
+        }
+
+        async fn get_deviation_report(
+            &self,
+            _target_id: &str,
+            _base_currency: &str,
+        ) -> CoreResult<DeviationReport> {
+            use rust_decimal::Decimal;
+            Ok(DeviationReport {
+                target_id: String::new(),
+                target_name: String::new(),
+                account_id: String::new(),
+                taxonomy_id: String::new(),
+                total_value: Decimal::ZERO,
+                deviations: Vec::new(),
+            })
+        }
+
+        fn get_holding_targets_by_allocation(
+            &self,
+            _allocation_id: &str,
+        ) -> CoreResult<Vec<HoldingTarget>> {
+            Ok(Vec::new())
+        }
+
+        async fn upsert_holding_target(
+            &self,
+            _target: NewHoldingTarget,
+        ) -> CoreResult<HoldingTarget> {
+            Err(CoreError::Database(DatabaseError::NotFound(
+                "mock".to_string(),
+            )))
+        }
+
+        async fn batch_save_holding_targets(
+            &self,
+            _targets: Vec<NewHoldingTarget>,
+        ) -> CoreResult<Vec<HoldingTarget>> {
+            Ok(Vec::new())
+        }
+
+        async fn delete_holding_target(&self, _id: &str) -> CoreResult<usize> {
+            Ok(0)
         }
     }
 }

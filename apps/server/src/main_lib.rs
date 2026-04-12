@@ -400,14 +400,14 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             ai_catalog_json,
         )?);
 
+    // AI chat repository for thread/message persistence
+    let ai_chat_repository = Arc::new(AiChatRepository::new(pool.clone(), writer.clone()));
+
     // Health service for portfolio health diagnostics
     let health_dismissal_repository =
         Arc::new(HealthDismissalRepository::new(pool.clone(), writer.clone()));
     let health_service: Arc<dyn HealthServiceTrait + Send + Sync> =
         Arc::new(HealthService::new(health_dismissal_repository));
-
-    // AI chat repository for thread/message persistence
-    let ai_chat_repository = Arc::new(AiChatRepository::new(pool.clone(), writer.clone()));
 
     // Create the AI environment and chat service using the new wealthfolio-ai crate
     let ai_environment = Arc::new(ServerAiEnvironment::new(
@@ -425,6 +425,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         performance_service.clone(),
         income_service.clone(),
         health_service.clone(),
+        portfolio_target_service.clone(),
     ));
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
 

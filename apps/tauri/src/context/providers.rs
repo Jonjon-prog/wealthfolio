@@ -338,6 +338,7 @@ pub async fn initialize_context(
         performance_service.clone(),
         income_service.clone(),
         health_service.clone(),
+        portfolio_target_service.clone(),
     ));
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
 
