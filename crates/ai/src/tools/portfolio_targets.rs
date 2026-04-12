@@ -113,7 +113,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPortfolioTargetsTool<E> {
                 "properties": {
                     "accountId": {
                         "type": "string",
-                        "description": "Account ID to check targets for, or 'TOTAL' for all accounts combined",
+                        "description": "Account ID to filter targets for. Defaults to 'TOTAL' which returns targets from all accounts.",
                         "default": "TOTAL"
                     }
                 },
@@ -126,9 +126,37 @@ impl<E: AiEnvironment + 'static> Tool for GetPortfolioTargetsTool<E> {
         let target_service = self.env.portfolio_target_service();
         let base_currency = self.env.base_currency();
 
-        let targets = target_service
-            .get_targets_by_account(&args.account_id)
-            .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
+        // Collect account IDs to query: the requested account + all individual accounts.
+        // This ensures per-account targets are found even when the default "TOTAL" is used.
+        let mut account_ids: Vec<String> = Vec::new();
+        account_ids.push(args.account_id.clone());
+
+        // If querying TOTAL, also sweep all individual accounts so we don't miss per-account targets.
+        if args.account_id == "TOTAL" {
+            let accounts = self
+                .env
+                .account_service()
+                .get_all_accounts()
+                .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
+            for acc in accounts {
+                account_ids.push(acc.id);
+            }
+        }
+
+        // Collect all active targets across all account IDs (deduplicated by target ID).
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut all_targets = Vec::new();
+        for account_id in &account_ids {
+            let targets = target_service
+                .get_targets_by_account(account_id)
+                .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
+            for t in targets {
+                if t.is_active && seen_ids.insert(t.id.clone()) {
+                    all_targets.push(t);
+                }
+            }
+        }
+        let targets = all_targets;
 
         let mut summaries = Vec::new();
 
