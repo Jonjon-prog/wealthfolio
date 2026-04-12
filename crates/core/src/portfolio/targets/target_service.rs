@@ -150,7 +150,9 @@ impl PortfolioTargetServiceTrait for PortfolioTargetService {
         let deviations: Vec<AllocationDeviation> = allocations
             .iter()
             .map(|alloc| {
-                let target_pct = Decimal::from(alloc.target_percent) / dec!(100);
+                // target_percent is stored as integer percentage (e.g. 60 = 60%),
+                // same scale as current_pct from the allocation service (0-100).
+                let target_pct = Decimal::from(alloc.target_percent);
                 let (current_pct, name, color) = current_by_category
                     .get(&alloc.category_id)
                     .cloned()
