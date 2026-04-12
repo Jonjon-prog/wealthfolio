@@ -21,7 +21,7 @@ pub struct GetPortfolioTargetsArgs {
 }
 
 fn default_account_id() -> String {
-    "PORTFOLIO".to_string()
+    "TOTAL".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +96,8 @@ impl<E: AiEnvironment + 'static> Tool for GetPortfolioTargetsTool<E> {
                 "properties": {
                     "accountId": {
                         "type": "string",
-                        "description": "Account ID to check targets for, or 'PORTFOLIO' for all accounts combined",
-                        "default": "PORTFOLIO"
+                        "description": "Account ID to check targets for, or 'TOTAL' for all accounts combined",
+                        "default": "TOTAL"
                     }
                 },
                 "required": []
