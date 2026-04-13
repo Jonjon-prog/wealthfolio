@@ -27,10 +27,8 @@ use crate::context::ServiceContext;
 struct WoobAccount {
     id: String,
     label: Option<String>,
-    balance: Option<f64>,
+    balance: Option<serde_json::Value>,
     currency: Option<String>,
-    #[serde(rename = "type")]
-    account_type: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,7 +155,7 @@ pub async fn bank_sync_list_accounts(backend: Option<String>) -> Result<Vec<Bank
         .map(|a| BankAccount {
             id: a.id.clone(),
             label: a.label.unwrap_or_else(|| a.id.clone()),
-            balance: a.balance.unwrap_or(0.0),
+            balance: a.balance.as_ref().and_then(parse_amount).unwrap_or(0.0),
             currency: a.currency.unwrap_or_else(|| "EUR".to_string()),
         })
         .collect();
