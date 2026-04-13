@@ -491,8 +491,17 @@ pub fn run() {
             commands::brokers_sync::save_broker_sync_profile_rules,
             // Woob bank sync commands
             commands::bank_sync::bank_sync_check_woob,
+            commands::bank_sync::bank_sync_list_modules,
+            commands::bank_sync::bank_sync_module_config,
+            commands::bank_sync::bank_sync_list_configured_backends,
+            commands::bank_sync::bank_sync_setup_backend,
+            commands::bank_sync::bank_sync_delete_backend,
             commands::bank_sync::bank_sync_list_accounts,
             commands::bank_sync::bank_sync_sync_account,
+            commands::bank_sync::bank_sync_needs_migration,
+            commands::bank_sync::bank_sync_migrate_to_keychain,
+            commands::bank_sync::bank_sync_find_transfer_pairs,
+            commands::bank_sync::bank_sync_apply_transfer_pairs,
             // Device sync commands
             #[cfg(feature = "device-sync")]
             commands::device_sync::enroll_device,
