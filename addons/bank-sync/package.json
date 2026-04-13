@@ -1,7 +1,7 @@
 {
-  "name": "nordigen-sync-addon",
+  "name": "bank-sync-addon",
   "version": "1.0.0",
-  "description": "Free EU bank sync via GoCardless (Nordigen) Bank Account Data API",
+  "description": "Local bank sync via Woob — supports Boursobank, Fortuneo and ~90 French banks. No API key required.",
   "type": "module",
   "main": "dist/addon.js",
   "author": "Personal",
