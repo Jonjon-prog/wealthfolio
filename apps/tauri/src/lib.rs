@@ -489,16 +489,10 @@ pub fn run() {
             commands::brokers_sync::get_broker_sync_profile,
             #[cfg(feature = "connect-sync")]
             commands::brokers_sync::save_broker_sync_profile_rules,
-            // GoCardless (Nordigen) bank sync commands
-            commands::nordigen_sync::nordigen_save_credentials,
-            commands::nordigen_sync::nordigen_check_credentials,
-            commands::nordigen_sync::nordigen_list_institutions,
-            commands::nordigen_sync::nordigen_create_requisition,
-            commands::nordigen_sync::nordigen_get_requisition,
-            commands::nordigen_sync::nordigen_get_account_details,
-            commands::nordigen_sync::nordigen_sync_account,
-            commands::nordigen_sync::nordigen_delete_requisition,
-            commands::nordigen_sync::nordigen_clear_credentials,
+            // Woob bank sync commands
+            commands::bank_sync::bank_sync_check_woob,
+            commands::bank_sync::bank_sync_list_accounts,
+            commands::bank_sync::bank_sync_sync_account,
             // Device sync commands
             #[cfg(feature = "device-sync")]
             commands::device_sync::enroll_device,

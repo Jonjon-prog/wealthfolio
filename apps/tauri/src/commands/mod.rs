@@ -5,6 +5,7 @@ pub mod ai_chat;
 pub mod ai_providers;
 pub mod alternative_assets;
 pub mod asset;
+pub mod bank_sync;
 #[cfg(feature = "connect-sync")]
 pub mod brokers_sync;
 pub mod custom_provider;
@@ -18,7 +19,6 @@ pub mod goal;
 pub mod health;
 pub mod limits;
 pub mod market_data;
-pub mod nordigen_sync;
 pub mod platform;
 pub mod portfolio;
 pub mod portfolio_targets;

@@ -34,7 +34,7 @@ chrono = { workspace = true }
 log = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "process"] }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 diesel = { workspace = true }
