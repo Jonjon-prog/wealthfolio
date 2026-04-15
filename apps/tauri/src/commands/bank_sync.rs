@@ -329,16 +329,13 @@ async fn fetch_woob_history(
         let n_str = n.to_string();
         info!("Fetching Woob history: n={} account={}", n, woob_account_id);
 
-        let json = run_woob(&[
-            "bank",
-            "-f",
-            "json",
-            "-n",
-            &n_str,
-            "history",
-            woob_account_id,
-        ])
-        .await?;
+        let mut args = vec!["bank", "-f", "json", "-n", &n_str];
+        if let Some(since) = since_date {
+            args.extend_from_slice(&["--since", since]);
+        }
+        args.extend_from_slice(&["history", woob_account_id]);
+
+        let json = run_woob(&args).await?;
         let json_start = json.find('[').ok_or("No JSON output from woob history")?;
         let mut transactions: Vec<WoobTransaction> = serde_json::from_str(&json[json_start..])
             .map_err(|e| format!("Failed to parse woob transactions: {}", e))?;
@@ -474,6 +471,38 @@ pub async fn bank_sync_sync_account(
                     fingerprint.0, fingerprint.1, fingerprint.2
                 );
                 return false;
+            }
+            true
+        })
+        .collect();
+
+    // Remove cash debits/credits that are the counterpart of an investment order.
+    // Fortuneo generates both a cash movement AND a market transaction for each
+    // "Achat/Vente Comptant", so we deduplicate by (date, amount).
+    let investment_keys: std::collections::HashSet<(String, String)> = activities
+        .iter()
+        .filter(|a| matches!(a.activity_type.as_deref(), Some("BUY") | Some("SELL")))
+        .filter_map(|a| {
+            let date = a.trade_date.as_ref()?.get(..10)?.to_string();
+            let amount = format!("{:.2}", a.amount?);
+            Some((date, amount))
+        })
+        .collect();
+
+    let activities: Vec<_> = activities
+        .into_iter()
+        .filter(|a| {
+            if matches!(
+                a.activity_type.as_deref(),
+                Some("DEPOSIT") | Some("WITHDRAWAL")
+            ) {
+                if let (Some(date), Some(amount)) = (&a.trade_date, a.amount) {
+                    let key = (
+                        date.get(..10).unwrap_or(date.as_str()).to_string(),
+                        format!("{:.2}", amount),
+                    );
+                    return !investment_keys.contains(&key);
+                }
             }
             true
         })
