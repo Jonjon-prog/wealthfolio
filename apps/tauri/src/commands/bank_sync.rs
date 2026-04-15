@@ -19,7 +19,9 @@ use std::sync::Arc;
 use tauri::State;
 use tokio::process::Command;
 use uuid::Uuid;
-use wealthfolio_connect::broker::AccountUniversalActivityCurrency;
+use wealthfolio_connect::broker::{
+    AccountUniversalActivityCurrency, AccountUniversalActivitySymbol,
+};
 use wealthfolio_core::activities::{ActivityBulkMutationRequest, NewActivity};
 
 use crate::context::ServiceContext;
@@ -37,12 +39,25 @@ struct WoobAccount {
 }
 
 #[derive(Debug, Deserialize)]
+struct WoobInvestment {
+    label: Option<String>,
+    code: Option<String>,
+    stock_symbol: Option<String>,
+    quantity: Option<serde_json::Value>,
+    unitvalue: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WoobTransaction {
     id: String,
     date: Option<String>,
     label: Option<String>,
-    amount: Option<serde_json::Value>, // can be string or number depending on woob version
+    amount: Option<serde_json::Value>,
     raw: Option<String>,
+    #[serde(rename = "type")]
+    tx_type: Option<i64>,
+    commission: Option<serde_json::Value>,
+    investments: Option<Vec<WoobInvestment>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1226,12 +1241,105 @@ fn map_woob_transaction(
     currency: &str,
 ) -> Option<wealthfolio_connect::AccountUniversalActivity> {
     let amount = tx.amount.as_ref().and_then(parse_amount)?;
+    let date = tx.date?;
+    let description = tx
+        .label
+        .clone()
+        .or_else(|| tx.raw.clone())
+        .unwrap_or_default();
 
+    // Woob type 9 = MARKET (investment order: BUY/SELL)
+    if tx.tx_type == Some(9) {
+        let inv = tx.investments.as_ref().and_then(|v| v.first());
+
+        let symbol = inv.and_then(|i| {
+            i.stock_symbol
+                .clone()
+                .filter(|s| !s.is_empty())
+                .or_else(|| i.code.clone().filter(|s| !s.is_empty()))
+                .or_else(|| i.label.clone().filter(|s| !s.is_empty()))
+        });
+
+        let quantity = inv
+            .and_then(|i| i.quantity.as_ref())
+            .and_then(parse_amount)
+            .unwrap_or(1.0)
+            .abs();
+
+        let unit_price = inv
+            .and_then(|i| i.unitvalue.as_ref())
+            .and_then(parse_amount)
+            .unwrap_or_else(|| {
+                if quantity > 0.0 {
+                    amount.abs() / quantity
+                } else {
+                    amount.abs()
+                }
+            });
+
+        let fee = tx
+            .commission
+            .as_ref()
+            .and_then(parse_amount)
+            .unwrap_or(0.0)
+            .abs();
+
+        let activity_type = if amount < 0.0 { "BUY" } else { "SELL" };
+
+        // Generate a stable unique ID since Woob reuses "@bank" as id for all investment transactions
+        let stable_id = format!(
+            "WOOB-{}-{}-{:.2}-{}",
+            date,
+            activity_type,
+            amount.abs(),
+            symbol.as_deref().unwrap_or(&description)
+        );
+
+        return Some(wealthfolio_connect::AccountUniversalActivity {
+            id: Some(stable_id.clone()),
+            source_record_id: Some(stable_id),
+            source_system: Some("WOOB".to_string()),
+            activity_type: Some(activity_type.to_string()),
+            trade_date: Some(date),
+            settlement_date: None,
+            price: Some(unit_price),
+            units: Some(quantity),
+            amount: Some(amount.abs()),
+            currency: Some(AccountUniversalActivityCurrency {
+                id: None,
+                code: Some(currency.to_string()),
+                name: None,
+            }),
+            description: Some(description),
+            fee: Some(fee),
+            symbol: symbol.map(|s| AccountUniversalActivitySymbol {
+                id: None,
+                symbol: Some(s.clone()),
+                raw_symbol: Some(s),
+                description: None,
+                symbol_type: None,
+                exchange: None,
+                currency: None,
+                figi_code: None,
+            }),
+            option_symbol: None,
+            subtype: None,
+            raw_type: None,
+            option_type: None,
+            fx_rate: None,
+            institution: None,
+            external_reference_id: None,
+            provider_type: None,
+            source_group_id: None,
+            mapping_metadata: None,
+            needs_review: true, // needs review so user can assign the correct symbol
+        });
+    }
+
+    // Regular cash transaction (DEPOSIT / WITHDRAWAL)
     if amount == 0.0 {
         return None;
     }
-
-    let date = tx.date?;
 
     let (activity_type, abs_amount) = if amount > 0.0 {
         ("DEPOSIT", amount)
@@ -1239,11 +1347,16 @@ fn map_woob_transaction(
         ("WITHDRAWAL", amount.abs())
     };
 
-    let description = tx.label.or(tx.raw).unwrap_or_default();
+    // Generate stable ID for cash transactions too (Woob reuses ids)
+    let stable_id = if tx.id.contains('@') && !tx.id.starts_with("WOOB-") {
+        format!("WOOB-{}-{}-{:.2}", date, activity_type, abs_amount)
+    } else {
+        tx.id.clone()
+    };
 
     Some(wealthfolio_connect::AccountUniversalActivity {
-        id: Some(tx.id.clone()),
-        source_record_id: Some(tx.id),
+        id: Some(stable_id.clone()),
+        source_record_id: Some(stable_id),
         source_system: Some("WOOB".to_string()),
         activity_type: Some(activity_type.to_string()),
         trade_date: Some(date),
