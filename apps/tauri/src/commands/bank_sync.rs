@@ -329,9 +329,10 @@ async fn fetch_woob_history(
         let n_str = n.to_string();
         info!("Fetching Woob history: n={} account={}", n, woob_account_id);
 
+        let condition = since_date.map(|s| format!("date >= {}", s));
         let mut args = vec!["bank", "-f", "json", "-n", &n_str];
-        if let Some(since) = since_date {
-            args.extend_from_slice(&["--since", since]);
+        if let Some(ref cond) = condition {
+            args.extend_from_slice(&["-c", cond.as_str()]);
         }
         args.extend_from_slice(&["history", woob_account_id]);
 
