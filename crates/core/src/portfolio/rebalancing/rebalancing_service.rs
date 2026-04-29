@@ -683,6 +683,9 @@ mod tests {
         async fn delete_holding_target(&self, _: &str) -> Result<usize> {
             unimplemented!()
         }
+        async fn delete_holding_targets_by_allocation(&self, _: &str) -> Result<usize> {
+            unimplemented!()
+        }
     }
 
     // ---------------------------------------------------------------
@@ -932,6 +935,9 @@ mod tests {
                 unimplemented!()
             }
             async fn delete_holding_target(&self, _: &str) -> Result<usize> {
+                unimplemented!()
+            }
+            async fn delete_holding_targets_by_allocation(&self, _: &str) -> Result<usize> {
                 unimplemented!()
             }
         }
