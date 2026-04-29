@@ -140,6 +140,36 @@ export const deleteActivity = async (activityId: string): Promise<Activity> => {
   }
 };
 
+export const linkTransferActivities = async (
+  activityAId: string,
+  activityBId: string,
+): Promise<[Activity, Activity]> => {
+  try {
+    return await invoke<[Activity, Activity]>("link_transfer_activities", {
+      activityAId,
+      activityBId,
+    });
+  } catch (err) {
+    logger.error("Error linking transfer activities.");
+    throw err;
+  }
+};
+
+export const unlinkTransferActivities = async (
+  activityAId: string,
+  activityBId: string,
+): Promise<[Activity, Activity]> => {
+  try {
+    return await invoke<[Activity, Activity]>("unlink_transfer_activities", {
+      activityAId,
+      activityBId,
+    });
+  } catch (err) {
+    logger.error("Error unlinking transfer activities.");
+    throw err;
+  }
+};
+
 // ============================================================================
 // Activity Import Commands
 // ============================================================================

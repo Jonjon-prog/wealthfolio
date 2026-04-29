@@ -10,6 +10,7 @@ use wealthfolio_core::{
     accounts::AccountServiceTrait,
     activities::ActivityServiceTrait,
     goals::GoalServiceTrait,
+    health::HealthServiceTrait,
     portfolio::{
         allocation::AllocationServiceTrait, holdings::HoldingsServiceTrait,
         income::IncomeServiceTrait, performance::PerformanceServiceTrait,
@@ -70,6 +71,9 @@ pub trait AiEnvironment: Send + Sync {
 
     /// Get the income service for income/dividend summaries.
     fn income_service(&self) -> Arc<dyn IncomeServiceTrait>;
+
+    /// Get the health service for portfolio health diagnostics.
+    fn health_service(&self) -> Arc<dyn HealthServiceTrait>;
 }
 
 #[cfg(test)]
@@ -88,11 +92,23 @@ pub mod test_env {
             ImportAssetPreviewItem, ImportMappingData, ImportTemplateData, ImportTemplateScope,
             NewActivity, SaveBrokerSyncProfileRulesRequest, Sort,
         },
-        assets::{Asset, ProviderProfile},
+        assets::{Asset, AssetServiceTrait, ProviderProfile},
         errors::DatabaseError,
-        goals::{Goal, GoalServiceTrait, GoalsAllocation, NewGoal},
+        goals::{
+            AccountValuationMap, Goal, GoalFundingRule, GoalFundingRuleInput, GoalPlan,
+            GoalServiceTrait, NewGoal, PreparedRetirementSimulationInput, SaveGoalPlan,
+        },
+        health::{
+            checks::{
+                AssetHoldingInfo, ConsistencyIssueInfo, FxPairInfo, LegacyMigrationInfo,
+                QuoteSyncErrorInfo, UnclassifiedAssetInfo, UnconfiguredAccountInfo,
+            },
+            FixAction, HealthConfig, HealthServiceTrait, HealthStatus,
+        },
         holdings::{Holding, HoldingsServiceTrait},
+        planning::SaveUpOverview,
         portfolio::allocation::{AllocationHoldings, AllocationServiceTrait, PortfolioAllocations},
+        portfolio::fire::RetirementOverview,
         portfolio::income::{IncomeServiceTrait, IncomeSummary},
         portfolio::performance::{PerformanceMetrics, PerformanceServiceTrait},
         quotes::{
@@ -102,7 +118,10 @@ pub mod test_env {
         },
         secrets::SecretStore,
         settings::{Settings, SettingsServiceTrait, SettingsUpdate},
-        valuation::{DailyAccountValuation, ValuationRecalcMode, ValuationServiceTrait},
+        taxonomies::TaxonomyServiceTrait,
+        valuation::{
+            DailyAccountValuation, NegativeBalanceInfo, ValuationRecalcMode, ValuationServiceTrait,
+        },
         Error as CoreError, Result as CoreResult,
     };
 
@@ -310,6 +329,22 @@ pub mod test_env {
 
         async fn delete_activity(&self, _activity_id: String) -> CoreResult<Activity> {
             unimplemented!("MockActivityService::delete_activity")
+        }
+
+        async fn link_transfer_activities(
+            &self,
+            _activity_a_id: String,
+            _activity_b_id: String,
+        ) -> CoreResult<(Activity, Activity)> {
+            unimplemented!("MockActivityService::link_transfer_activities")
+        }
+
+        async fn unlink_transfer_activities(
+            &self,
+            _activity_a_id: String,
+            _activity_b_id: String,
+        ) -> CoreResult<(Activity, Activity)> {
+            unimplemented!("MockActivityService::unlink_transfer_activities")
         }
 
         async fn bulk_mutate_activities(
@@ -523,7 +558,7 @@ pub mod test_env {
         fn get_accounts_with_negative_balance(
             &self,
             _account_ids: &[String],
-        ) -> CoreResult<Vec<String>> {
+        ) -> CoreResult<Vec<NegativeBalanceInfo>> {
             Ok(Vec::new())
         }
 
@@ -540,7 +575,6 @@ pub mod test_env {
     #[derive(Default)]
     pub struct MockGoalService {
         pub goals: Vec<Goal>,
-        pub allocations: Vec<GoalsAllocation>,
     }
 
     #[async_trait]
@@ -549,8 +583,8 @@ pub mod test_env {
             Ok(self.goals.clone())
         }
 
-        fn load_goals_allocations(&self) -> CoreResult<Vec<GoalsAllocation>> {
-            Ok(self.allocations.clone())
+        fn get_goal(&self, _goal_id: &str) -> CoreResult<Goal> {
+            unimplemented!("MockGoalService::get_goal")
         }
 
         async fn create_goal(&self, _goal: NewGoal) -> CoreResult<Goal> {
@@ -565,11 +599,67 @@ pub mod test_env {
             unimplemented!("MockGoalService::delete_goal")
         }
 
-        async fn upsert_goal_allocations(
+        fn get_goal_funding(&self, _goal_id: &str) -> CoreResult<Vec<GoalFundingRule>> {
+            Ok(Vec::new())
+        }
+
+        async fn save_goal_funding(
             &self,
-            _allocations: Vec<GoalsAllocation>,
-        ) -> CoreResult<usize> {
-            unimplemented!("MockGoalService::upsert_goal_allocations")
+            _goal_id: &str,
+            _rules: Vec<GoalFundingRuleInput>,
+        ) -> CoreResult<Vec<GoalFundingRule>> {
+            unimplemented!("MockGoalService::save_goal_funding")
+        }
+
+        fn get_goal_plan(&self, _goal_id: &str) -> CoreResult<Option<GoalPlan>> {
+            Ok(None)
+        }
+
+        async fn save_goal_plan(&self, _plan: SaveGoalPlan) -> CoreResult<GoalPlan> {
+            unimplemented!("MockGoalService::save_goal_plan")
+        }
+
+        async fn delete_goal_plan(&self, _goal_id: &str) -> CoreResult<usize> {
+            unimplemented!("MockGoalService::delete_goal_plan")
+        }
+
+        async fn refresh_goal_summary(
+            &self,
+            _goal_id: &str,
+            _valuations: &AccountValuationMap,
+        ) -> CoreResult<Goal> {
+            unimplemented!("MockGoalService::refresh_goal_summary")
+        }
+
+        async fn compute_retirement_overview(
+            &self,
+            _goal_id: &str,
+            _valuation_map: &AccountValuationMap,
+        ) -> CoreResult<RetirementOverview> {
+            Err(CoreError::Unexpected(
+                "MockGoalService::compute_retirement_overview is not implemented".to_string(),
+            ))
+        }
+
+        async fn prepare_retirement_simulation_input(
+            &self,
+            _goal_id: &str,
+            _valuation_map: &AccountValuationMap,
+        ) -> CoreResult<PreparedRetirementSimulationInput> {
+            Err(CoreError::Unexpected(
+                "MockGoalService::prepare_retirement_simulation_input is not implemented"
+                    .to_string(),
+            ))
+        }
+
+        async fn compute_save_up_overview(
+            &self,
+            _goal_id: &str,
+            _valuation_map: &AccountValuationMap,
+        ) -> CoreResult<SaveUpOverview> {
+            Err(CoreError::Unexpected(
+                "MockGoalService::compute_save_up_overview is not implemented".to_string(),
+            ))
         }
     }
 
@@ -652,7 +742,7 @@ pub mod test_env {
         ) -> crate::types::ChatRepositoryResult<Vec<crate::types::ChatThread>> {
             let threads = self.threads.read().unwrap();
             let mut list: Vec<_> = threads.values().cloned().collect();
-            list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            list.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
             list.truncate(limit as usize);
             Ok(list)
         }
@@ -663,7 +753,7 @@ pub mod test_env {
         ) -> crate::types::ChatRepositoryResult<crate::types::ThreadPage> {
             let threads = self.threads.read().unwrap();
             let mut list: Vec<_> = threads.values().cloned().collect();
-            list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            list.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
             // Apply search filter if provided
             if let Some(ref search) = request.search {
@@ -1149,6 +1239,7 @@ pub mod test_env {
         pub allocation_service: Arc<dyn AllocationServiceTrait>,
         pub performance_service: Arc<dyn PerformanceServiceTrait>,
         pub income_service: Arc<dyn IncomeServiceTrait>,
+        pub health_service: Arc<dyn HealthServiceTrait>,
     }
 
     impl Default for MockEnvironment {
@@ -1173,6 +1264,7 @@ pub mod test_env {
                 allocation_service: Arc::new(MockAllocationService),
                 performance_service: Arc::new(MockPerformanceService),
                 income_service: Arc::new(MockIncomeService),
+                health_service: Arc::new(MockHealthService::default()),
             }
         }
 
@@ -1234,6 +1326,85 @@ pub mod test_env {
 
         fn income_service(&self) -> Arc<dyn IncomeServiceTrait> {
             self.income_service.clone()
+        }
+
+        fn health_service(&self) -> Arc<dyn HealthServiceTrait> {
+            self.health_service.clone()
+        }
+    }
+
+    #[derive(Default)]
+    pub struct MockHealthService {
+        pub cached_status: Option<HealthStatus>,
+    }
+
+    #[async_trait::async_trait]
+    impl HealthServiceTrait for MockHealthService {
+        async fn run_checks(&self, _base_currency: &str) -> CoreResult<HealthStatus> {
+            Ok(HealthStatus::healthy())
+        }
+
+        async fn run_checks_with_data(
+            &self,
+            _base_currency: &str,
+            _total_portfolio_value: f64,
+            _holdings: &[AssetHoldingInfo],
+            _latest_quote_times: &std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+            _quote_sync_errors: &[QuoteSyncErrorInfo],
+            _fx_pairs: &[FxPairInfo],
+            _unclassified_assets: &[UnclassifiedAssetInfo],
+            _consistency_issues: &[ConsistencyIssueInfo],
+            _legacy_migration_info: &Option<LegacyMigrationInfo>,
+            _unconfigured_accounts: &[UnconfiguredAccountInfo],
+            _configured_timezone: Option<&str>,
+            _client_timezone: Option<&str>,
+        ) -> CoreResult<HealthStatus> {
+            Ok(HealthStatus::healthy())
+        }
+
+        async fn run_full_checks(
+            &self,
+            _base_currency: &str,
+            _account_service: Arc<dyn wealthfolio_core::accounts::AccountServiceTrait>,
+            _holdings_service: Arc<dyn HoldingsServiceTrait>,
+            _quote_service: Arc<dyn QuoteServiceTrait>,
+            _asset_service: Arc<dyn AssetServiceTrait>,
+            _taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
+            _valuation_service: Arc<dyn ValuationServiceTrait>,
+            _configured_timezone: Option<&str>,
+            _client_timezone: Option<&str>,
+        ) -> CoreResult<HealthStatus> {
+            Ok(HealthStatus::healthy())
+        }
+
+        async fn get_cached_status(&self) -> Option<HealthStatus> {
+            self.cached_status.clone()
+        }
+
+        async fn dismiss_issue(&self, _issue_id: &str, _data_hash: &str) -> CoreResult<()> {
+            Ok(())
+        }
+
+        async fn restore_issue(&self, _issue_id: &str) -> CoreResult<()> {
+            Ok(())
+        }
+
+        async fn get_dismissed_ids(&self) -> CoreResult<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn execute_fix(&self, _action: &FixAction) -> CoreResult<()> {
+            Ok(())
+        }
+
+        async fn clear_cache(&self) {}
+
+        async fn get_config(&self) -> HealthConfig {
+            HealthConfig::default()
+        }
+
+        async fn update_config(&self, _config: HealthConfig) -> CoreResult<()> {
+            Ok(())
         }
     }
 }

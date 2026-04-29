@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use crate::accounts::{Account, AccountServiceTrait};
 use crate::activities::activities_constants::{
-    classify_import_activity, is_garbage_symbol, requires_symbol, ImportSymbolDisposition,
-    ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND, ACTIVITY_SUBTYPE_DRIP, ACTIVITY_SUBTYPE_STAKING_REWARD,
-    ACTIVITY_TYPE_SPLIT, ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT,
-    PRICE_BEARING_ACTIVITY_TYPES,
+    classify_import_activity, is_cash_symbol, is_garbage_symbol, requires_symbol,
+    ImportSymbolDisposition, ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND, ACTIVITY_SUBTYPE_DRIP,
+    ACTIVITY_SUBTYPE_STAKING_REWARD, ACTIVITY_TYPE_SPLIT, ACTIVITY_TYPE_TRANSFER_IN,
+    ACTIVITY_TYPE_TRANSFER_OUT, PRICE_BEARING_ACTIVITY_TYPES,
 };
 use crate::activities::activities_errors::ActivityError;
 use crate::activities::activities_model::*;
@@ -28,7 +28,7 @@ use crate::assets::{
 use crate::events::{DomainEvent, DomainEventSink, NoOpDomainEventSink};
 use crate::fx::currency::{get_normalization_rule, normalize_amount, resolve_currency};
 use crate::fx::FxServiceTrait;
-use crate::quotes::constants::{DATA_SOURCE_BROKER, DATA_SOURCE_MANUAL};
+use crate::quotes::constants::DATA_SOURCE_MANUAL;
 use crate::quotes::{Quote, QuoteServiceTrait};
 use crate::Result;
 use log::warn;
@@ -58,6 +58,20 @@ fn yahoo_suffix_for_mic(mic: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// A TRANSFER_IN/TRANSFER_OUT that moves a security (not cash). The monetary
+/// value of such an activity is always `quantity × unit_price`; the DB column
+/// `amount` must remain NULL so there is a single source of truth and we cannot
+/// drift into storing e.g. `qty² × unit_price`.
+fn is_securities_transfer(activity_type: &str, resolved_asset_id: Option<&str>) -> bool {
+    if activity_type != ACTIVITY_TYPE_TRANSFER_IN && activity_type != ACTIVITY_TYPE_TRANSFER_OUT {
+        return false;
+    }
+    match resolved_asset_id {
+        None => false,
+        Some(id) => !is_cash_symbol(id),
+    }
 }
 
 fn normalize_isin_key(isin: Option<&str>) -> Option<String> {
@@ -247,7 +261,7 @@ impl ActivityService {
             || normalize_quote_ccy_code(existing_asset_quote_ccy).is_some();
         let provider_quote_ccy = if allow_provider_lookup && !has_deterministic_precedence {
             self.quote_service
-                .resolve_symbol_quote(symbol, exchange_mic, instrument_type)
+                .resolve_symbol_quote(symbol, exchange_mic, instrument_type, None, None)
                 .await
                 .ok()
                 .and_then(|q| q.currency)
@@ -290,7 +304,7 @@ impl ActivityService {
         }
         let result = self
             .quote_service
-            .resolve_symbol_quote(symbol, exchange_mic, instrument_type)
+            .resolve_symbol_quote(symbol, exchange_mic, instrument_type, None, None)
             .await
             .ok()
             .and_then(|q| q.currency);
@@ -1414,8 +1428,14 @@ impl ActivityService {
             }
 
             // Create a quote from the activity price as a fallback, but only
-            // for activity types where unit_price is a real asset price.
-            if PRICE_BEARING_ACTIVITY_TYPES.contains(&activity.activity_type.as_str()) {
+            // for MANUAL-mode assets. For MARKET-mode assets the unit price is
+            // a cost input, not a market price, and writing it here would
+            // shadow provider quotes.
+            let is_manual_mode = asset.quote_mode == QuoteMode::Manual
+                || matches!(parsed_quote_mode, Some(QuoteMode::Manual));
+            if is_manual_mode
+                && PRICE_BEARING_ACTIVITY_TYPES.contains(&activity.activity_type.as_str())
+            {
                 if let Some(unit_price) = activity.unit_price {
                     let source = DATA_SOURCE_MANUAL.to_string();
                     self.create_quote_from_activity(
@@ -1464,6 +1484,17 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.abs());
         activity.amount = activity.amount.map(|v| v.abs());
         activity.fee = activity.fee.map(|v| v.abs());
+
+        // Securities transfers derive monetary value from quantity × unit_price at
+        // read time. Any inbound `amount` is redundant and has historically been
+        // a source of corruption (e.g. amount = qty² × unit_price stored on the
+        // row). Clear it only when unit_price is present so legacy imports that
+        // carry qty + amount (no unit_price) keep their monetary value.
+        if is_securities_transfer(&activity.activity_type, resolved_asset_id.as_deref())
+            && activity.unit_price.is_some()
+        {
+            activity.amount = None;
+        }
 
         // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
         if get_normalization_rule(&activity.currency).is_some() {
@@ -1792,8 +1823,14 @@ impl ActivityService {
             }
 
             // Create a quote from the activity price as a fallback, but only
-            // for activity types where unit_price is a real asset price.
-            if PRICE_BEARING_ACTIVITY_TYPES.contains(&activity.activity_type.as_str()) {
+            // for MANUAL-mode assets. For MARKET-mode assets the unit price is
+            // a cost input, not a market price, and writing it here would
+            // shadow provider quotes.
+            let is_manual_mode = asset.quote_mode == QuoteMode::Manual
+                || matches!(parsed_quote_mode, Some(QuoteMode::Manual));
+            if is_manual_mode
+                && PRICE_BEARING_ACTIVITY_TYPES.contains(&activity.activity_type.as_str())
+            {
                 if let Some(Some(unit_price)) = activity.unit_price {
                     let source = DATA_SOURCE_MANUAL.to_string();
                     self.create_quote_from_activity(
@@ -1839,6 +1876,17 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.map(|d| d.abs()));
         activity.amount = activity.amount.map(|v| v.map(|d| d.abs()));
         activity.fee = activity.fee.map(|v| v.map(|d| d.abs()));
+
+        // Securities transfers derive value from quantity × unit_price; clear
+        // `amount` on update only when the patch carries a unit_price so callers
+        // cannot re-introduce a stale value. Legacy rows that lack unit_price
+        // rely on amount as their monetary source of truth, so leave amount
+        // alone when unit_price isn't being set.
+        if is_securities_transfer(&activity.activity_type, resolved_asset_id.as_deref())
+            && matches!(activity.unit_price, Some(Some(_)))
+        {
+            activity.amount = Some(None);
+        }
 
         // Normalize minor currency units
         if get_normalization_rule(&activity.currency).is_some() {
@@ -2713,6 +2761,68 @@ impl ActivityServiceTrait for ActivityService {
         Ok(deleted)
     }
 
+    async fn link_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)> {
+        let (transfer_in, transfer_out) = self
+            .activity_repository
+            .link_transfer_activities(activity_a_id, activity_b_id)
+            .await?;
+
+        let mut account_ids: HashSet<String> = HashSet::new();
+        let mut asset_ids: HashSet<String> = HashSet::new();
+        let mut currencies: HashSet<String> = HashSet::new();
+        for activity in [&transfer_in, &transfer_out] {
+            account_ids.insert(activity.account_id.clone());
+            if let Some(ref asset_id) = activity.asset_id {
+                asset_ids.insert(asset_id.clone());
+            }
+            currencies.insert(activity.currency.clone());
+        }
+        let earliest_at = transfer_in.activity_date.min(transfer_out.activity_date);
+        self.emit_activities_changed(
+            account_ids.into_iter().collect(),
+            asset_ids.into_iter().collect(),
+            currencies.into_iter().collect(),
+            Some(earliest_at),
+        );
+
+        Ok((transfer_in, transfer_out))
+    }
+
+    async fn unlink_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)> {
+        let (transfer_in, transfer_out) = self
+            .activity_repository
+            .unlink_transfer_activities(activity_a_id, activity_b_id)
+            .await?;
+
+        let mut account_ids: HashSet<String> = HashSet::new();
+        let mut asset_ids: HashSet<String> = HashSet::new();
+        let mut currencies: HashSet<String> = HashSet::new();
+        for activity in [&transfer_in, &transfer_out] {
+            account_ids.insert(activity.account_id.clone());
+            if let Some(ref asset_id) = activity.asset_id {
+                asset_ids.insert(asset_id.clone());
+            }
+            currencies.insert(activity.currency.clone());
+        }
+        let earliest_at = transfer_in.activity_date.min(transfer_out.activity_date);
+        self.emit_activities_changed(
+            account_ids.into_iter().collect(),
+            asset_ids.into_iter().collect(),
+            currencies.into_iter().collect(),
+            Some(earliest_at),
+        );
+
+        Ok((transfer_in, transfer_out))
+    }
+
     async fn bulk_mutate_activities(
         &self,
         request: ActivityBulkMutationRequest,
@@ -2910,13 +3020,37 @@ impl ActivityServiceTrait for ActivityService {
             let indexes: Vec<usize> = entries.iter().map(|(idx, _)| *idx).collect();
             let account_activities: Vec<ActivityImport> =
                 entries.into_iter().map(|(_, activity)| activity).collect();
-            let validated = self
-                .check_activities_import_for_account(account_id, account_activities)
-                .await?;
 
-            for (offset, activity) in validated.into_iter().enumerate() {
-                if let Some(idx) = indexes.get(offset).copied() {
-                    ordered[idx] = Some(activity);
+            match self
+                .check_activities_import_for_account(account_id.clone(), account_activities.clone())
+                .await
+            {
+                Ok(validated) => {
+                    for (offset, activity) in validated.into_iter().enumerate() {
+                        if let Some(idx) = indexes.get(offset).copied() {
+                            ordered[idx] = Some(activity);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Per-account validation failed (e.g., account not found,
+                    // DB error). Mark all activities in this group with the
+                    // error instead of failing the entire batch.
+                    log::warn!(
+                        "check_activities_import: account {} validation failed: {}",
+                        account_id,
+                        e
+                    );
+                    for (offset, mut activity) in account_activities.into_iter().enumerate() {
+                        Self::add_activity_error(
+                            &mut activity,
+                            "general",
+                            &format!("Validation failed: {}", e),
+                        );
+                        if let Some(idx) = indexes.get(offset).copied() {
+                            ordered[idx] = Some(activity);
+                        }
+                    }
                 }
             }
         }
@@ -4051,30 +4185,32 @@ impl ActivityService {
             }
 
             // 6. Create a quote from the activity price as a fallback, but only
-            // for activity types where unit_price is a real asset price.
+            // for MANUAL-mode assets. For MARKET-mode assets the unit price is
+            // a cost input, not a market price; writing it as BROKER would
+            // misattribute user input as broker-sourced (BROKER is reserved
+            // for connect-synced activities) and can shadow provider quotes.
             if PRICE_BEARING_ACTIVITY_TYPES.contains(&activity.activity_type.as_str()) {
                 if let Some(ref asset_id) = resolved_asset_id {
                     if let Some(unit_price) = activity.unit_price {
-                        let source = ensure_result
+                        let is_manual_mode = ensure_result
                             .assets
                             .get(asset_id)
-                            .filter(|a| a.quote_mode == QuoteMode::Manual)
-                            .map_or(DATA_SOURCE_BROKER.to_string(), |_| {
-                                DATA_SOURCE_MANUAL.to_string()
-                            });
-                        let currency = if !activity.currency.is_empty() {
-                            &activity.currency
-                        } else {
-                            &account_currency
-                        };
-                        self.create_quote_from_activity(
-                            asset_id,
-                            unit_price,
-                            currency,
-                            &activity.activity_date,
-                            source,
-                        )
-                        .await?;
+                            .is_some_and(|a| a.quote_mode == QuoteMode::Manual);
+                        if is_manual_mode {
+                            let currency = if !activity.currency.is_empty() {
+                                &activity.currency
+                            } else {
+                                &account_currency
+                            };
+                            self.create_quote_from_activity(
+                                asset_id,
+                                unit_price,
+                                currency,
+                                &activity.activity_date,
+                                DATA_SOURCE_MANUAL.to_string(),
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
@@ -4097,6 +4233,16 @@ impl ActivityService {
             activity.unit_price = activity.unit_price.map(|v| v.abs());
             activity.amount = activity.amount.map(|v| v.abs());
             activity.fee = activity.fee.map(|v| v.abs());
+
+            // Securities transfers derive monetary value from quantity × unit_price;
+            // never persist an inbound `amount` for them when unit_price is present
+            // (see prepare_new_activity). Legacy imports with qty + amount and no
+            // unit_price keep their monetary value.
+            if is_securities_transfer(&activity.activity_type, resolved_asset_id.as_deref())
+                && activity.unit_price.is_some()
+            {
+                activity.amount = None;
+            }
 
             // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
             if get_normalization_rule(&activity.currency).is_some() {
@@ -4237,5 +4383,34 @@ impl ActivityService {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod securities_transfer_tests {
+    use super::is_securities_transfer;
+
+    #[test]
+    fn transfer_with_security_asset_is_securities() {
+        assert!(is_securities_transfer("TRANSFER_IN", Some("AAPL")));
+        assert!(is_securities_transfer("TRANSFER_OUT", Some("FWIA")));
+    }
+
+    #[test]
+    fn transfer_with_cash_asset_is_not_securities() {
+        assert!(!is_securities_transfer("TRANSFER_IN", Some("CASH:USD")));
+        assert!(!is_securities_transfer("TRANSFER_OUT", Some("$CASH-EUR")));
+        assert!(!is_securities_transfer("TRANSFER_IN", Some("CASH-GBP")));
+    }
+
+    #[test]
+    fn transfer_without_resolved_asset_is_not_securities() {
+        assert!(!is_securities_transfer("TRANSFER_IN", None));
+    }
+
+    #[test]
+    fn non_transfer_types_are_not_securities_transfers() {
+        assert!(!is_securities_transfer("BUY", Some("AAPL")));
+        assert!(!is_securities_transfer("DEPOSIT", Some("CASH:USD")));
     }
 }

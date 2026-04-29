@@ -14,6 +14,16 @@ export const API_PREFIX = "/api/v1";
 export const EVENTS_ENDPOINT = `${API_PREFIX}/events/stream`;
 export const AI_CHAT_STREAM_ENDPOINT = `${API_PREFIX}/ai/chat/stream`;
 
+const DEFAULT_INVOKE_TIMEOUT_MS = 300_000;
+
+// Commands that legitimately do batched network I/O over many symbols (Yahoo
+// Finance lookups during CSV import). Larger imports — especially Options —
+// can exceed the default 5-minute safety net. See issue #884.
+const INVOKE_TIMEOUT_OVERRIDES_MS: Record<string, number> = {
+  preview_import_assets: 600_000,
+  check_activities_import: 600_000,
+};
+
 type CommandMap = Record<string, { method: string; path: string }>;
 
 export const COMMANDS: CommandMap = {
@@ -51,11 +61,33 @@ export const COMMANDS: CommandMap = {
   get_income_summary: { method: "GET", path: "/income/summary" },
   // Goals
   get_goals: { method: "GET", path: "/goals" },
+  get_goal: { method: "GET", path: "/goals" },
   create_goal: { method: "POST", path: "/goals" },
   update_goal: { method: "PUT", path: "/goals" },
   delete_goal: { method: "DELETE", path: "/goals" },
-  update_goal_allocations: { method: "POST", path: "/goals/allocations" },
-  load_goals_allocations: { method: "GET", path: "/goals/allocations" },
+  get_goal_funding: { method: "GET", path: "/goals" },
+  save_goal_funding: { method: "PUT", path: "/goals" },
+  get_goal_plan: { method: "GET", path: "/goals" },
+  save_goal_plan: { method: "POST", path: "/goals/plan" },
+  delete_goal_plan: { method: "DELETE", path: "/goals" },
+  refresh_goal_summary: { method: "POST", path: "/goals" },
+  refresh_all_goal_summaries: { method: "POST", path: "/goals/refresh-summaries" },
+  get_retirement_overview: { method: "GET", path: "/goals" },
+  get_save_up_overview: { method: "GET", path: "/goals" },
+  preview_save_up_overview: { method: "POST", path: "/goals/save-up/preview" },
+  // Retirement plan simulations
+  calculate_retirement_projection: { method: "POST", path: "/goals/retirement/projection" },
+  run_retirement_monte_carlo: { method: "POST", path: "/goals/retirement/monte-carlo" },
+  run_retirement_stress_tests: { method: "POST", path: "/goals/retirement/stress-tests" },
+  run_retirement_scenario_analysis: {
+    method: "POST",
+    path: "/goals/retirement/scenario-analysis",
+  },
+  run_retirement_decision_sensitivity_map: {
+    method: "POST",
+    path: "/goals/retirement/decision-sensitivity-map",
+  },
+  run_retirement_sorr: { method: "POST", path: "/goals/retirement/sequence-of-returns" },
   // FX
   get_latest_exchange_rates: { method: "GET", path: "/exchange-rates/latest" },
   update_exchange_rate: { method: "PUT", path: "/exchange-rates" },
@@ -67,6 +99,8 @@ export const COMMANDS: CommandMap = {
   update_activity: { method: "PUT", path: "/activities" },
   save_activities: { method: "POST", path: "/activities/bulk" },
   delete_activity: { method: "DELETE", path: "/activities" },
+  link_transfer_activities: { method: "POST", path: "/activities/link" },
+  unlink_transfer_activities: { method: "POST", path: "/activities/unlink" },
   // Activity import
   check_activities_import: { method: "POST", path: "/activities/import/check" },
   preview_import_assets: { method: "POST", path: "/activities/import/assets/preview" },
@@ -519,9 +553,62 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       }
       break;
     }
+    case "get_goal":
     case "delete_goal": {
       const { goalId } = payload as { goalId: string };
       url += `/${encodeURIComponent(goalId)}`;
+      break;
+    }
+    case "get_goal_funding": {
+      const { goalId } = payload as { goalId: string };
+      url += `/${encodeURIComponent(goalId)}/funding`;
+      break;
+    }
+    case "save_goal_funding": {
+      const { goalId, rules } = payload as { goalId: string; rules: unknown[] };
+      url += `/${encodeURIComponent(goalId)}/funding`;
+      body = JSON.stringify(rules);
+      break;
+    }
+    case "get_goal_plan":
+    case "delete_goal_plan": {
+      const { goalId } = payload as { goalId: string };
+      url += `/${encodeURIComponent(goalId)}/plan`;
+      break;
+    }
+    case "save_goal_plan": {
+      const { plan } = payload as { plan: Record<string, unknown> };
+      body = JSON.stringify(plan);
+      break;
+    }
+    case "refresh_goal_summary": {
+      const { goalId } = payload as { goalId: string };
+      url += `/${encodeURIComponent(goalId)}/refresh-summary`;
+      break;
+    }
+    case "get_retirement_overview": {
+      const { goalId } = payload as { goalId: string };
+      url += `/${encodeURIComponent(goalId)}/retirement/overview`;
+      break;
+    }
+    case "get_save_up_overview": {
+      const { goalId } = payload as { goalId: string };
+      url += `/${encodeURIComponent(goalId)}/save-up/overview`;
+      break;
+    }
+    case "preview_save_up_overview": {
+      const { input } = payload as { input: Record<string, unknown> };
+      body = JSON.stringify(input);
+      break;
+    }
+    // Retirement plan simulation commands
+    case "calculate_retirement_projection":
+    case "run_retirement_monte_carlo":
+    case "run_retirement_stress_tests":
+    case "run_retirement_scenario_analysis":
+    case "run_retirement_decision_sensitivity_map":
+    case "run_retirement_sorr": {
+      body = JSON.stringify(payload);
       break;
     }
     case "create_goal": {
@@ -532,11 +619,6 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "update_goal": {
       const { goal } = payload as { goal: Record<string, unknown> };
       body = JSON.stringify(goal);
-      break;
-    }
-    case "update_goal_allocations": {
-      const { allocations } = payload as { allocations: Record<string, unknown> };
-      body = JSON.stringify(allocations);
       break;
     }
     case "update_exchange_rate": {
@@ -579,6 +661,22 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "delete_activity": {
       const { activityId } = payload as { activityId: string };
       url += `/${encodeURIComponent(activityId)}`;
+      break;
+    }
+    case "link_transfer_activities": {
+      const { activityAId, activityBId } = payload as {
+        activityAId: string;
+        activityBId: string;
+      };
+      body = JSON.stringify({ activityAId, activityBId });
+      break;
+    }
+    case "unlink_transfer_activities": {
+      const { activityAId, activityBId } = payload as {
+        activityAId: string;
+        activityBId: string;
+      };
+      body = JSON.stringify({ activityAId, activityBId });
       break;
     }
     case "check_activities_import":
@@ -711,15 +809,19 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "resolve_symbol_quote": {
-      const { symbol, exchangeMic, instrumentType } = payload as {
+      const { symbol, exchangeMic, instrumentType, providerId, quoteCcy } = payload as {
         symbol: string;
         exchangeMic?: string;
         instrumentType?: string;
+        providerId?: string;
+        quoteCcy?: string;
       };
       const params = new URLSearchParams();
       params.set("symbol", symbol);
       if (exchangeMic) params.set("exchangeMic", exchangeMic);
       if (instrumentType) params.set("instrumentType", instrumentType);
+      if (providerId) params.set("providerId", providerId);
+      if (quoteCcy) params.set("quoteCcy", quoteCcy);
       url += `?${params.toString()}`;
       break;
     }
@@ -1348,7 +1450,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     headers,
     body,
     credentials: "same-origin",
-    signal: AbortSignal.timeout(300_000),
+    signal: AbortSignal.timeout(INVOKE_TIMEOUT_OVERRIDES_MS[command] ?? DEFAULT_INVOKE_TIMEOUT_MS),
   });
 
   // 401 = app auth failure (JWT expired/invalid). Cloud auth failures return 403.

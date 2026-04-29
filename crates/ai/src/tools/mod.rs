@@ -17,8 +17,10 @@
 pub mod accounts;
 pub mod activities;
 pub mod allocation;
+pub mod cash_balances;
 pub mod constants;
 pub mod goals;
+pub mod health;
 pub mod holdings;
 pub mod import_csv;
 pub mod income;
@@ -34,7 +36,9 @@ pub use constants::*;
 pub use accounts::GetAccountsTool;
 pub use activities::SearchActivitiesTool;
 pub use allocation::GetAssetAllocationTool;
+pub use cash_balances::GetCashBalancesTool;
 pub use goals::GetGoalsTool;
+pub use health::GetHealthStatusTool;
 pub use holdings::GetHoldingsTool;
 pub use import_csv::ImportCsvTool;
 pub use income::GetIncomeTool;
@@ -52,6 +56,7 @@ pub struct ToolSet<E: AiEnvironment> {
     pub holdings: GetHoldingsTool<E>,
     pub allocation: GetAssetAllocationTool<E>,
     pub accounts: GetAccountsTool<E>,
+    pub cash_balances: GetCashBalancesTool<E>,
     pub activities: SearchActivitiesTool<E>,
     pub income: GetIncomeTool<E>,
     pub valuation: GetValuationHistoryTool<E>,
@@ -60,6 +65,7 @@ pub struct ToolSet<E: AiEnvironment> {
     pub record_activity: RecordActivityTool<E>,
     pub record_activities: RecordActivitiesTool<E>,
     pub import_csv: ImportCsvTool<E>,
+    pub health_status: GetHealthStatusTool<E>,
 }
 
 impl<E: AiEnvironment> ToolSet<E> {
@@ -69,6 +75,7 @@ impl<E: AiEnvironment> ToolSet<E> {
             holdings: GetHoldingsTool::new(env.clone(), base_currency.clone()),
             allocation: GetAssetAllocationTool::new(env.clone(), base_currency.clone()),
             accounts: GetAccountsTool::new(env.clone()),
+            cash_balances: GetCashBalancesTool::new(env.clone(), base_currency.clone()),
             activities: SearchActivitiesTool::new(env.clone()),
             income: GetIncomeTool::new(env.clone()),
             valuation: GetValuationHistoryTool::new(env.clone(), base_currency.clone()),
@@ -76,7 +83,8 @@ impl<E: AiEnvironment> ToolSet<E> {
             performance: GetPerformanceTool::new(env.clone(), base_currency.clone()),
             record_activity: RecordActivityTool::new(env.clone()),
             record_activities: RecordActivitiesTool::new(env.clone()),
-            import_csv: ImportCsvTool::new(env, base_currency),
+            import_csv: ImportCsvTool::new(env.clone(), base_currency),
+            health_status: GetHealthStatusTool::new(env),
         }
     }
 }

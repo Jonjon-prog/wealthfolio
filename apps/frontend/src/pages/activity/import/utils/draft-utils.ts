@@ -4,6 +4,7 @@ import {
   ImportFormat,
   SUBTYPES_BY_ACTIVITY_TYPE,
 } from "@/lib/constants";
+import type { ActivityImport } from "@/lib/types";
 import { tryParseDate } from "@/lib/utils";
 import { isValid, parse, parseISO } from "date-fns";
 import { findMappedActivityType } from "./activity-type-mapping";
@@ -363,6 +364,7 @@ export function createDraftActivities(
     defaultCurrency: string;
   },
   defaultAccountId: string,
+  validAccountIds?: Set<string>,
 ): DraftActivity[] {
   const { fieldMappings, activityMappings, symbolMappings, accountMappings, symbolMappingMeta } =
     mapping;
@@ -449,12 +451,13 @@ export function createDraftActivities(
     // Resolve account ID: use CSV account mapping, or fall back to default
     let accountId = accountMappings[""] || defaultAccountId;
     if (rawAccount?.trim()) {
-      const mappedAccount = accountMappings[rawAccount.trim()];
+      const rawAccountId = rawAccount.trim();
+      const mappedAccount =
+        accountMappings[rawAccountId] ?? accountMappings[rawAccountId.toLowerCase()];
       if (mappedAccount) {
         accountId = mappedAccount;
-      } else if (rawAccount.trim()) {
-        // Use raw account value if no mapping exists (might be an account ID already)
-        accountId = rawAccount.trim();
+      } else if (!validAccountIds || validAccountIds.has(rawAccountId)) {
+        accountId = rawAccountId;
       }
     }
 
@@ -517,4 +520,36 @@ export function createDraftActivities(
       } as DraftActivity,
     ];
   });
+}
+
+export function draftToActivityImport(draft: DraftActivity): ActivityImport {
+  return {
+    id: undefined,
+    accountId: draft.accountId,
+    assetId: draft.assetId,
+    currency: draft.currency ?? "",
+    activityType: draft.activityType as ActivityImport["activityType"],
+    date: draft.activityDate,
+    symbol: draft.symbol ?? "",
+    symbolName: draft.symbolName,
+    amount: draft.amount,
+    quantity: draft.quantity,
+    unitPrice: draft.unitPrice,
+    fee: draft.fee,
+    fxRate: draft.fxRate,
+    subtype: draft.subtype,
+    exchangeMic: draft.exchangeMic,
+    quoteCcy: draft.quoteCcy,
+    instrumentType: draft.instrumentType,
+    quoteMode: draft.quoteMode as ActivityImport["quoteMode"],
+    errors: draft.errors,
+    isValid:
+      draft.status === "valid" ||
+      draft.status === "warning" ||
+      (draft.status === "duplicate" && !!draft.forceImport),
+    lineNumber: draft.rowIndex + 1,
+    isDraft: false,
+    comment: draft.comment,
+    forceImport: draft.forceImport ?? false,
+  };
 }

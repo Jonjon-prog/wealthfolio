@@ -1,4 +1,12 @@
-import { createActivity, deleteActivity, logger, saveActivities, updateActivity } from "@/adapters";
+import {
+  createActivity,
+  deleteActivity,
+  linkTransferActivities,
+  logger,
+  saveActivities,
+  unlinkTransferActivities,
+  updateActivity,
+} from "@/adapters";
 import { generateId } from "@/lib/id";
 import {
   ActivityBulkMutationRequest,
@@ -231,6 +239,40 @@ export function useActivityMutations(
     ...createMutationOptions("deleting"),
   });
 
+  const linkTransferActivitiesMutation = useMutation({
+    mutationFn: ({ activityAId, activityBId }: { activityAId: string; activityBId: string }) =>
+      linkTransferActivities(activityAId, activityBId),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      toast.success("Transfers linked", {
+        description: "The two activities are now paired as an internal transfer.",
+      });
+    },
+    onError: (error: string) => {
+      logger.error(`Error linking transfers: ${String(error)}`);
+      toast.error("Failed to link transfers", {
+        description: String(error),
+      });
+    },
+  });
+
+  const unlinkTransferActivitiesMutation = useMutation({
+    mutationFn: ({ activityAId, activityBId }: { activityAId: string; activityBId: string }) =>
+      unlinkTransferActivities(activityAId, activityBId),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      toast.success("Transfers unlinked", {
+        description: "The two activities are external transfers again.",
+      });
+    },
+    onError: (error: string) => {
+      logger.error(`Error unlinking transfers: ${String(error)}`);
+      toast.error("Failed to unlink transfers", {
+        description: String(error),
+      });
+    },
+  });
+
   const duplicateActivity = async (activityToDuplicate: ActivityDetails) => {
     const {
       id: _id,
@@ -330,5 +372,7 @@ export function useActivityMutations(
     deleteActivityMutation,
     duplicateActivityMutation,
     saveActivitiesMutation,
+    linkTransferActivitiesMutation,
+    unlinkTransferActivitiesMutation,
   };
 }

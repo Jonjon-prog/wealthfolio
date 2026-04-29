@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 use crate::utils::time_utils;
 
 use super::client::{MarketDataClient, ProviderConfig};
-use super::constants::DATA_SOURCE_MANUAL;
+use super::constants::{DATA_SOURCE_CUSTOM_SCRAPER, DATA_SOURCE_MANUAL};
 use super::import::{ImportValidationStatus, QuoteConverter, QuoteImport, QuoteValidator};
 use super::model::{LatestQuotePair, Quote, ResolvedQuote, SymbolSearchResult};
 use super::store::{ProviderSettingsStore, QuoteStore};
@@ -26,8 +26,9 @@ use super::sync_state::{QuoteSyncState, SymbolSyncPlan, SyncMode, SyncStateStore
 use super::types::{quote_id, AssetId, Day, QuoteSource};
 use crate::activities::ActivityRepositoryTrait;
 use crate::assets::{
-    canonicalize_market_identity, symbol_resolution_candidates, Asset, AssetKind,
-    AssetRepositoryTrait, AssetSpec, InstrumentType, ProviderProfile, QuoteMode,
+    canonicalize_market_identity, normalize_quote_ccy_code, parse_crypto_pair_symbol,
+    symbol_resolution_candidates, Asset, AssetKind, AssetRepositoryTrait, AssetSpec,
+    InstrumentType, ProviderProfile, QuoteMode,
 };
 use crate::errors::Result;
 use crate::fx::currency::{get_normalization_rule, normalize_currency_code};
@@ -135,6 +136,42 @@ fn extract_provider_id_from_sync_error(error: &str) -> Option<&'static str> {
     super::constants::MARKET_DATA_PROVIDER_IDS
         .into_iter()
         .find(|provider_id| error.contains(provider_id))
+}
+
+fn provider_config_for_symbol_resolution(
+    preferred_provider: Option<&str>,
+) -> Option<serde_json::Value> {
+    let provider = preferred_provider
+        .map(str::trim)
+        .filter(|p| !p.is_empty())?;
+
+    if let Some(custom_code) = provider
+        .strip_prefix("CUSTOM:")
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+    {
+        return Some(serde_json::json!({
+            "preferred_provider": DATA_SOURCE_CUSTOM_SCRAPER,
+            "custom_provider_code": custom_code,
+        }));
+    }
+
+    Some(serde_json::json!({ "preferred_provider": provider }))
+}
+
+fn resolved_provider_matches_requested(
+    resolved_provider: &str,
+    requested_provider: Option<&str>,
+) -> bool {
+    let Some(requested) = requested_provider.map(str::trim).filter(|p| !p.is_empty()) else {
+        return true;
+    };
+
+    if let Some(custom_code) = requested.strip_prefix("CUSTOM:") {
+        return resolved_provider == format!("{}:{}", DATA_SOURCE_CUSTOM_SCRAPER, custom_code);
+    }
+
+    resolved_provider == requested
 }
 
 /// Latest quote payload enriched with backend freshness computation.
@@ -256,7 +293,7 @@ pub trait QuoteServiceTrait: Send + Sync {
         account_currency: Option<&str>,
     ) -> Result<Vec<SymbolSearchResult>>;
 
-    /// Resolve the latest quote for a symbol (currency + price).
+    /// Resolve the latest quote for a symbol (currency, price, and provider).
     ///
     /// Best-effort: returns what the provider can give. Used during symbol selection
     /// to confirm inferred currency and pre-fill the price field.
@@ -265,8 +302,16 @@ pub trait QuoteServiceTrait: Send + Sync {
         symbol: &str,
         exchange_mic: Option<&str>,
         instrument_type: Option<&InstrumentType>,
+        quote_ccy: Option<&str>,
+        preferred_provider: Option<&str>,
     ) -> Result<ResolvedQuote> {
-        let _ = (symbol, exchange_mic, instrument_type);
+        let _ = (
+            symbol,
+            exchange_mic,
+            instrument_type,
+            quote_ccy,
+            preferred_provider,
+        );
         Ok(ResolvedQuote::default())
     }
 
@@ -1040,6 +1085,8 @@ where
         symbol: &str,
         exchange_mic: Option<&str>,
         instrument_type: Option<&InstrumentType>,
+        quote_ccy: Option<&str>,
+        preferred_provider: Option<&str>,
     ) -> Result<ResolvedQuote> {
         let trimmed_symbol = symbol.trim();
         if trimmed_symbol.is_empty() {
@@ -1062,6 +1109,9 @@ where
         } else {
             trimmed_symbol
         };
+
+        let requested_quote_ccy = normalize_quote_ccy_code(quote_ccy);
+        let provider_config = provider_config_for_symbol_resolution(preferred_provider);
 
         for attempt_symbol in symbol_resolution_candidates(clean_symbol) {
             // For bonds, populate metadata with TreasuryDirect details so
@@ -1099,15 +1149,48 @@ where
                 None => (attempt_symbol.clone(), None),
             };
 
+            let pair_quote_ccy = if matches!(instrument_type, Some(InstrumentType::Crypto)) {
+                parse_crypto_pair_symbol(&resolved_symbol).map(|(_, quote)| quote)
+            } else {
+                None
+            };
+            let quote_ccy_for_identity =
+                pair_quote_ccy.as_deref().or(requested_quote_ccy.as_deref());
+            let inferred_instrument_type =
+                instrument_type.cloned().unwrap_or(InstrumentType::Equity);
+            let canonical_identity = canonicalize_market_identity(
+                Some(inferred_instrument_type.clone()),
+                Some(resolved_symbol.as_str()),
+                exchange_mic,
+                quote_ccy_for_identity,
+            );
+            if matches!(
+                inferred_instrument_type,
+                InstrumentType::Crypto | InstrumentType::Fx
+            ) && canonical_identity.quote_ccy.is_none()
+            {
+                debug!(
+                    "resolve_symbol_quote: missing quote currency for {} symbol='{}'",
+                    inferred_instrument_type.as_db_str(),
+                    resolved_symbol
+                );
+                continue;
+            }
+
             let temp_asset = Asset {
                 id: format!("_QUOTE_RESOLVE_{}", attempt_symbol),
                 kind: AssetKind::Investment,
                 quote_mode: QuoteMode::Market,
-                quote_ccy: String::new(),
-                instrument_type: instrument_type.cloned().or(Some(InstrumentType::Equity)),
-                instrument_symbol: Some(resolved_symbol),
-                display_code: Some(attempt_symbol.clone()),
-                instrument_exchange_mic: exchange_mic.map(str::to_string),
+                quote_ccy: canonical_identity.quote_ccy.unwrap_or_default(),
+                instrument_type: Some(inferred_instrument_type),
+                instrument_symbol: canonical_identity
+                    .instrument_symbol
+                    .or_else(|| Some(resolved_symbol.clone())),
+                display_code: canonical_identity
+                    .display_code
+                    .or_else(|| Some(attempt_symbol.clone())),
+                instrument_exchange_mic: canonical_identity.instrument_exchange_mic,
+                provider_config: provider_config.clone(),
                 metadata,
                 ..Default::default()
             };
@@ -1133,7 +1216,22 @@ where
                     } else {
                         Some(quote.close)
                     };
-                    return Ok(ResolvedQuote { currency, price });
+                    let resolved_provider_id = quote.data_source.clone();
+                    if !resolved_provider_matches_requested(
+                        &resolved_provider_id,
+                        preferred_provider,
+                    ) {
+                        debug!(
+                            "resolve_symbol_quote: requested provider {:?} but resolved via {} for symbol='{}'",
+                            preferred_provider, resolved_provider_id, attempt_symbol
+                        );
+                        continue;
+                    }
+                    return Ok(ResolvedQuote {
+                        currency,
+                        price,
+                        resolved_provider_id: Some(resolved_provider_id),
+                    });
                 }
                 Err(err) => {
                     debug!(
@@ -1315,6 +1413,7 @@ where
                         asset_id, current_qty
                     );
                     self.sync_state_store.mark_active(asset_id).await?;
+                    self.asset_repo.reactivate(asset_id).await?;
                     marked_active += 1;
                 }
                 // If already active, no change needed
@@ -1324,6 +1423,7 @@ where
                     // Was active, now closed - mark as inactive with today's date
                     debug!("Marking asset {} as inactive (position closed)", asset_id);
                     self.sync_state_store.mark_inactive(asset_id, today).await?;
+                    self.asset_repo.deactivate(asset_id).await?;
                     marked_inactive += 1;
                 }
                 // If already inactive, no change needed (preserve existing closed date)
@@ -1460,7 +1560,7 @@ where
             });
         }
 
-        infos.sort_by(|a, b| a.priority.cmp(&b.priority));
+        infos.sort_by_key(|a| a.priority);
         Ok(infos)
     }
 
@@ -2351,6 +2451,22 @@ mod tests {
         }
 
         async fn delete_activity(&self, _activity_id: String) -> Result<Activity> {
+            unimplemented!("unused in this test")
+        }
+
+        async fn link_transfer_activities(
+            &self,
+            _activity_a_id: String,
+            _activity_b_id: String,
+        ) -> Result<(Activity, Activity)> {
+            unimplemented!("unused in this test")
+        }
+
+        async fn unlink_transfer_activities(
+            &self,
+            _activity_a_id: String,
+            _activity_b_id: String,
+        ) -> Result<(Activity, Activity)> {
             unimplemented!("unused in this test")
         }
 

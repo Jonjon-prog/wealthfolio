@@ -207,14 +207,22 @@ pub async fn resolve_symbol_quote(
     symbol: String,
     exchange_mic: Option<String>,
     instrument_type: Option<String>,
+    quote_ccy: Option<String>,
+    provider_id: Option<String>,
     state: State<'_, Arc<ServiceContext>>,
 ) -> Result<wealthfolio_core::quotes::ResolvedQuote, String> {
     let inst_type = instrument_type
         .as_deref()
-        .and_then(wealthfolio_core::assets::InstrumentType::from_db_str);
+        .and_then(wealthfolio_core::assets::InstrumentType::from_external_str);
     state
         .quote_service()
-        .resolve_symbol_quote(&symbol, exchange_mic.as_deref(), inst_type.as_ref())
+        .resolve_symbol_quote(
+            &symbol,
+            exchange_mic.as_deref(),
+            inst_type.as_ref(),
+            quote_ccy.as_deref(),
+            provider_id.as_deref(),
+        )
         .await
         .map_err(|e| format!("Failed to resolve symbol quote: {}", e))
 }

@@ -98,7 +98,7 @@ impl AssetService {
         let provider_quote_ccy = if allow_provider_lookup && !has_deterministic_precedence {
             if let Some(sym) = symbol.map(str::trim).filter(|s| !s.is_empty()) {
                 self.quote_service
-                    .resolve_symbol_quote(sym, exchange_mic, instrument_type)
+                    .resolve_symbol_quote(sym, exchange_mic, instrument_type, None, None)
                     .await
                     .ok()
                     .and_then(|q| q.currency)
@@ -1211,7 +1211,7 @@ impl AssetServiceTrait for AssetService {
         }
 
         let resolved_quote_ccy_by_key: HashMap<String, String> =
-            stream::iter(resolution_inputs_by_key.into_iter())
+            stream::iter(resolution_inputs_by_key)
                 .map(|(resolution_key, input)| async move {
                     let (
                         symbol,
