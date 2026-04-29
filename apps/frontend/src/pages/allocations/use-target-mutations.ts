@@ -9,6 +9,7 @@ import {
   upsertHoldingTarget,
   batchSaveHoldingTargets,
   deleteHoldingTarget,
+  deleteHoldingTargetsByAllocation,
 } from "@/adapters";
 import { QueryKeys } from "@/lib/query-keys";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -135,6 +136,18 @@ export const useTargetMutations = () => {
     },
   });
 
+  const deleteHoldingTargetsByAllocationMutation = useMutation({
+    mutationFn: deleteHoldingTargetsByAllocation,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.HOLDING_TARGETS] });
+      toast.success("All holding targets cleared.");
+    },
+    onError: (e) => {
+      logger.error(`Error clearing holding targets: ${e}`);
+      handleError("clearing holding targets");
+    },
+  });
+
   return {
     createTargetMutation,
     updateTargetMutation,
@@ -145,5 +158,6 @@ export const useTargetMutations = () => {
     upsertHoldingTargetMutation,
     batchSaveHoldingTargetsMutation,
     deleteHoldingTargetMutation,
+    deleteHoldingTargetsByAllocationMutation,
   };
 };

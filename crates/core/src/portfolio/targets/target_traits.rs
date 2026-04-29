@@ -69,4 +69,5 @@ pub trait PortfolioTargetServiceTrait: Send + Sync {
         targets: Vec<NewHoldingTarget>,
     ) -> Result<Vec<HoldingTarget>>;
     async fn delete_holding_target(&self, id: &str) -> Result<usize>;
+    async fn delete_holding_targets_by_allocation(&self, allocation_id: &str) -> Result<usize>;
 }

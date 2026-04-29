@@ -57,7 +57,11 @@ export function CategorySidePanel({
   const [pendingEdits, setPendingEdits] = useState<Map<string, PendingHoldingEdit>>(new Map());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  const { batchSaveHoldingTargetsMutation, deleteHoldingTargetMutation } = useTargetMutations();
+  const {
+    batchSaveHoldingTargetsMutation,
+    deleteHoldingTargetMutation,
+    deleteHoldingTargetsByAllocationMutation,
+  } = useTargetMutations();
 
   const { data: holdingsData, isLoading: holdingsLoading } = useQuery({
     queryKey: [QueryKeys.HOLDINGS_BY_ALLOCATION, accountId, taxonomyId, categoryId],
@@ -344,6 +348,13 @@ export function CategorySidePanel({
     [getSavedTarget, deleteHoldingTargetMutation],
   );
 
+  const handleClearAll = useCallback(() => {
+    if (!allocationId) return;
+    deleteHoldingTargetsByAllocationMutation.mutate(allocationId);
+    setPendingEdits(new Map());
+    setHasUnsavedChanges(false);
+  }, [allocationId, deleteHoldingTargetsByAllocationMutation]);
+
   const handleNavigateToHolding = useCallback(
     (holdingId: string) => {
       navigate(`/holdings/${holdingId}`);
@@ -444,39 +455,54 @@ export function CategorySidePanel({
         </div>
       )}
 
-      {/* Type filter chips */}
-      {allocationId && !isLoading && uniqueTypes.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => {
-              setActiveFilter(null);
-              onFilterChange?.(null);
-            }}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              activeFilter === null
-                ? "bg-foreground text-background"
-                : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All
-          </button>
-          {uniqueTypes.map((type) => (
-            <button
-              key={type}
-              onClick={() => {
-                const next = activeFilter === type ? null : type;
-                setActiveFilter(next);
-                onFilterChange?.(next);
-              }}
-              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                activeFilter === type
-                  ? "bg-foreground text-background"
-                  : "bg-muted text-muted-foreground hover:text-foreground"
-              }`}
+      {/* Type filter chips + Clear All */}
+      {allocationId && !isLoading && (uniqueTypes.length > 1 || savedTargets.length > 0) && (
+        <div className="flex items-center justify-between gap-2">
+          {uniqueTypes.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => {
+                  setActiveFilter(null);
+                  onFilterChange?.(null);
+                }}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  activeFilter === null
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                All
+              </button>
+              {uniqueTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => {
+                    const next = activeFilter === type ? null : type;
+                    setActiveFilter(next);
+                    onFilterChange?.(next);
+                  }}
+                  className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                    activeFilter === type
+                      ? "bg-foreground text-background"
+                      : "bg-muted text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          )}
+          {savedTargets.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearAll}
+              className="ml-auto h-7 text-xs"
             >
-              {type}
-            </button>
-          ))}
+              <Icons.Trash className="mr-1.5 h-3 w-3" />
+              Clear All
+            </Button>
+          )}
         </div>
       )}
     </div>

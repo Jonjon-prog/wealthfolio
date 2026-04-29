@@ -177,6 +177,18 @@ pub async fn delete_holding_target(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn delete_holding_targets_by_allocation(
+    allocation_id: String,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<usize, String> {
+    state
+        .portfolio_target_service()
+        .delete_holding_targets_by_allocation(&allocation_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // --- Rebalancing ---
 
 #[tauri::command]

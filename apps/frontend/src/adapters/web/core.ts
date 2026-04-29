@@ -183,6 +183,10 @@ export const COMMANDS: CommandMap = {
   upsert_holding_target: { method: "POST", path: "/portfolio-targets/holdings" },
   batch_save_holding_targets: { method: "POST", path: "/portfolio-targets/holdings/batch" },
   delete_holding_target: { method: "DELETE", path: "/portfolio-targets/holdings" },
+  delete_holding_targets_by_allocation: {
+    method: "DELETE",
+    path: "/portfolio-targets/allocations/holdings",
+  },
   // Health Center
   get_health_status: { method: "GET", path: "/health/status" },
   run_health_checks: { method: "POST", path: "/health/check" },
@@ -1045,6 +1049,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "delete_holding_target": {
       const { id } = payload as { id: string };
       url += `/${encodeURIComponent(id)}`;
+      break;
+    }
+    case "delete_holding_targets_by_allocation": {
+      const { allocationId } = payload as { allocationId: string };
+      url += `/${encodeURIComponent(allocationId)}`;
       break;
     }
     // Health Center commands

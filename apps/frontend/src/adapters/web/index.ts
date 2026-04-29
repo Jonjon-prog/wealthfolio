@@ -154,6 +154,7 @@ export {
   upsertHoldingTarget,
   batchSaveHoldingTargets,
   deleteHoldingTarget,
+  deleteHoldingTargetsByAllocation,
 } from "../shared/portfolio-targets";
 
 // Portfolio Commands

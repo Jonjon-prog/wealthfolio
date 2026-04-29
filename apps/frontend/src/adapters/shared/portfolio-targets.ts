@@ -147,6 +147,15 @@ export const deleteHoldingTarget = async (id: string): Promise<void> => {
   }
 };
 
+export const deleteHoldingTargetsByAllocation = async (allocationId: string): Promise<void> => {
+  try {
+    await invoke<number>("delete_holding_targets_by_allocation", { allocationId });
+  } catch (error) {
+    logger.error("Error deleting holding targets by allocation.");
+    throw error;
+  }
+};
+
 // Rebalancing
 export const calculateRebalancingPlan = async (
   input: RebalancingInput,
