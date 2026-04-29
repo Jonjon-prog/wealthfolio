@@ -481,6 +481,16 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    portfolios (id) {
+        id -> Text,
+        name -> Text,
+        account_ids -> Text,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
 diesel::joinable!(accounts -> platforms (platform_id));
 diesel::joinable!(activities -> accounts (account_id));
 diesel::joinable!(activities -> assets (asset_id));
@@ -522,6 +532,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     import_runs,
     market_data_providers,
     platforms,
+    portfolios,
     quote_sync_state,
     quotes,
     sync_applied_events,
