@@ -161,6 +161,17 @@ export {
   updatePortfolio,
 } from "../shared/portfolio";
 
+// Portfolio Grouping Commands
+export {
+  getPortfolios,
+  getPortfolioGroup,
+  createPortfolioGroup,
+  updatePortfolioGroup,
+  deletePortfolioGroup,
+  findPortfolioByAccounts,
+  buildAccountSelection,
+} from "../shared/portfolios";
+
 // Market Data Commands
 export {
   checkQuotesImport,

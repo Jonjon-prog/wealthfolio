@@ -2110,3 +2110,26 @@ export interface SaveUpTrajectoryPointDTO {
 export interface SaveUpProjectionPointDTO extends SaveUpTrajectoryPointDTO {
   range: [number, number];
 }
+
+// ============================================================================
+// Portfolio Grouping Types
+// ============================================================================
+
+export interface Portfolio {
+  id: string;
+  name: string;
+  accountIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewPortfolio {
+  id?: string;
+  name: string;
+  accountIds: string[];
+}
+
+/// Composite account selection passed to backend services.
+/// "PORTFOLIO" = all accounts, "uuid" = single account,
+/// "MULTI:uuid1,uuid2" = portfolio group subset.
+export type AccountSelection = string;

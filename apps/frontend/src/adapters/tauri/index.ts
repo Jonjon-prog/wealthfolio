@@ -76,6 +76,9 @@ export { parseCsv } from "./activities";
 // Portfolio Commands
 export * from "../shared/portfolio";
 
+// Portfolio Grouping Commands
+export * from "../shared/portfolios";
+
 // Market Data Commands
 export * from "../shared/market-data";
 
