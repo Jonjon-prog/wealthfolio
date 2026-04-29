@@ -28,6 +28,7 @@ use wealthfolio_core::{
     limits::{ContributionLimitService, ContributionLimitServiceTrait},
     portfolio::allocation::{AllocationService, AllocationServiceTrait},
     portfolio::income::{IncomeService, IncomeServiceTrait},
+    portfolio::portfolios::{PortfolioService, PortfolioServiceTrait},
     portfolio::{
         holdings::{
             holdings_valuation_service::HoldingsValuationService, HoldingsService,
@@ -54,7 +55,10 @@ use wealthfolio_storage_sqlite::{
     health::HealthDismissalRepository,
     limits::ContributionLimitRepository,
     market_data::{MarketDataRepository, QuoteSyncStateRepository},
-    portfolio::{snapshot::SnapshotRepository, valuation::ValuationRepository},
+    portfolio::{
+        portfolios::PortfolioRepository, snapshot::SnapshotRepository,
+        valuation::ValuationRepository,
+    },
     settings::SettingsRepository,
     sync::{AppSyncRepository, BrokerSyncStateRepository, ImportRunRepository, PlatformRepository},
     taxonomies::TaxonomyRepository,
@@ -103,6 +107,7 @@ pub struct AppState {
     pub health_service: Arc<dyn HealthServiceTrait + Send + Sync>,
     pub token_lifecycle: Arc<TokenLifecycleState>,
     pub custom_provider_service: Arc<wealthfolio_core::custom_provider::CustomProviderService>,
+    pub portfolio_service: Arc<dyn PortfolioServiceTrait + Send + Sync>,
 }
 
 pub fn init_tracing() {
@@ -417,6 +422,11 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     let health_service: Arc<dyn HealthServiceTrait + Send + Sync> =
         Arc::new(HealthService::new(health_dismissal_repository));
 
+    // Portfolio grouping service
+    let portfolio_repository = Arc::new(PortfolioRepository::new(pool.clone(), writer.clone()));
+    let portfolio_service: Arc<dyn PortfolioServiceTrait + Send + Sync> =
+        Arc::new(PortfolioService::new(portfolio_repository));
+
     // AI chat repository for thread/message persistence
     let ai_chat_repository = Arc::new(AiChatRepository::new(pool.clone(), writer.clone()));
 
@@ -531,6 +541,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         health_service,
         token_lifecycle,
         custom_provider_service,
+        portfolio_service,
     });
 
     #[cfg(feature = "device-sync")]

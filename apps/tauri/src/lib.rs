@@ -664,6 +664,13 @@ pub fn run() {
             commands::health::execute_health_fix,
             commands::health::get_health_config,
             commands::health::update_health_config,
+            // Portfolio grouping commands
+            commands::portfolios::get_portfolios,
+            commands::portfolios::get_portfolio_group,
+            commands::portfolios::create_portfolio_group,
+            commands::portfolios::update_portfolio_group,
+            commands::portfolios::delete_portfolio_group,
+            commands::portfolios::find_portfolio_by_accounts,
             // RetirementPlan-based FIRE commands
             commands::fire::calculate_retirement_projection,
             commands::fire::run_retirement_decision_sensitivity_map,

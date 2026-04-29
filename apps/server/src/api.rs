@@ -41,6 +41,7 @@ mod market_data;
 mod net_worth;
 mod performance;
 mod portfolio;
+mod portfolios;
 mod secrets;
 mod settings;
 pub mod shared;
@@ -90,6 +91,7 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         .merge(accounts::router())
         .merge(settings::router())
         .merge(portfolio::router())
+        .merge(portfolios::router())
         .merge(holdings::router())
         .merge(performance::router())
         .merge(activities::router())

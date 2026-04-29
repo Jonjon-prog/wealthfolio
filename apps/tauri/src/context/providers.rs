@@ -25,6 +25,7 @@ use wealthfolio_core::{
         income::IncomeService,
         net_worth::NetWorthService,
         performance::PerformanceService,
+        portfolios::PortfolioService,
         snapshot::SnapshotService,
         valuation::ValuationService,
     },
@@ -44,7 +45,10 @@ use wealthfolio_storage_sqlite::{
     health::HealthDismissalRepository,
     limits::ContributionLimitRepository,
     market_data::{MarketDataRepository, QuoteSyncStateRepository},
-    portfolio::{snapshot::SnapshotRepository, valuation::ValuationRepository},
+    portfolio::{
+        portfolios::PortfolioRepository, snapshot::SnapshotRepository,
+        valuation::ValuationRepository,
+    },
     settings::SettingsRepository,
     sync::{AppSyncRepository, BrokerSyncStateRepository, ImportRunRepository, PlatformRepository},
     taxonomies::TaxonomyRepository,
@@ -313,6 +317,10 @@ pub async fn initialize_context(
         Arc::new(HealthDismissalRepository::new(pool.clone(), writer.clone()));
     let health_service = Arc::new(HealthService::new(health_dismissal_repository));
 
+    // Portfolio grouping service
+    let portfolio_repository = Arc::new(PortfolioRepository::new(pool.clone(), writer.clone()));
+    let portfolio_service = Arc::new(PortfolioService::new(portfolio_repository));
+
     // Create AI environment and chat service
     let ai_environment = Arc::new(TauriAiEnvironment::new(
         base_currency.clone(),
@@ -387,6 +395,7 @@ pub async fn initialize_context(
             device_sync_runtime,
             health_service,
             custom_provider_service,
+            portfolio_service,
         },
         event_receiver,
         sync_outbox_wake_receiver,
