@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::context::ServiceContext;
-use wealthfolio_core::portfolio::portfolios::{NewPortfolio, Portfolio, PortfolioServiceTrait};
+use wealthfolio_core::portfolio::portfolios::{NewPortfolio, Portfolio};
 
 #[tauri::command]
 pub async fn get_portfolios(

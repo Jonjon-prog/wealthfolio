@@ -1,4 +1,4 @@
-CREATE TABLE portfolios (
+CREATE TABLE IF NOT EXISTS portfolios (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     account_ids TEXT NOT NULL,
@@ -6,4 +6,4 @@ CREATE TABLE portfolios (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX idx_portfolios_name ON portfolios(name);
+CREATE INDEX IF NOT EXISTS idx_portfolios_name ON portfolios(name);
