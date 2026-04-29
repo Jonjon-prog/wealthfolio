@@ -32,6 +32,12 @@ const settingsSections = [
         icon: <Icons.CreditCard className="size-5" />,
       },
       {
+        title: "Portfolios",
+        href: "portfolios",
+        subtitle: "Named account groups",
+        icon: <Icons.Briefcase className="size-5" />,
+      },
+      {
         title: "Contribution Limits",
         href: "contribution-limits",
         subtitle: "Limits by year and account",

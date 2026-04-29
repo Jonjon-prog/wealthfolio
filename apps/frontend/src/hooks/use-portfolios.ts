@@ -27,6 +27,7 @@ export function usePortfolioGroup(id: string | null) {
 
 export function useFindPortfolioByAccounts(accountIds: string[]) {
   return useQuery<Portfolio | null, Error>({
+    // eslint-disable-next-line @tanstack/query/exhaustive-deps
     queryKey: [QueryKeys.PORTFOLIOS, "match", [...accountIds].sort().join(",")],
     queryFn: () => findPortfolioByAccounts(accountIds),
     enabled: accountIds.length >= 2,

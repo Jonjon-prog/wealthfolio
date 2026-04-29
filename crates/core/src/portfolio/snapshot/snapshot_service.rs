@@ -1487,6 +1487,61 @@ impl SnapshotService {
             Ok(0)
         }
     }
+
+    fn get_latest_multi_account_snapshot(
+        &self,
+        composite_id: &str,
+        account_ids: &[&str],
+    ) -> Result<Option<AccountStateSnapshot>> {
+        let today = self.user_today();
+        let tomorrow = today.succ_opt().unwrap_or(today);
+
+        let base_currency = self
+            .base_currency
+            .read()
+            .map_err(|_| Error::Unexpected("base_currency lock poisoned".into()))?
+            .clone();
+
+        let mut individual_snapshots: HashMap<String, AccountStateSnapshot> = HashMap::new();
+        for &acc_id in account_ids {
+            match self
+                .snapshot_repository
+                .get_latest_snapshot_before_date(acc_id, tomorrow)?
+            {
+                Some(snap) => {
+                    individual_snapshots.insert(acc_id.to_string(), snap);
+                }
+                None => {
+                    debug!(
+                        "No snapshot found for account {} in MULTI selection",
+                        acc_id
+                    );
+                }
+            }
+        }
+
+        if individual_snapshots.is_empty() {
+            return Ok(None);
+        }
+
+        let target_date = individual_snapshots
+            .values()
+            .map(|s| s.snapshot_date)
+            .max()
+            .unwrap_or(today);
+
+        let mut merged = self.generate_total_portfolio_snapshot_for_date(
+            target_date,
+            &individual_snapshots,
+            &base_currency,
+            Decimal::ZERO,
+        )?;
+
+        merged.id = composite_id.to_string();
+        merged.account_id = composite_id.to_string();
+
+        Ok(Some(merged))
+    }
 }
 
 #[async_trait]
@@ -1648,6 +1703,11 @@ impl SnapshotServiceTrait for SnapshotService {
         &self,
         account_id: &str,
     ) -> Result<Option<AccountStateSnapshot>> {
+        if let Some(ids_str) = account_id.strip_prefix("MULTI:") {
+            let account_ids: Vec<&str> = ids_str.split(',').filter(|s| !s.is_empty()).collect();
+            return self.get_latest_multi_account_snapshot(account_id, &account_ids);
+        }
+
         let today = self.user_today();
         // The date passed to get_latest_snapshot_before_date is exclusive, so use tomorrow to include today.
         let tomorrow = today.succ_opt().unwrap_or(today);
