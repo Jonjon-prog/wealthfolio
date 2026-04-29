@@ -1,7 +1,6 @@
-import { AccountSelector } from "@/components/account-selector";
+import { AccountPortfolioSelector } from "@/components/account-portfolio-selector";
 import { SwipablePage, SwipablePageView } from "@/components/page";
 import { PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
-import type { Account } from "@/lib/types";
 import IncomePage from "@/pages/income/income-page";
 import PerformancePage from "@/pages/performance/performance-page";
 import { Icons } from "@wealthfolio/ui";
@@ -34,32 +33,11 @@ const DashboardLoader = () => (
 );
 
 export default function PortfolioInsightsPage() {
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>({
-    id: PORTFOLIO_ACCOUNT_ID,
-    name: "All Portfolio",
-    accountType: "PORTFOLIO" as unknown as Account["accountType"],
-    balance: 0,
-    currency: "USD",
-    isDefault: false,
-    isActive: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  } as Account);
-
-  const accountId = selectedAccount?.id ?? PORTFOLIO_ACCOUNT_ID;
+  const [accountId, setAccountId] = useState<string>(PORTFOLIO_ACCOUNT_ID);
 
   const holdingsActions = useMemo(
-    () => (
-      <AccountSelector
-        selectedAccount={selectedAccount}
-        setSelectedAccount={setSelectedAccount}
-        variant="dropdown"
-        includePortfolio={true}
-        iconOnly={true}
-        icon={Icons.ListFilter}
-      />
-    ),
-    [selectedAccount],
+    () => <AccountPortfolioSelector value={accountId} onChange={(id) => setAccountId(id)} />,
+    [accountId],
   );
 
   // Define the views with icons

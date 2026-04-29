@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { SwipablePage, SwipablePageView } from "@/components/page";
-import { AccountSelector } from "@/components/account-selector";
+import { AccountPortfolioSelector } from "@/components/account-portfolio-selector";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useHoldings } from "@/hooks/use-holdings";
@@ -54,20 +54,16 @@ export const HoldingsPage = () => {
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
 
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>({
-    id: PORTFOLIO_ACCOUNT_ID,
-    name: "All Portfolio",
-    accountType: "PORTFOLIO" as unknown as Account["accountType"],
-    balance: 0,
-    currency: baseCurrency,
-    isDefault: false,
-    isActive: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  } as Account);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(PORTFOLIO_ACCOUNT_ID);
 
-  const { holdings, isLoading } = useHoldings(selectedAccount?.id ?? PORTFOLIO_ACCOUNT_ID);
+  const { holdings, isLoading } = useHoldings(selectedAccountId);
   const { accounts, isLoading: isAccountsLoading } = useAccounts();
+
+  // Derive the full Account object for components that still need it (edit mode, mobile filter)
+  const selectedAccount =
+    selectedAccountId === PORTFOLIO_ACCOUNT_ID || selectedAccountId.startsWith("MULTI:")
+      ? null
+      : (accounts.find((a) => a.id === selectedAccountId) ?? null);
   const { data: alternativeHoldings, isLoading: isAlternativeHoldingsLoading } =
     useAlternativeHoldings();
 
@@ -120,16 +116,13 @@ export const HoldingsPage = () => {
   const updatePortfolioMutation = useUpdatePortfolioMutation();
 
   const handleAccountSelect = (account: Account) => {
-    setSelectedAccount(account);
-    // Exit edit mode when switching accounts
+    setSelectedAccountId(account.id);
     setIsEditMode(false);
   };
 
   // Check if the selected account supports manual holdings editing
   const canEditHoldings = useMemo(() => {
-    if (!selectedAccount || selectedAccount.id === PORTFOLIO_ACCOUNT_ID) {
-      return false;
-    }
+    if (!selectedAccount) return false;
     return canAddHoldings(selectedAccount);
   }, [selectedAccount]);
 
@@ -573,13 +566,12 @@ export const HoldingsPage = () => {
             <Icons.ListFilter className="h-4 w-4" />
           </Button>
         ) : (
-          <AccountSelector
-            selectedAccount={selectedAccount}
-            setSelectedAccount={handleAccountSelect}
-            variant="dropdown"
-            includePortfolio={true}
-            iconOnly={true}
-            icon={Icons.ListFilter}
+          <AccountPortfolioSelector
+            value={selectedAccountId}
+            onChange={(id) => {
+              setSelectedAccountId(id);
+              setIsEditMode(false);
+            }}
           />
         )}
         {/* Show Update button for HOLDINGS-mode manual accounts (only on investments tab) */}
@@ -599,7 +591,8 @@ export const HoldingsPage = () => {
     [
       isMobileViewport,
       setIsFilterSheetOpen,
-      selectedAccount,
+      selectedAccountId,
+      setSelectedAccountId,
       handleAccountSelect,
       canEditHoldings,
       isEditMode,
