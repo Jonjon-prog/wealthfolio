@@ -1325,9 +1325,41 @@ impl ActivityRepositoryTrait for ActivityRepository {
         // - STAKING_REWARD/DRIP/DIVIDEND_IN_KIND subtypes: if amount is 0, calculate from:
         //   1. quantity * unit_price (if unit_price is available)
         //   2. quantity * market_price from quotes table (fallback)
-        let account_filter = match account_id {
-            Some(_) => "AND a.account_id = ?",
-            None => "",
+        // Parse account_id: None = all, "MULTI:id1,id2" = portfolio group, single UUID = one account
+        enum AccountFilter<'a> {
+            All,
+            Single(&'a str),
+            Multi(String), // pre-built IN clause fragment
+        }
+
+        let filter = match account_id {
+            None => AccountFilter::All,
+            Some(id) if id.starts_with("MULTI:") => {
+                let ids: Vec<&str> = id
+                    .trim_start_matches("MULTI:")
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    // Only allow UUID-safe characters (hex digits and hyphens)
+                    .filter(|s| s.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+                    .collect();
+                if ids.is_empty() {
+                    AccountFilter::All
+                } else {
+                    let quoted = ids
+                        .iter()
+                        .map(|id| format!("'{id}'"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    AccountFilter::Multi(format!("AND a.account_id IN ({quoted})"))
+                }
+            }
+            Some(id) => AccountFilter::Single(id),
+        };
+
+        let account_filter = match &filter {
+            AccountFilter::All => String::new(),
+            AccountFilter::Single(_) => "AND a.account_id = ?".to_string(),
+            AccountFilter::Multi(clause) => clause.clone(),
         };
 
         let query = format!(
@@ -1388,15 +1420,14 @@ impl ActivityRepositoryTrait for ActivityRepository {
             pub amount: String,
         }
 
-        let raw_results = if let Some(id) = account_id {
-            diesel::sql_query(&query)
+        let raw_results = match filter {
+            AccountFilter::Single(id) => diesel::sql_query(&query)
                 .bind::<diesel::sql_types::Text, _>(id)
                 .load::<RawIncomeData>(&mut conn)
-                .map_err(ActivityError::from)?
-        } else {
-            diesel::sql_query(&query)
+                .map_err(ActivityError::from)?,
+            _ => diesel::sql_query(&query)
                 .load::<RawIncomeData>(&mut conn)
-                .map_err(ActivityError::from)?
+                .map_err(ActivityError::from)?,
         };
 
         // Transform raw results into IncomeData

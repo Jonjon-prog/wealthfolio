@@ -96,7 +96,15 @@ impl IncomeServiceTrait for IncomeService {
         // Scope the baseline date to the filtered account so monthly-average
         // denominators are correct.  Falls back to portfolio-wide when no filter.
         let oldest_date = if let Some(id) = account_id {
-            let ids = vec![id.to_string()];
+            let ids: Vec<String> = if let Some(multi) = id.strip_prefix("MULTI:") {
+                multi
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            } else {
+                vec![id.to_string()]
+            };
             match self.activity_repository.get_first_activity_date(Some(&ids)) {
                 Ok(Some(date)) => date,
                 Ok(None) => return Ok(Vec::new()),
