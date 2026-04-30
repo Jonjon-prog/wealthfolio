@@ -77,7 +77,7 @@ export function DrillableAccountChart({
         };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
-  }, [accounts, performanceData, baseCurrency]);
+  }, [accounts, performanceData, baseCurrency, filterAccountIds]);
 
   // Root level: grouped by account group
   const groupedData = useMemo(() => {
