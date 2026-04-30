@@ -164,6 +164,7 @@ export const calculateRebalancingPlan = async (
     return await invoke<RebalancingPlan>("calculate_rebalancing_plan", {
       targetId: input.targetId,
       availableCash: input.availableCash,
+      baseCurrency: input.baseCurrency,
     });
   } catch (error) {
     logger.error("Error calculating rebalancing plan.");

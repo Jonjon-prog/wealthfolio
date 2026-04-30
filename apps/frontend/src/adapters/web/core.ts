@@ -185,7 +185,7 @@ export const COMMANDS: CommandMap = {
   delete_holding_target: { method: "DELETE", path: "/portfolio-targets/holdings" },
   delete_holding_targets_by_allocation: {
     method: "DELETE",
-    path: "/portfolio-targets/allocations/holdings",
+    path: "/portfolio-targets/allocations",
   },
   // Health Center
   get_health_status: { method: "GET", path: "/health/status" },
@@ -1053,7 +1053,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     }
     case "delete_holding_targets_by_allocation": {
       const { allocationId } = payload as { allocationId: string };
-      url += `/${encodeURIComponent(allocationId)}`;
+      url += `/${encodeURIComponent(allocationId)}/holdings`;
+      break;
+    }
+    case "calculate_rebalancing_plan": {
+      const { targetId, availableCash, baseCurrency } = payload as {
+        targetId: string;
+        availableCash: number;
+        baseCurrency: string;
+      };
+      body = JSON.stringify({ targetId, availableCash, baseCurrency });
       break;
     }
     // Health Center commands

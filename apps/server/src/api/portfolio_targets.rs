@@ -155,6 +155,17 @@ async fn delete_holding_target(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn delete_holding_targets_by_allocation(
+    Path(allocation_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<StatusCode> {
+    let _ = state
+        .portfolio_target_service
+        .delete_holding_targets_by_allocation(&allocation_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CalculateRebalancingRequest {
@@ -218,7 +229,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/portfolio-targets/allocations/{allocationId}/holdings",
-            get(get_holding_targets),
+            get(get_holding_targets).delete(delete_holding_targets_by_allocation),
         )
         .route("/portfolio-targets/holdings", post(upsert_holding_target))
         .route(
