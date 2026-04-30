@@ -32,6 +32,14 @@ export const HoldingsInsightsPage = ({ accountId: accountIdProp }: HoldingsInsig
   const { holdings, isLoading: holdingsLoading } = useHoldings(accountId);
   const { allocations, isLoading: allocationsLoading } = usePortfolioAllocations(accountId);
 
+  // Derive a flat list of account IDs for components that filter accounts directly
+  const filterAccountIds = useMemo((): string[] | undefined => {
+    if (accountId === PORTFOLIO_ACCOUNT_ID) return undefined;
+    if (accountId.startsWith("MULTI:"))
+      return accountId.slice("MULTI:".length).split(",").filter(Boolean);
+    return [accountId];
+  }, [accountId]);
+
   const isLoading = holdingsLoading || allocationsLoading;
 
   // State for allocation detail sheet
@@ -157,7 +165,7 @@ export const HoldingsInsightsPage = ({ accountId: accountIdProp }: HoldingsInsig
             }
           />
 
-          <DrillableAccountChart isLoading={isLoading} />
+          <DrillableAccountChart isLoading={isLoading} filterAccountIds={filterAccountIds} />
 
           <DrillableDonutChart
             title="Classes"

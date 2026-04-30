@@ -19,6 +19,7 @@ import { useMemo, useState } from "react";
 
 interface DrillableAccountChartProps {
   isLoading?: boolean;
+  filterAccountIds?: string[];
   onAccountClick?: (accountId: string, accountName: string) => void;
 }
 
@@ -29,6 +30,7 @@ interface DrillableAccountChartProps {
  */
 export function DrillableAccountChart({
   isLoading: isLoadingProp,
+  filterAccountIds,
   onAccountClick,
 }: DrillableAccountChartProps) {
   const { settings } = useSettingsContext();
@@ -50,7 +52,11 @@ export function DrillableAccountChart({
   const accountsWithValues = useMemo(() => {
     if (!accounts?.length || !performanceData) return [];
 
-    return accounts
+    const visibleAccounts = filterAccountIds
+      ? accounts.filter((a) => filterAccountIds.includes(a.id))
+      : accounts;
+
+    return visibleAccounts
       .map((account) => {
         const perf = performanceData.find((p) => p.accountId === account.id);
         if (!perf) return null;
