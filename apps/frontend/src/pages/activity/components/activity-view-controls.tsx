@@ -1,13 +1,9 @@
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
 
-import { AccountPortfolioSelector } from "@/components/account-portfolio-selector";
-import {
-  ActivityType,
-  ActivityTypeNames,
-  INSTRUMENT_TYPE_OPTIONS,
-  PORTFOLIO_ACCOUNT_ID,
-} from "@/lib/constants";
+import { buildAccountSelection } from "@/adapters";
+import { usePortfolios } from "@/hooks/use-portfolios";
+import { ActivityType, ActivityTypeNames, INSTRUMENT_TYPE_OPTIONS } from "@/lib/constants";
 import { Account } from "@/lib/types";
 import {
   AnimatedToggleGroup,
@@ -24,8 +20,6 @@ interface ActivityViewControlsProps {
   accounts: Account[];
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
-  selectedPortfolioId: string;
-  onPortfolioChange: (id: string, label: string) => void;
   selectedAccountIds: string[];
   onAccountIdsChange: (ids: string[]) => void;
   selectedActivityTypes: ActivityType[];
@@ -47,8 +41,6 @@ export function ActivityViewControls({
   accounts,
   searchQuery,
   onSearchQueryChange,
-  selectedPortfolioId,
-  onPortfolioChange,
   selectedAccountIds,
   onAccountIdsChange,
   selectedActivityTypes,
@@ -83,14 +75,49 @@ export function ActivityViewControls({
     setLocalSearch(searchQuery);
   }, [searchQuery]);
 
-  const accountOptions = useMemo(
-    () =>
-      accounts.map((account) => ({
-        value: account.id,
-        label: `${account.name} (${account.currency})`,
-      })),
-    [accounts],
-  );
+  const { data: portfolios = [] } = usePortfolios();
+
+  const accountOptions = useMemo(() => {
+    const portfolioOptions = portfolios.map((p) => ({
+      value: buildAccountSelection(p.accountIds),
+      label: `${p.name}`,
+      icon: "briefcase" as const,
+    }));
+    const individualOptions = accounts.map((account) => ({
+      value: account.id,
+      label: `${account.name} (${account.currency})`,
+    }));
+    return [...portfolioOptions, ...individualOptions];
+  }, [portfolios, accounts]);
+
+  // Portfolio composite IDs show as selected when all their accounts are selected
+  const accountSelectedValues = useMemo(() => {
+    const selected = new Set(selectedAccountIds);
+    portfolios.forEach((p) => {
+      const compositeId = buildAccountSelection(p.accountIds);
+      if (p.accountIds.length > 0 && p.accountIds.every((id) => selected.has(id))) {
+        selected.add(compositeId);
+      }
+    });
+    return selected;
+  }, [selectedAccountIds, portfolios]);
+
+  // Expand portfolio composite IDs to individual account IDs
+  const handleAccountFilterChange = (values: Set<string>) => {
+    const expanded = new Set<string>();
+    values.forEach((value) => {
+      if (value.startsWith("MULTI:")) {
+        value
+          .slice("MULTI:".length)
+          .split(",")
+          .filter(Boolean)
+          .forEach((id) => expanded.add(id));
+      } else {
+        expanded.add(value);
+      }
+    });
+    onAccountIdsChange(Array.from(expanded));
+  };
 
   const activityOptions = useMemo(
     () =>
@@ -117,7 +144,6 @@ export function ActivityViewControls({
 
   const hasActiveFilters =
     searchQuery.trim().length > 0 ||
-    selectedPortfolioId !== PORTFOLIO_ACCOUNT_ID ||
     selectedAccountIds.length > 0 ||
     selectedActivityTypes.length > 0 ||
     selectedInstrumentTypes.length > 0 ||
@@ -135,17 +161,11 @@ export function ActivityViewControls({
           className="w-[160px] lg:w-[240px]"
         />
 
-        <AccountPortfolioSelector
-          value={selectedPortfolioId}
-          onChange={onPortfolioChange}
-          className="h-8"
-        />
-
         <FacetedFilter
           title="Account"
           options={accountOptions}
-          selectedValues={new Set(selectedAccountIds)}
-          onFilterChange={(values: Set<string>) => onAccountIdsChange(Array.from(values))}
+          selectedValues={accountSelectedValues}
+          onFilterChange={handleAccountFilterChange}
         />
 
         <FacetedFilter
@@ -184,7 +204,6 @@ export function ActivityViewControls({
             onClick={() => {
               setLocalSearch("");
               onSearchQueryChange("");
-              onPortfolioChange(PORTFOLIO_ACCOUNT_ID, "All Accounts");
               onAccountIdsChange([]);
               onActivityTypesChange([]);
               onInstrumentTypesChange([]);

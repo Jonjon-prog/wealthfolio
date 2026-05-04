@@ -1,7 +1,7 @@
 import { getAccounts } from "@/adapters";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { ActivityType, PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
+import { ActivityType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
 import { Account, ActivityDetails } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
@@ -36,27 +36,9 @@ const ActivityPage = () => {
   const [showActionPalette, setShowActionPalette] = useState(false);
 
   // Filter and search state
-  const [selectedPortfolioId, setSelectedPortfolioId] = usePersistentState<string>(
-    "activity-filter-portfolio",
-    PORTFOLIO_ACCOUNT_ID,
-  );
   const [selectedAccounts, setSelectedAccounts] = usePersistentState<string[]>(
     "activity-filter-accounts",
     [],
-  );
-
-  const handlePortfolioChange = useCallback(
-    (id: string) => {
-      setSelectedPortfolioId(id);
-      if (id === PORTFOLIO_ACCOUNT_ID) {
-        setSelectedAccounts([]);
-      } else if (id.startsWith("MULTI:")) {
-        setSelectedAccounts(id.slice("MULTI:".length).split(",").filter(Boolean));
-      } else {
-        setSelectedAccounts([id]);
-      }
-    },
-    [setSelectedPortfolioId, setSelectedAccounts],
   );
   const [selectedActivityTypes, setSelectedActivityTypes] = usePersistentState<ActivityType[]>(
     "activity-filter-types",
@@ -277,13 +259,8 @@ const ActivityPage = () => {
               accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
-              selectedPortfolioId={selectedPortfolioId}
-              onPortfolioChange={handlePortfolioChange}
               selectedAccountIds={selectedAccounts}
-              onAccountIdsChange={(ids) => {
-                setSelectedAccounts(ids);
-                setSelectedPortfolioId(PORTFOLIO_ACCOUNT_ID);
-              }}
+              onAccountIdsChange={setSelectedAccounts}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               isCompactView={isCompactView}
@@ -294,13 +271,8 @@ const ActivityPage = () => {
               accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
-              selectedPortfolioId={selectedPortfolioId}
-              onPortfolioChange={handlePortfolioChange}
               selectedAccountIds={selectedAccounts}
-              onAccountIdsChange={(ids) => {
-                setSelectedAccounts(ids);
-                setSelectedPortfolioId(PORTFOLIO_ACCOUNT_ID);
-              }}
+              onAccountIdsChange={setSelectedAccounts}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               selectedInstrumentTypes={selectedInstrumentTypes}

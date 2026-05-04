@@ -7,7 +7,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@wealthfolio/ui/components/ui/sheet";
-import { AccountPortfolioSelector } from "@/components/account-portfolio-selector";
+import { buildAccountSelection } from "@/adapters";
+import { usePortfolios } from "@/hooks/use-portfolios";
 import { ActivityType, ActivityTypeNames } from "@/lib/constants";
 import { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,6 @@ import { useEffect, useState } from "react";
 interface ActivityMobileFilterSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  selectedPortfolioId: string;
-  onPortfolioChange: (id: string, label: string) => void;
   selectedAccounts: string[];
   accounts: Account[];
   setSelectedAccounts: (accountIds: string[]) => void;
@@ -29,19 +28,17 @@ interface ActivityMobileFilterSheetProps {
 export const ActivityMobileFilterSheet = ({
   open,
   onOpenChange,
-  selectedPortfolioId,
-  onPortfolioChange,
   selectedAccounts,
   accounts,
   setSelectedAccounts,
   selectedActivityTypes,
   setSelectedActivityTypes,
 }: ActivityMobileFilterSheetProps) => {
+  const { data: portfolios = [] } = usePortfolios();
   const [localAccounts, setLocalAccounts] = useState<string[]>(selectedAccounts);
   const [localActivityTypes, setLocalActivityTypes] =
     useState<ActivityType[]>(selectedActivityTypes);
 
-  // Sync local state when sheet opens
   useEffect(() => {
     if (open) {
       setLocalAccounts(selectedAccounts);
@@ -53,6 +50,16 @@ export const ActivityMobileFilterSheet = ({
     setSelectedAccounts(localAccounts);
     setSelectedActivityTypes(localActivityTypes);
     onOpenChange(false);
+  };
+
+  const togglePortfolio = (accountIds: string[]) => {
+    const allSelected = accountIds.every((id) => localAccounts.includes(id));
+    if (allSelected) {
+      setLocalAccounts(localAccounts.filter((id) => !accountIds.includes(id)));
+    } else {
+      const merged = Array.from(new Set([...localAccounts, ...accountIds]));
+      setLocalAccounts(merged);
+    }
   };
 
   const activityTypeOptions = Object.entries(ActivityTypeNames).map(([value, label]) => ({
@@ -71,18 +78,6 @@ export const ActivityMobileFilterSheet = ({
             {/* Account Filter Section */}
             <div>
               <h4 className="mb-3 font-medium">Account</h4>
-              <div className="mb-3">
-                <AccountPortfolioSelector
-                  value={selectedPortfolioId}
-                  onChange={(id, label) => {
-                    onPortfolioChange(id, label);
-                    if (id === "TOTAL") setLocalAccounts([]);
-                    else if (id.startsWith("MULTI:"))
-                      setLocalAccounts(id.slice("MULTI:".length).split(",").filter(Boolean));
-                    else setLocalAccounts([id]);
-                  }}
-                />
-              </div>
               <ul className="space-y-1">
                 <li
                   className={cn(
@@ -94,6 +89,24 @@ export const ActivityMobileFilterSheet = ({
                   <span>All Accounts</span>
                   {localAccounts.length === 0 && <Icons.Check className="h-4 w-4" />}
                 </li>
+                {portfolios.map((portfolio) => {
+                  const allSelected = portfolio.accountIds.every((id) =>
+                    localAccounts.includes(id),
+                  );
+                  return (
+                    <li
+                      key={buildAccountSelection(portfolio.accountIds)}
+                      className={cn(
+                        "flex cursor-pointer items-center justify-between rounded-md p-2 text-sm",
+                        allSelected ? "bg-accent" : "hover:bg-accent/50",
+                      )}
+                      onClick={() => togglePortfolio(portfolio.accountIds)}
+                    >
+                      <span>{portfolio.name}</span>
+                      {allSelected && <Icons.Check className="h-4 w-4" />}
+                    </li>
+                  );
+                })}
                 {accounts
                   .filter((account) => account.isActive)
                   .map((account) => (
