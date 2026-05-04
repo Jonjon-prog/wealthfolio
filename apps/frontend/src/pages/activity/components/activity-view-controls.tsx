@@ -1,8 +1,6 @@
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
 
-import { buildAccountSelection } from "@/adapters";
-import { usePortfolios } from "@/hooks/use-portfolios";
 import { ActivityType, ActivityTypeNames, INSTRUMENT_TYPE_OPTIONS } from "@/lib/constants";
 import { Account } from "@/lib/types";
 import {
@@ -13,6 +11,7 @@ import {
   Icons,
 } from "@wealthfolio/ui";
 import type { ActivityStatusFilter } from "../hooks/use-activity-search";
+import { ActivityAccountFilter } from "./activity-account-filter";
 
 export type ActivityViewMode = "table" | "datagrid";
 
@@ -75,50 +74,6 @@ export function ActivityViewControls({
     setLocalSearch(searchQuery);
   }, [searchQuery]);
 
-  const { data: portfolios = [] } = usePortfolios();
-
-  const accountOptions = useMemo(() => {
-    const portfolioOptions = portfolios.map((p) => ({
-      value: buildAccountSelection(p.accountIds),
-      label: `${p.name}`,
-      icon: "briefcase" as const,
-    }));
-    const individualOptions = accounts.map((account) => ({
-      value: account.id,
-      label: `${account.name} (${account.currency})`,
-    }));
-    return [...portfolioOptions, ...individualOptions];
-  }, [portfolios, accounts]);
-
-  // Portfolio composite IDs show as selected when all their accounts are selected
-  const accountSelectedValues = useMemo(() => {
-    const selected = new Set(selectedAccountIds);
-    portfolios.forEach((p) => {
-      const compositeId = buildAccountSelection(p.accountIds);
-      if (p.accountIds.length > 0 && p.accountIds.every((id) => selected.has(id))) {
-        selected.add(compositeId);
-      }
-    });
-    return selected;
-  }, [selectedAccountIds, portfolios]);
-
-  // Expand portfolio composite IDs to individual account IDs
-  const handleAccountFilterChange = (values: Set<string>) => {
-    const expanded = new Set<string>();
-    values.forEach((value) => {
-      if (value.startsWith("MULTI:")) {
-        value
-          .slice("MULTI:".length)
-          .split(",")
-          .filter(Boolean)
-          .forEach((id) => expanded.add(id));
-      } else {
-        expanded.add(value);
-      }
-    });
-    onAccountIdsChange(Array.from(expanded));
-  };
-
   const activityOptions = useMemo(
     () =>
       (Object.entries(ActivityTypeNames) as [ActivityType, string][]).map(([value, label]) => ({
@@ -161,11 +116,10 @@ export function ActivityViewControls({
           className="w-[160px] lg:w-[240px]"
         />
 
-        <FacetedFilter
-          title="Account"
-          options={accountOptions}
-          selectedValues={accountSelectedValues}
-          onFilterChange={handleAccountFilterChange}
+        <ActivityAccountFilter
+          accounts={accounts}
+          selectedAccountIds={selectedAccountIds}
+          onAccountIdsChange={onAccountIdsChange}
         />
 
         <FacetedFilter
