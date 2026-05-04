@@ -1,6 +1,6 @@
 //! Service for computing portfolio allocations by taxonomy.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -140,6 +140,28 @@ impl AllocationService {
                         .entry("__UNKNOWN__".to_string())
                         .or_insert(Decimal::ZERO) += market_value;
                 } else {
+                    // Find top-level categories that have child assignments for this asset.
+                    // Used to skip direct top-level assignments when children exist,
+                    // preventing double-counting (e.g. "Europe" + "France" + "Germany").
+                    let top_levels_with_children: HashSet<&str> = if rollup_to_top_level {
+                        taxonomy_assignments
+                            .iter()
+                            .filter_map(|(_, cat_id, _)| {
+                                let top = top_level_map
+                                    .get(cat_id.as_str())
+                                    .copied()
+                                    .unwrap_or(cat_id.as_str());
+                                if top != cat_id.as_str() {
+                                    Some(top)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    } else {
+                        HashSet::new()
+                    };
+
                     for (_, category_id, weight) in taxonomy_assignments {
                         // Convert weight from basis points (0-10000) to decimal (0-1)
                         let weight_decimal = Decimal::from(*weight) / dec!(10000);
@@ -155,11 +177,19 @@ impl AllocationService {
                             category_id.as_str()
                         };
 
-                        // Track original category values (for children)
+                        // Track original category values (for children panel)
                         let entry = original_values
                             .entry(category_id.clone())
                             .or_insert((Decimal::ZERO, top_level_id.to_string()));
                         entry.0 += weighted_value;
+
+                        // Skip direct top-level when child assignments exist for same top-level
+                        if rollup_to_top_level
+                            && category_id.as_str() == top_level_id
+                            && top_levels_with_children.contains(top_level_id)
+                        {
+                            continue;
+                        }
 
                         // Track rolled-up values
                         *rolled_up_values
