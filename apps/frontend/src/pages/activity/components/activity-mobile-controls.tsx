@@ -1,15 +1,13 @@
 import { Button, Icons, Input } from "@wealthfolio/ui";
-import { ActivityType } from "@/lib/constants";
-import { Account } from "@/lib/types";
+import { ActivityType, PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
 import { useState } from "react";
 import { ActivityMobileFilterSheet } from "./activity-mobile-filter-sheet";
 
 interface ActivityMobileControlsProps {
-  accounts: Account[];
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
-  selectedAccountIds: string[];
-  onAccountIdsChange: (accountIds: string[]) => void;
+  selectedPortfolioId: string;
+  onPortfolioChange: (id: string, label: string) => void;
   selectedActivityTypes: ActivityType[];
   onActivityTypesChange: (types: ActivityType[]) => void;
   isCompactView: boolean;
@@ -17,11 +15,10 @@ interface ActivityMobileControlsProps {
 }
 
 export function ActivityMobileControls({
-  accounts,
   searchQuery,
   onSearchQueryChange,
-  selectedAccountIds,
-  onAccountIdsChange,
+  selectedPortfolioId,
+  onPortfolioChange,
   selectedActivityTypes,
   onActivityTypesChange,
   isCompactView,
@@ -29,7 +26,8 @@ export function ActivityMobileControls({
 }: ActivityMobileControlsProps) {
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
 
-  const hasActiveFilters = selectedAccountIds.length > 0 || selectedActivityTypes.length > 0;
+  const hasActiveFilters =
+    selectedPortfolioId !== PORTFOLIO_ACCOUNT_ID || selectedActivityTypes.length > 0;
 
   return (
     <>
@@ -71,9 +69,8 @@ export function ActivityMobileControls({
       <ActivityMobileFilterSheet
         open={isFilterSheetOpen}
         onOpenChange={setIsFilterSheetOpen}
-        selectedAccounts={selectedAccountIds}
-        accounts={accounts}
-        setSelectedAccounts={onAccountIdsChange}
+        selectedPortfolioId={selectedPortfolioId}
+        onPortfolioChange={onPortfolioChange}
         selectedActivityTypes={selectedActivityTypes}
         setSelectedActivityTypes={onActivityTypesChange}
       />

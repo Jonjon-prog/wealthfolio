@@ -7,8 +7,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@wealthfolio/ui/components/ui/sheet";
+import { AccountPortfolioSelector } from "@/components/account-portfolio-selector";
 import { ActivityType, ActivityTypeNames } from "@/lib/constants";
-import { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@wealthfolio/ui";
 import { useEffect, useState } from "react";
@@ -16,9 +16,8 @@ import { useEffect, useState } from "react";
 interface ActivityMobileFilterSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  selectedAccounts: string[];
-  accounts: Account[];
-  setSelectedAccounts: (accountIds: string[]) => void;
+  selectedPortfolioId: string;
+  onPortfolioChange: (id: string, label: string) => void;
   selectedActivityTypes: ActivityType[];
   setSelectedActivityTypes: (types: ActivityType[]) => void;
 }
@@ -26,27 +25,22 @@ interface ActivityMobileFilterSheetProps {
 export const ActivityMobileFilterSheet = ({
   open,
   onOpenChange,
-  selectedAccounts,
-  accounts,
-  setSelectedAccounts,
+  selectedPortfolioId,
+  onPortfolioChange,
   selectedActivityTypes,
   setSelectedActivityTypes,
 }: ActivityMobileFilterSheetProps) => {
-  // Local state for temporary selections
-  const [localAccounts, setLocalAccounts] = useState<string[]>(selectedAccounts);
   const [localActivityTypes, setLocalActivityTypes] =
     useState<ActivityType[]>(selectedActivityTypes);
 
   // Sync local state when sheet opens
   useEffect(() => {
     if (open) {
-      setLocalAccounts(selectedAccounts);
       setLocalActivityTypes(selectedActivityTypes);
     }
-  }, [open, selectedAccounts, selectedActivityTypes]);
+  }, [open, selectedActivityTypes]);
 
   const handleApply = () => {
-    setSelectedAccounts(localAccounts);
     setSelectedActivityTypes(localActivityTypes);
     onOpenChange(false);
   };
@@ -67,42 +61,7 @@ export const ActivityMobileFilterSheet = ({
             {/* Account Filter Section */}
             <div>
               <h4 className="mb-3 font-medium">Account</h4>
-              <ul className="space-y-1">
-                <li
-                  className={cn(
-                    "flex cursor-pointer items-center justify-between rounded-md p-2 text-sm",
-                    localAccounts.length === 0 ? "bg-accent" : "hover:bg-accent/50",
-                  )}
-                  onClick={() => {
-                    setLocalAccounts([]);
-                  }}
-                >
-                  <span>All Accounts</span>
-                  {localAccounts.length === 0 && <Icons.Check className="h-4 w-4" />}
-                </li>
-                {accounts
-                  .filter((account) => account.isActive)
-                  .map((account) => (
-                    <li
-                      key={account.id}
-                      className={cn(
-                        "flex cursor-pointer items-center justify-between rounded-md p-2 text-sm",
-                        localAccounts.includes(account.id) ? "bg-accent" : "hover:bg-accent/50",
-                      )}
-                      onClick={() => {
-                        const newAccounts = localAccounts.includes(account.id)
-                          ? localAccounts.filter((id) => id !== account.id)
-                          : [...localAccounts, account.id];
-                        setLocalAccounts(newAccounts);
-                      }}
-                    >
-                      <span>
-                        {account.name} ({account.currency})
-                      </span>
-                      {localAccounts.includes(account.id) && <Icons.Check className="h-4 w-4" />}
-                    </li>
-                  ))}
-              </ul>
+              <AccountPortfolioSelector value={selectedPortfolioId} onChange={onPortfolioChange} />
             </div>
 
             {/* Activity Type Filter Section */}

@@ -1,7 +1,7 @@
 import { getAccounts } from "@/adapters";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { ActivityType } from "@/lib/constants";
+import { ActivityType, PORTFOLIO_ACCOUNT_ID } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
 import { Account, ActivityDetails } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
@@ -36,10 +36,17 @@ const ActivityPage = () => {
   const [showActionPalette, setShowActionPalette] = useState(false);
 
   // Filter and search state
-  const [selectedAccounts, setSelectedAccounts] = usePersistentState<string[]>(
-    "activity-filter-accounts",
-    [],
+  const [selectedPortfolioId, setSelectedPortfolioId] = usePersistentState<string>(
+    "activity-filter-portfolio",
+    PORTFOLIO_ACCOUNT_ID,
   );
+
+  const selectedAccounts = useMemo((): string[] => {
+    if (selectedPortfolioId === PORTFOLIO_ACCOUNT_ID) return [];
+    if (selectedPortfolioId.startsWith("MULTI:"))
+      return selectedPortfolioId.slice("MULTI:".length).split(",").filter(Boolean);
+    return [selectedPortfolioId];
+  }, [selectedPortfolioId]);
   const [selectedActivityTypes, setSelectedActivityTypes] = usePersistentState<ActivityType[]>(
     "activity-filter-types",
     [],
@@ -256,11 +263,10 @@ const ActivityPage = () => {
           {/* Unified Controls */}
           {isMobileViewport ? (
             <ActivityMobileControls
-              accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
-              selectedAccountIds={selectedAccounts}
-              onAccountIdsChange={setSelectedAccounts}
+              selectedPortfolioId={selectedPortfolioId}
+              onPortfolioChange={(id) => setSelectedPortfolioId(id)}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               isCompactView={isCompactView}
@@ -268,11 +274,10 @@ const ActivityPage = () => {
             />
           ) : (
             <ActivityViewControls
-              accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
-              selectedAccountIds={selectedAccounts}
-              onAccountIdsChange={setSelectedAccounts}
+              selectedPortfolioId={selectedPortfolioId}
+              onPortfolioChange={(id) => setSelectedPortfolioId(id)}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               selectedInstrumentTypes={selectedInstrumentTypes}
