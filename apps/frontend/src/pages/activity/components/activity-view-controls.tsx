@@ -8,6 +8,7 @@ import {
   INSTRUMENT_TYPE_OPTIONS,
   PORTFOLIO_ACCOUNT_ID,
 } from "@/lib/constants";
+import { Account } from "@/lib/types";
 import {
   AnimatedToggleGroup,
   Button,
@@ -20,10 +21,13 @@ import type { ActivityStatusFilter } from "../hooks/use-activity-search";
 export type ActivityViewMode = "table" | "datagrid";
 
 interface ActivityViewControlsProps {
+  accounts: Account[];
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
   selectedPortfolioId: string;
   onPortfolioChange: (id: string, label: string) => void;
+  selectedAccountIds: string[];
+  onAccountIdsChange: (ids: string[]) => void;
   selectedActivityTypes: ActivityType[];
   onActivityTypesChange: (types: ActivityType[]) => void;
   selectedInstrumentTypes: string[];
@@ -40,10 +44,13 @@ interface ActivityViewControlsProps {
 }
 
 export function ActivityViewControls({
+  accounts,
   searchQuery,
   onSearchQueryChange,
   selectedPortfolioId,
   onPortfolioChange,
+  selectedAccountIds,
+  onAccountIdsChange,
   selectedActivityTypes,
   onActivityTypesChange,
   selectedInstrumentTypes,
@@ -76,6 +83,15 @@ export function ActivityViewControls({
     setLocalSearch(searchQuery);
   }, [searchQuery]);
 
+  const accountOptions = useMemo(
+    () =>
+      accounts.map((account) => ({
+        value: account.id,
+        label: `${account.name} (${account.currency})`,
+      })),
+    [accounts],
+  );
+
   const activityOptions = useMemo(
     () =>
       (Object.entries(ActivityTypeNames) as [ActivityType, string][]).map(([value, label]) => ({
@@ -102,6 +118,7 @@ export function ActivityViewControls({
   const hasActiveFilters =
     searchQuery.trim().length > 0 ||
     selectedPortfolioId !== PORTFOLIO_ACCOUNT_ID ||
+    selectedAccountIds.length > 0 ||
     selectedActivityTypes.length > 0 ||
     selectedInstrumentTypes.length > 0 ||
     statusFilter !== "all";
@@ -122,6 +139,13 @@ export function ActivityViewControls({
           value={selectedPortfolioId}
           onChange={onPortfolioChange}
           className="h-8"
+        />
+
+        <FacetedFilter
+          title="Account"
+          options={accountOptions}
+          selectedValues={new Set(selectedAccountIds)}
+          onFilterChange={(values: Set<string>) => onAccountIdsChange(Array.from(values))}
         />
 
         <FacetedFilter
@@ -161,6 +185,7 @@ export function ActivityViewControls({
               setLocalSearch("");
               onSearchQueryChange("");
               onPortfolioChange(PORTFOLIO_ACCOUNT_ID, "All Accounts");
+              onAccountIdsChange([]);
               onActivityTypesChange([]);
               onInstrumentTypesChange([]);
               onStatusFilterChange("all");

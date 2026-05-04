@@ -40,13 +40,24 @@ const ActivityPage = () => {
     "activity-filter-portfolio",
     PORTFOLIO_ACCOUNT_ID,
   );
+  const [selectedAccounts, setSelectedAccounts] = usePersistentState<string[]>(
+    "activity-filter-accounts",
+    [],
+  );
 
-  const selectedAccounts = useMemo((): string[] => {
-    if (selectedPortfolioId === PORTFOLIO_ACCOUNT_ID) return [];
-    if (selectedPortfolioId.startsWith("MULTI:"))
-      return selectedPortfolioId.slice("MULTI:".length).split(",").filter(Boolean);
-    return [selectedPortfolioId];
-  }, [selectedPortfolioId]);
+  const handlePortfolioChange = useCallback(
+    (id: string) => {
+      setSelectedPortfolioId(id);
+      if (id === PORTFOLIO_ACCOUNT_ID) {
+        setSelectedAccounts([]);
+      } else if (id.startsWith("MULTI:")) {
+        setSelectedAccounts(id.slice("MULTI:".length).split(",").filter(Boolean));
+      } else {
+        setSelectedAccounts([id]);
+      }
+    },
+    [setSelectedPortfolioId, setSelectedAccounts],
+  );
   const [selectedActivityTypes, setSelectedActivityTypes] = usePersistentState<ActivityType[]>(
     "activity-filter-types",
     [],
@@ -263,10 +274,16 @@ const ActivityPage = () => {
           {/* Unified Controls */}
           {isMobileViewport ? (
             <ActivityMobileControls
+              accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
               selectedPortfolioId={selectedPortfolioId}
-              onPortfolioChange={(id) => setSelectedPortfolioId(id)}
+              onPortfolioChange={handlePortfolioChange}
+              selectedAccountIds={selectedAccounts}
+              onAccountIdsChange={(ids) => {
+                setSelectedAccounts(ids);
+                setSelectedPortfolioId(PORTFOLIO_ACCOUNT_ID);
+              }}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               isCompactView={isCompactView}
@@ -274,10 +291,16 @@ const ActivityPage = () => {
             />
           ) : (
             <ActivityViewControls
+              accounts={accounts}
               searchQuery={searchInput}
               onSearchQueryChange={handleSearchChange}
               selectedPortfolioId={selectedPortfolioId}
-              onPortfolioChange={(id) => setSelectedPortfolioId(id)}
+              onPortfolioChange={handlePortfolioChange}
+              selectedAccountIds={selectedAccounts}
+              onAccountIdsChange={(ids) => {
+                setSelectedAccounts(ids);
+                setSelectedPortfolioId(PORTFOLIO_ACCOUNT_ID);
+              }}
               selectedActivityTypes={selectedActivityTypes}
               onActivityTypesChange={setSelectedActivityTypes}
               selectedInstrumentTypes={selectedInstrumentTypes}
