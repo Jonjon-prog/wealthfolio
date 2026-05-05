@@ -103,7 +103,7 @@ export const ActivityMobileFilterSheet = ({
                       onClick={() => togglePortfolio(portfolio.accountIds)}
                     >
                       <span className="flex items-center gap-2">
-                        <Icons.Briefcase className="text-muted-foreground h-4 w-4" />
+                        <Icons.Folder className="text-muted-foreground h-4 w-4" />
                         {portfolio.name}
                       </span>
                       {allSelected && <Icons.Check className="h-4 w-4" />}

@@ -139,7 +139,7 @@ export function ActivityAccountFilter({
                         >
                           <Icons.Check className="h-4 w-4" />
                         </div>
-                        <Icons.Briefcase className="text-muted-foreground mr-2 h-4 w-4" />
+                        <Icons.Folder className="text-muted-foreground mr-2 h-4 w-4" />
                         <span>{portfolio.name}</span>
                       </CommandItem>
                     );

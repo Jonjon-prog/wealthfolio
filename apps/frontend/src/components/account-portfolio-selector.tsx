@@ -106,7 +106,7 @@ export function AccountPortfolioSelector({
                     keywords={[portfolio.name]}
                     onSelect={() => select(compositeId, portfolio.name)}
                   >
-                    <Icons.Briefcase className="mr-2 h-4 w-4 opacity-70" />
+                    <Icons.Folder className="mr-2 h-4 w-4 opacity-70" />
                     <span>{portfolio.name}</span>
                     <Icons.Check
                       className={cn(
