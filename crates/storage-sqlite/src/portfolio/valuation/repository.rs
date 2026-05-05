@@ -401,3 +401,136 @@ impl ValuationRepositoryTrait for ValuationRepository {
         Ok(history_records)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{create_pool, run_migrations, write_actor::spawn_writer};
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use tempfile::tempdir;
+    use wealthfolio_core::portfolio::valuation::ValuationRepositoryTrait;
+
+    async fn setup() -> (
+        ValuationRepository,
+        Arc<Pool<ConnectionManager<SqliteConnection>>>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db").to_string_lossy().to_string();
+        run_migrations(&db_path).unwrap();
+        let pool = create_pool(&db_path).unwrap();
+        let writer = spawn_writer((*pool).clone()).unwrap();
+        let repo = ValuationRepository::new(Arc::clone(&pool), writer);
+        (repo, pool, dir)
+    }
+
+    fn insert_valuation(
+        pool: &Arc<Pool<ConnectionManager<SqliteConnection>>>,
+        acc_id: &str,
+        val_date: &str,
+        val_total: f64,
+        val_net: f64,
+    ) {
+        let mut conn = get_connection(pool).unwrap();
+        diesel::sql_query(format!(
+            "INSERT OR IGNORE INTO accounts (id, name, account_type, currency, is_default, is_active, created_at, updated_at) \
+             VALUES ('{acc_id}', 'Test', 'REGULAR', 'USD', false, true, datetime('now'), datetime('now'))"
+        ))
+        .execute(&mut conn)
+        .unwrap();
+
+        diesel::sql_query(format!(
+            "INSERT INTO daily_account_valuation \
+             (id, account_id, valuation_date, account_currency, base_currency, fx_rate_to_base, \
+              cash_balance, investment_market_value, total_value, cost_basis, net_contribution, calculated_at) \
+             VALUES ('{acc_id}-{val_date}', '{acc_id}', '{val_date}', 'USD', 'USD', '1.0', \
+                     '0', '{val_total}', '{val_total}', '0', '{val_net}', datetime('now'))"
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_multi_account_aggregates_by_date() {
+        let (repo, pool, _dir) = setup().await;
+
+        // Two accounts with valuations on the same dates
+        insert_valuation(&pool, "acc-a", "2024-01-01", 1000.0, 500.0);
+        insert_valuation(&pool, "acc-b", "2024-01-01", 2000.0, 800.0);
+        insert_valuation(&pool, "acc-a", "2024-01-02", 1100.0, 500.0);
+        insert_valuation(&pool, "acc-b", "2024-01-02", 2100.0, 800.0);
+
+        let result = repo
+            .get_multi_account_historical_valuations(
+                &["acc-a", "acc-b"],
+                "MULTI:acc-a,acc-b",
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(result.len(), 2, "should have one row per date");
+
+        let day1 = &result[0];
+        assert_eq!(
+            day1.valuation_date,
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        );
+        assert_eq!(day1.total_value, Decimal::from(3000));
+        assert_eq!(day1.net_contribution, Decimal::from(1300));
+        assert_eq!(day1.account_id, "MULTI:acc-a,acc-b");
+
+        let day2 = &result[1];
+        assert_eq!(day2.total_value, Decimal::from(3200));
+    }
+
+    #[tokio::test]
+    async fn test_multi_account_missing_date_for_one_account() {
+        let (repo, pool, _dir) = setup().await;
+
+        // acc-a starts before acc-b
+        insert_valuation(&pool, "acc-a", "2024-01-01", 1000.0, 500.0);
+        insert_valuation(&pool, "acc-a", "2024-01-02", 1100.0, 500.0);
+        insert_valuation(&pool, "acc-b", "2024-01-02", 2000.0, 800.0); // no acc-b on day 1
+
+        let result = repo
+            .get_multi_account_historical_valuations(
+                &["acc-a", "acc-b"],
+                "MULTI:acc-a,acc-b",
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(result.len(), 2);
+        // Day 1: only acc-a
+        assert_eq!(result[0].total_value, Decimal::from(1000));
+        // Day 2: both accounts summed
+        assert_eq!(result[1].total_value, Decimal::from(3100));
+    }
+
+    #[tokio::test]
+    async fn test_multi_account_date_filter() {
+        let (repo, pool, _dir) = setup().await;
+
+        insert_valuation(&pool, "acc-a", "2024-01-01", 1000.0, 500.0);
+        insert_valuation(&pool, "acc-a", "2024-01-02", 1100.0, 500.0);
+        insert_valuation(&pool, "acc-a", "2024-01-03", 1200.0, 500.0);
+
+        let start = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+
+        let result = repo
+            .get_multi_account_historical_valuations(
+                &["acc-a"],
+                "MULTI:acc-a",
+                Some(start),
+                Some(end),
+            )
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].total_value, Decimal::from(1100));
+    }
+}
