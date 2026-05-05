@@ -422,13 +422,13 @@ export default function PerformancePage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuItem onSelect={() => setAccountSheetOpen(true)} className="py-4 md:py-2">
-                <Icons.Briefcase className="mr-2 h-4 w-4" />
+                <Icons.Wallet className="mr-2 h-4 w-4" />
                 Add Account
               </DropdownMenuItem>
               {portfolios.length > 0 && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger className="py-4 md:py-2">
-                    <Icons.Wallet className="mr-2 h-4 w-4" />
+                    <Icons.Briefcase className="mr-2 h-4 w-4" />
                     Add Portfolio
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
@@ -502,7 +502,7 @@ export default function PerformancePage() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="bg-secondary/30 border-none">
-                    <Icons.Wallet className="mr-2 h-4 w-4" />
+                    <Icons.Briefcase className="mr-2 h-4 w-4" />
                     Add Portfolio
                   </Button>
                 </DropdownMenuTrigger>
