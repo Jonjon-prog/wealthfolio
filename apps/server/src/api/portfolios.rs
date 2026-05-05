@@ -61,7 +61,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/portfolios", get(list_portfolios).post(create_portfolio))
         .route(
-            "/portfolios/:id",
+            "/portfolios/{id}",
             get(get_portfolio)
                 .put(update_portfolio)
                 .delete(delete_portfolio),
