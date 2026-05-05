@@ -3,12 +3,12 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 
 use crate::{error::ApiResult, main_lib::AppState};
-use wealthfolio_core::portfolio::portfolios::{NewPortfolio, Portfolio, PortfolioServiceTrait};
+use wealthfolio_core::portfolio::portfolios::{NewPortfolio, Portfolio};
 
 async fn list_portfolios(State(state): State<Arc<AppState>>) -> ApiResult<Json<Vec<Portfolio>>> {
     let portfolios = state.portfolio_service.get_all_portfolios()?;
