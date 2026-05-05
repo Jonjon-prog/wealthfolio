@@ -3,6 +3,7 @@
 import { calculatePerformanceSummary } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useLatestValuations } from "@/hooks/use-latest-valuations";
+import { usePortfolios } from "@/hooks/use-portfolios";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type { AccountValuation, DateRange } from "@/lib/types";
@@ -61,6 +62,7 @@ const AccountSummaryComponent = React.memo(
     isLoadingValuation = false,
     displayInAccountCurrency = false,
     isNested = false,
+    icon,
   }: {
     item: AccountSummaryDisplayData;
     isExpanded?: boolean;
@@ -68,6 +70,7 @@ const AccountSummaryComponent = React.memo(
     isLoadingValuation?: boolean;
     displayInAccountCurrency?: boolean;
     isNested?: boolean;
+    icon?: React.ReactNode;
   }) => {
     const isGroup = item.isGroup ?? false;
     const useAccountCurrency =
@@ -166,6 +169,7 @@ const AccountSummaryComponent = React.memo(
       <>
         <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
           <h3 className="flex items-center gap-1.5 text-sm font-semibold leading-tight md:text-base md:font-semibold">
+            {icon}
             <span className="truncate">{name}</span>
             {hasBadData && (
               <Tooltip>
@@ -260,6 +264,8 @@ export const AccountsSummary = React.memo(
   ({ dateRange, isAllTime }: { dateRange?: DateRange; isAllTime?: boolean }) => {
     const { accountsGrouped, setAccountsGrouped, settings } = useSettingsContext();
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+    const { data: portfolios = [] } = usePortfolios();
 
     const {
       accounts: allAccounts,
@@ -418,17 +424,107 @@ export const AccountsSummary = React.memo(
       const isLoadingPerformance = isLoadingValuations || isLoadingPerformanceQueries;
 
       if (accountsGrouped) {
+        const baseCurrencyDefault = settings?.baseCurrency ?? "USD";
+
+        // Build portfolio groups first — aggregate member account views
+        const portfolioMemberIds = new Set<string>(portfolios.flatMap((p) => p.accountIds));
+
+        const buildGroupData = (
+          groupAccounts: AccountSummaryDisplayData[],
+          groupName: string,
+        ): AccountSummaryDisplayData => {
+          const baseCurrency = groupAccounts[0]?.baseCurrency ?? baseCurrencyDefault;
+          const totalValueBaseCurrency = groupAccounts.reduce(
+            (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
+            0,
+          );
+          const totalGainLossAmountBase = groupAccounts.reduce(
+            (sum, acc) => sum + Number(acc.totalGainLossAmountBaseCurrency ?? 0),
+            0,
+          );
+          // Market-value-weighted average — only over accounts with a computable return.
+          const knownReturnAccounts = groupAccounts.filter(
+            (acc) => acc.totalGainLossPercent !== null,
+          );
+          const knownReturnTotalValue = knownReturnAccounts.reduce(
+            (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
+            0,
+          );
+          const totalGainLossPercent =
+            knownReturnAccounts.length > 0 && knownReturnTotalValue > 0
+              ? knownReturnAccounts.reduce(
+                  (sum, acc) =>
+                    sum +
+                    acc.totalGainLossPercent! *
+                      (Number(acc.totalValueBaseCurrency) / knownReturnTotalValue),
+                  0,
+                )
+              : null;
+
+          const groupCurrencies = new Set(
+            groupAccounts
+              .map((acc) => acc.accountCurrency ?? acc.baseCurrency)
+              .filter((c): c is string => Boolean(c)),
+          );
+          const singleCurrency = groupCurrencies.size === 1;
+          const groupDisplayCurrency = singleCurrency
+            ? (groupAccounts[0]?.accountCurrency ?? groupAccounts[0]?.baseCurrency ?? baseCurrency)
+            : baseCurrency;
+          const totalValueAccountCurrency = singleCurrency
+            ? groupAccounts.reduce(
+                (sum, acc) =>
+                  sum + Number(acc.totalValueAccountCurrency ?? acc.totalValueBaseCurrency),
+                0,
+              )
+            : undefined;
+          const totalGainLossAmountAccountCurrency = singleCurrency
+            ? groupAccounts.reduce(
+                (sum, acc) => sum + Number(acc.totalGainLossAmountAccountCurrency ?? 0),
+                0,
+              )
+            : undefined;
+
+          return {
+            accountName: groupName,
+            totalValueBaseCurrency,
+            baseCurrency,
+            totalGainLossAmountBaseCurrency: totalGainLossAmountBase,
+            totalGainLossPercent,
+            accountCurrency: groupDisplayCurrency,
+            totalValueAccountCurrency,
+            totalGainLossAmountAccountCurrency: totalGainLossAmountAccountCurrency ?? null,
+            isGroup: true,
+            accountCount: groupAccounts.length,
+            accounts: groupAccounts,
+            displayInAccountCurrency: singleCurrency,
+          };
+        };
+
+        const portfolioGroups: (AccountSummaryDisplayData & { portfolioId: string })[] = portfolios
+          .map((portfolio) => {
+            const memberViews = combinedAccountViews.filter(
+              (v) => v.accountId && portfolio.accountIds.includes(v.accountId),
+            );
+            if (memberViews.length === 0) return null;
+            return { ...buildGroupData(memberViews, portfolio.name), portfolioId: portfolio.id };
+          })
+          .filter((g): g is AccountSummaryDisplayData & { portfolioId: string } => g !== null);
+
+        portfolioGroups.sort(
+          (a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency),
+        );
+
+        // Account groups — skip portfolio members
         const groups: Record<string, AccountSummaryDisplayData[]> = {};
         const standaloneAccounts: AccountSummaryDisplayData[] = [];
 
         combinedAccountViews.forEach((account) => {
+          if (portfolioMemberIds.has(account.accountId ?? "")) return;
           const groupName = account.accountGroup ?? "Uncategorized";
           if (groupName === "Uncategorized") {
             standaloneAccounts.push(account);
           } else {
-            if (!groups[groupName]) {
-              groups[groupName] = [];
-            }
+            if (!groups[groupName]) groups[groupName] = [];
             groups[groupName].push(account);
           }
         });
@@ -439,79 +535,7 @@ export const AccountsSummary = React.memo(
           if (groupAccounts.length === 1) {
             standaloneAccounts.push(groupAccounts[0]);
           } else {
-            const baseCurrency = groupAccounts[0]?.baseCurrency ?? settings?.baseCurrency ?? "USD";
-            const groupCurrencies = new Set(
-              groupAccounts
-                .map((acc) => acc.accountCurrency ?? acc.baseCurrency)
-                .filter((currency): currency is string => Boolean(currency)),
-            );
-            const groupDisplaysAccountCurrency = groupCurrencies.size === 1;
-            const groupDisplayCurrency = groupDisplaysAccountCurrency
-              ? (groupAccounts[0]?.accountCurrency ??
-                groupAccounts[0]?.baseCurrency ??
-                baseCurrency)
-              : baseCurrency;
-
-            const totalValueBaseCurrency = groupAccounts.reduce(
-              (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
-              0,
-            );
-
-            const totalGainLossAmountBase = groupAccounts.reduce(
-              (sum, acc) => sum + Number(acc.totalGainLossAmountBaseCurrency ?? 0),
-              0,
-            );
-
-            // Market-value-weighted average — only over accounts with a computable return.
-            // Accounts with null return (negative start value) are excluded and the
-            // denominator is reweighted to their combined value, so they don't dilute the result.
-            const knownReturnAccounts = groupAccounts.filter(
-              (acc) => acc.totalGainLossPercent !== null,
-            );
-            const knownReturnTotalValue = knownReturnAccounts.reduce(
-              (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
-              0,
-            );
-            const groupTotalReturnPercentBase =
-              knownReturnAccounts.length > 0 && knownReturnTotalValue > 0
-                ? knownReturnAccounts.reduce(
-                    (sum, acc) =>
-                      sum +
-                      acc.totalGainLossPercent! *
-                        (Number(acc.totalValueBaseCurrency) / knownReturnTotalValue),
-                    0,
-                  )
-                : null;
-
-            const totalValueAccountCurrency = groupDisplaysAccountCurrency
-              ? groupAccounts.reduce(
-                  (sum, acc) =>
-                    sum + Number(acc.totalValueAccountCurrency ?? acc.totalValueBaseCurrency),
-                  0,
-                )
-              : undefined;
-
-            const totalGainLossAmountAccountCurrency = groupDisplaysAccountCurrency
-              ? groupAccounts.reduce(
-                  (sum, acc) => sum + Number(acc.totalGainLossAmountAccountCurrency ?? 0),
-                  0,
-                )
-              : undefined;
-
-            actualGroups.push({
-              accountName: groupName,
-              totalValueBaseCurrency,
-              baseCurrency,
-              totalGainLossAmountBaseCurrency: totalGainLossAmountBase,
-              totalGainLossPercent: groupTotalReturnPercentBase,
-              accountCurrency: groupDisplayCurrency,
-              totalValueAccountCurrency,
-              totalGainLossAmountAccountCurrency: totalGainLossAmountAccountCurrency ?? null,
-              isGroup: true,
-              accountCount: groupAccounts.length,
-              accounts: groupAccounts,
-              displayInAccountCurrency: groupDisplaysAccountCurrency,
-            });
+            actualGroups.push(buildGroupData(groupAccounts, groupName));
           }
         });
 
@@ -522,45 +546,58 @@ export const AccountsSummary = React.memo(
           (a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency),
         );
 
+        const renderGroupCard = (
+          groupKey: string,
+          group: AccountSummaryDisplayData,
+          icon?: React.ReactNode,
+        ) => {
+          const isExpanded = expandedGroups[groupKey];
+          const sortedAccounts = [...(group.accounts ?? [])].sort(
+            (a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency),
+          );
+          return (
+            <div
+              key={groupKey}
+              className="border-border bg-card shadow-xs overflow-hidden rounded-lg border transition-shadow duration-150 hover:shadow-md"
+            >
+              <div className="cursor-pointer">
+                <AccountSummaryComponent
+                  item={group}
+                  isExpanded={isExpanded}
+                  onToggle={() => toggleGroup(groupKey)}
+                  icon={icon}
+                />
+              </div>
+              {isExpanded && (
+                <div className="border-border/50 border-t">
+                  <div className="divide-border/50 divide-y">
+                    {sortedAccounts.map((account) => (
+                      <div key={account.accountId} className="px-4 py-3 md:px-5 md:py-4">
+                        <AccountSummaryComponent
+                          item={account}
+                          isLoadingValuation={isLoadingPerformance}
+                          displayInAccountCurrency
+                          isNested
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
         return (
           <>
-            {actualGroups.map((group) => {
-              const isExpanded = expandedGroups[group.accountName];
-              const sortedAccounts = [...(group.accounts ?? [])].sort(
-                (a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency),
-              );
-
-              return (
-                <div
-                  key={group.accountName}
-                  className="border-border bg-card shadow-xs overflow-hidden rounded-lg border transition-shadow duration-150 hover:shadow-md"
-                >
-                  <div className="cursor-pointer">
-                    <AccountSummaryComponent
-                      item={group}
-                      isExpanded={isExpanded}
-                      onToggle={() => toggleGroup(group.accountName)}
-                    />
-                  </div>
-                  {isExpanded && (
-                    <div className="border-border/50 border-t">
-                      <div className="divide-border/50 divide-y">
-                        {sortedAccounts.map((account) => (
-                          <div key={account.accountId} className="px-4 py-3 md:px-5 md:py-4">
-                            <AccountSummaryComponent
-                              item={account}
-                              isLoadingValuation={isLoadingPerformance}
-                              displayInAccountCurrency
-                              isNested
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {portfolioGroups.map((group) =>
+              renderGroupCard(
+                `portfolio-${group.portfolioId}`,
+                group,
+                <Icons.Folder className="text-muted-foreground h-4 w-4 shrink-0" />,
+              ),
+            )}
+            {actualGroups.map((group) => renderGroupCard(group.accountName, group))}
             {standaloneAccounts.map((account) => (
               <AccountSummaryComponent
                 key={account.accountId}
@@ -596,6 +633,7 @@ export const AccountsSummary = React.memo(
       isErrorAccounts,
       errorAccounts,
       settings?.baseCurrency,
+      portfolios,
     ]);
 
     return (
