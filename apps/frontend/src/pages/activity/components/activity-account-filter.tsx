@@ -93,7 +93,10 @@ export function ActivityAccountFilter({
               </Badge>
               <div className="hidden space-x-1 lg:flex">
                 {selectedLabels.length > 2 ? (
-                  <Badge variant="secondary" className="text-foreground rounded-sm px-1 font-normal">
+                  <Badge
+                    variant="secondary"
+                    className="text-foreground rounded-sm px-1 font-normal"
+                  >
                     {selectedLabels.length} selected
                   </Badge>
                 ) : (
