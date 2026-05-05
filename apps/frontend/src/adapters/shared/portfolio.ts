@@ -58,8 +58,8 @@ export const calculatePerformanceHistory = async (
   endDate: string | undefined,
   trackingMode?: "HOLDINGS" | "TRANSACTIONS",
 ): Promise<PerformanceMetrics> => {
-  let resolvedType: "account" | "symbol" = itemType === "portfolio" ? "account" : itemType;
   let resolvedId = itemId;
+  const resolvedType: "account" | "symbol" = itemType === "portfolio" ? "account" : itemType;
 
   if (itemType === "portfolio") {
     const { getPortfolioGroup, buildAccountSelection } = await import("./portfolios");

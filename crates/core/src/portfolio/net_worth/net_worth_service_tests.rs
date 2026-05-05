@@ -800,6 +800,46 @@ impl ValuationRepositoryTrait for MockValuationRepository {
     ) -> Result<Vec<NegativeBalanceInfo>> {
         Ok(Vec::new())
     }
+
+    fn get_multi_account_historical_valuations(
+        &self,
+        account_ids: &[&str],
+        composite_id: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>> {
+        use std::collections::HashMap;
+        let mut by_date: HashMap<NaiveDate, DailyAccountValuation> = HashMap::new();
+        for v in &self.valuations {
+            if !account_ids.contains(&v.account_id.as_str()) {
+                continue;
+            }
+            if start_date.map(|sd| v.valuation_date < sd).unwrap_or(false) {
+                continue;
+            }
+            if end_date.map(|ed| v.valuation_date > ed).unwrap_or(false) {
+                continue;
+            }
+            let entry = by_date.entry(v.valuation_date).or_insert_with(|| {
+                let mut agg = v.clone();
+                agg.account_id = composite_id.to_string();
+                agg.cash_balance = rust_decimal::Decimal::ZERO;
+                agg.investment_market_value = rust_decimal::Decimal::ZERO;
+                agg.total_value = rust_decimal::Decimal::ZERO;
+                agg.cost_basis = rust_decimal::Decimal::ZERO;
+                agg.net_contribution = rust_decimal::Decimal::ZERO;
+                agg
+            });
+            entry.cash_balance += v.cash_balance;
+            entry.investment_market_value += v.investment_market_value;
+            entry.total_value += v.total_value;
+            entry.cost_basis += v.cost_basis;
+            entry.net_contribution += v.net_contribution;
+        }
+        let mut result: Vec<_> = by_date.into_values().collect();
+        result.sort_by_key(|v| v.valuation_date);
+        Ok(result)
+    }
 }
 
 // ============================================================================
