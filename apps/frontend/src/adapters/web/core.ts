@@ -321,6 +321,13 @@ export const COMMANDS: CommandMap = {
   unlink_liability: { method: "DELETE", path: "/alternative-assets" },
   update_alternative_asset_metadata: { method: "PUT", path: "/alternative-assets" },
   get_alternative_holdings: { method: "GET", path: "/alternative-holdings" },
+  // Portfolio groups
+  get_portfolios: { method: "GET", path: "/portfolios" },
+  get_portfolio_group: { method: "GET", path: "/portfolios" },
+  create_portfolio_group: { method: "POST", path: "/portfolios" },
+  update_portfolio_group: { method: "PUT", path: "/portfolios" },
+  delete_portfolio_group: { method: "DELETE", path: "/portfolios" },
+  find_portfolio_by_accounts: { method: "POST", path: "/portfolios/find-by-accounts" },
 };
 
 /**

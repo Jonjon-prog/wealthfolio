@@ -29,6 +29,10 @@ vi.mock("@/hooks/use-latest-valuations", () => ({
   useLatestValuations: vi.fn(),
 }));
 
+vi.mock("@/hooks/use-portfolios", () => ({
+  usePortfolios: vi.fn().mockReturnValue({ data: [] }),
+}));
+
 vi.mock("@/lib/settings-provider", () => ({
   useSettingsContext: vi.fn(),
 }));
@@ -62,6 +66,7 @@ vi.mock("@wealthfolio/ui/components/ui/icons", () => ({
     ChevronRight: () => <span>chevron-right</span>,
     ListCollapse: () => <span>list-collapse</span>,
     Group: () => <span>group</span>,
+    Folder: () => <span>folder</span>,
     AlertTriangle: () => <span>alert-triangle</span>,
   },
 }));

@@ -296,7 +296,6 @@ impl ValuationRepositoryTrait for ValuationRepository {
         let mut sql = format!(
             "SELECT valuation_date,
                     MAX(base_currency) AS base_currency,
-                    '1.0' AS fx_rate_to_base,
                     SUM(CAST(cash_balance AS REAL)) AS cash_balance,
                     SUM(CAST(investment_market_value AS REAL)) AS investment_market_value,
                     SUM(CAST(total_value AS REAL)) AS total_value,
@@ -320,8 +319,6 @@ impl ValuationRepositoryTrait for ValuationRepository {
             val_date: String,
             #[diesel(sql_type = diesel::sql_types::Text, column_name = "base_currency")]
             base_cur: String,
-            #[diesel(sql_type = diesel::sql_types::Text, column_name = "fx_rate_to_base")]
-            fx_rate: String,
             #[diesel(sql_type = diesel::sql_types::Text, column_name = "cash_balance")]
             cash_bal: String,
             #[diesel(sql_type = diesel::sql_types::Text, column_name = "investment_market_value")]
