@@ -55,8 +55,8 @@ export function useCalculatePerformanceHistory({
           item.id,
           startDate!,
           endDate!,
-          // Only pass trackingMode for accounts, not for symbols
-          item.type === "account" ? trackingMode : undefined,
+          // Only pass trackingMode for accounts and portfolios, not for symbols
+          item.type !== "symbol" ? trackingMode : undefined,
         ),
       // Enable query only if dates are present (item validation done above).
       enabled: !!startDate && !!endDate,

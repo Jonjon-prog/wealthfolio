@@ -52,13 +52,23 @@ export const getLatestValuations = async (accountIds: string[]): Promise<Account
 };
 
 export const calculatePerformanceHistory = async (
-  itemType: "account" | "symbol",
+  itemType: "account" | "symbol" | "portfolio",
   itemId: string,
   startDate: string | undefined,
   endDate: string | undefined,
   trackingMode?: "HOLDINGS" | "TRANSACTIONS",
 ): Promise<PerformanceMetrics> => {
-  const args: Record<string, unknown> = { itemType, itemId };
+  let resolvedType: "account" | "symbol" = itemType === "portfolio" ? "account" : itemType;
+  let resolvedId = itemId;
+
+  if (itemType === "portfolio") {
+    const { getPortfolioGroup, buildAccountSelection } = await import("./portfolios");
+    const portfolio = await getPortfolioGroup(itemId);
+    if (!portfolio) throw new Error(`Portfolio not found: ${itemId}`);
+    resolvedId = buildAccountSelection(portfolio.accountIds);
+  }
+
+  const args: Record<string, unknown> = { itemType: resolvedType, itemId: resolvedId };
   if (startDate) args.startDate = startDate;
   if (endDate) args.endDate = endDate;
   if (trackingMode) args.trackingMode = trackingMode;

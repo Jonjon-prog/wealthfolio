@@ -47,4 +47,14 @@ pub trait ValuationRepositoryTrait: Send + Sync {
         &self,
         account_ids: &[String],
     ) -> Result<Vec<NegativeBalanceInfo>>;
+
+    /// Get historical valuations aggregated across multiple accounts, grouped by date.
+    /// Sums total_value, net_contribution, cost_basis, etc. for each date.
+    fn get_multi_account_historical_valuations(
+        &self,
+        account_ids: &[&str],
+        composite_id: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>>;
 }

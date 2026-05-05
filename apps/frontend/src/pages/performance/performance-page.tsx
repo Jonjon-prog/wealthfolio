@@ -33,6 +33,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   GainPercent,
   Icons,
@@ -43,6 +46,7 @@ import { useMemo, useState } from "react";
 import { AccountSelector } from "../../components/account-selector";
 import { AccountSelectorMobile } from "../../components/account-selector-mobile";
 import { BenchmarkSymbolSelectorMobile } from "../../components/benchmark-symbol-selector-mobile";
+import { usePortfolios } from "@/hooks/use-portfolios";
 import { useCalculatePerformanceHistory } from "./hooks/use-performance-data";
 
 const PORTFOLIO_TOTAL: TrackedItem = {
@@ -227,13 +231,12 @@ export default function PerformancePage() {
   const [benchmarkSheetOpen, setBenchmarkSheetOpen] = useState(false);
 
   // Helper function to sort comparison items (accounts first, then symbols)
+  const { data: portfolios = [] } = usePortfolios();
+
   const sortComparisonItems = (items: TrackedItem[]): TrackedItem[] => {
+    const order = { account: 0, portfolio: 1, symbol: 2 };
     return [...items].sort((a, b) => {
-      // Sort by type first (accounts before symbols)
-      if (a.type !== b.type) {
-        return a.type === "account" ? -1 : 1;
-      }
-      // If same type, maintain original order
+      if (a.type !== b.type) return order[a.type] - order[b.type];
       return 0;
     });
   };
@@ -320,6 +323,19 @@ export default function PerformancePage() {
     setSelectedItemId(accountId);
   };
 
+  const handlePortfolioSelect = (portfolio: { id: string; name: string }) => {
+    const exists = selectedItems.some((item) => item.id === portfolio.id);
+    if (exists) {
+      const next = sortComparisonItems(selectedItems.filter((item) => item.id !== portfolio.id));
+      setSelectedItems(next);
+      if (selectedItemId === portfolio.id) setSelectedItemId(null);
+      return;
+    }
+    const newItem: TrackedItem = { id: portfolio.id, type: "portfolio", name: portfolio.name };
+    setSelectedItems(sortComparisonItems([...selectedItems, newItem]));
+    setSelectedItemId(portfolio.id);
+  };
+
   const handleSymbolSelect = (symbol: { id: string; name: string }) => {
     const symbolId = String(symbol.id);
     const exists = selectedItems.some((item) => item.id === symbolId);
@@ -343,6 +359,8 @@ export default function PerformancePage() {
     e.stopPropagation();
     if (item.type === "account") {
       handleAccountSelect({ id: item.id, name: item.name });
+    } else if (item.type === "portfolio") {
+      handlePortfolioSelect({ id: item.id, name: item.name });
     } else {
       setSelectedItems((prev) => sortComparisonItems(prev.filter((i) => i.id !== item.id)));
     }
@@ -407,6 +425,28 @@ export default function PerformancePage() {
                 <Icons.Briefcase className="mr-2 h-4 w-4" />
                 Add Account
               </DropdownMenuItem>
+              {portfolios.length > 0 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="py-4 md:py-2">
+                    <Icons.Wallet className="mr-2 h-4 w-4" />
+                    Add Portfolio
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {portfolios.map((p) => (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onSelect={() => handlePortfolioSelect({ id: p.id, name: p.name })}
+                        className="py-4 md:py-2"
+                      >
+                        {selectedItems.some((i) => i.id === p.id) && (
+                          <Icons.Check className="mr-2 h-4 w-4" />
+                        )}
+                        {p.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
               <DropdownMenuItem
                 onSelect={() => setBenchmarkSheetOpen(true)}
                 className="py-4 md:py-2"
@@ -458,6 +498,29 @@ export default function PerformancePage() {
               buttonText="Add account"
               includePortfolio={true}
             />
+            {portfolios.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="bg-secondary/30 border-none">
+                    <Icons.Wallet className="mr-2 h-4 w-4" />
+                    Add Portfolio
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {portfolios.map((p) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onSelect={() => handlePortfolioSelect({ id: p.id, name: p.name })}
+                    >
+                      {selectedItems.some((i) => i.id === p.id) && (
+                        <Icons.Check className="mr-2 h-4 w-4" />
+                      )}
+                      {p.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <BenchmarkSymbolSelector onSelect={handleSymbolSelect} />
           </div>
         </div>

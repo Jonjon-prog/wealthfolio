@@ -390,6 +390,19 @@ impl ValuationServiceTrait for ValuationService {
             "Loading historical valuations for account '{}' from {:?} to {:?}",
             account_id, start_date_opt, end_date_opt
         );
+
+        if let Some(ids_str) = account_id.strip_prefix("MULTI:") {
+            let account_ids: Vec<&str> = ids_str.split(',').filter(|s| !s.is_empty()).collect();
+            return self
+                .valuation_repository
+                .get_multi_account_historical_valuations(
+                    &account_ids,
+                    account_id,
+                    start_date_opt,
+                    end_date_opt,
+                );
+        }
+
         self.valuation_repository.get_historical_valuations(
             account_id,
             start_date_opt,

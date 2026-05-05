@@ -1,11 +1,12 @@
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sql_query;
 use diesel::sql_types::Text;
 use diesel::sqlite::Sqlite;
 use diesel::sqlite::SqliteConnection;
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -272,6 +273,106 @@ impl ValuationRepositoryTrait for ValuationRepository {
             })
             .collect();
         Ok(result)
+    }
+
+    fn get_multi_account_historical_valuations(
+        &self,
+        account_ids: &[&str],
+        composite_id: &str,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>> {
+        if account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+
+        let placeholders = account_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut sql = format!(
+            "SELECT valuation_date,
+                    MAX(base_currency) AS base_currency,
+                    '1.0' AS fx_rate_to_base,
+                    SUM(CAST(cash_balance AS REAL)) AS cash_balance,
+                    SUM(CAST(investment_market_value AS REAL)) AS investment_market_value,
+                    SUM(CAST(total_value AS REAL)) AS total_value,
+                    SUM(CAST(cost_basis AS REAL)) AS cost_basis,
+                    SUM(CAST(net_contribution AS REAL)) AS net_contribution,
+                    MAX(calculated_at) AS calculated_at
+             FROM daily_account_valuation
+             WHERE account_id IN ({placeholders})"
+        );
+        if start_date.is_some() {
+            sql.push_str(" AND valuation_date >= ?");
+        }
+        if end_date.is_some() {
+            sql.push_str(" AND valuation_date <= ?");
+        }
+        sql.push_str(" GROUP BY valuation_date ORDER BY valuation_date ASC");
+
+        #[derive(QueryableByName)]
+        struct MultiRow {
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "valuation_date")]
+            val_date: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "base_currency")]
+            base_cur: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "fx_rate_to_base")]
+            fx_rate: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "cash_balance")]
+            cash_bal: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "investment_market_value")]
+            inv_val: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "total_value")]
+            total_val: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "cost_basis")]
+            cost_bas: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "net_contribution")]
+            net_contrib: String,
+            #[diesel(sql_type = diesel::sql_types::Text, column_name = "calculated_at")]
+            calc_at: String,
+        }
+
+        let mut q = sql_query(&sql).into_boxed::<Sqlite>();
+        for acc_id in account_ids {
+            q = q.bind::<Text, _>(*acc_id);
+        }
+        if let Some(s) = start_date {
+            q = q.bind::<Text, _>(s.to_string());
+        }
+        if let Some(e) = end_date {
+            q = q.bind::<Text, _>(e.to_string());
+        }
+
+        let rows: Vec<MultiRow> = q.load(&mut conn).map_err(StorageError::from)?;
+
+        let results = rows
+            .into_iter()
+            .filter_map(|r| {
+                let date = NaiveDate::parse_from_str(&r.val_date, "%Y-%m-%d").ok()?;
+                Some(DailyAccountValuation {
+                    id: format!("{composite_id}-{}", r.val_date),
+                    account_id: composite_id.to_string(),
+                    valuation_date: date,
+                    account_currency: r.base_cur.clone(),
+                    base_currency: r.base_cur,
+                    fx_rate_to_base: Decimal::ONE,
+                    cash_balance: r.cash_bal.parse().unwrap_or_default(),
+                    investment_market_value: r.inv_val.parse().unwrap_or_default(),
+                    total_value: r.total_val.parse().unwrap_or_default(),
+                    cost_basis: r.cost_bas.parse().unwrap_or_default(),
+                    net_contribution: r.net_contrib.parse().unwrap_or_default(),
+                    calculated_at: DateTime::parse_from_rfc3339(&r.calc_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .collect();
+
+        Ok(results)
     }
 
     fn get_valuations_on_date(
