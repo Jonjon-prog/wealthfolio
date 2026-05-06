@@ -187,6 +187,7 @@ export const COMMANDS: CommandMap = {
     method: "DELETE",
     path: "/portfolio-targets/allocations",
   },
+  calculate_rebalancing_plan: { method: "POST", path: "/portfolio-targets/rebalancing/calculate" },
   // Health Center
   get_health_status: { method: "GET", path: "/health/status" },
   run_health_checks: { method: "POST", path: "/health/check" },
