@@ -299,24 +299,50 @@ impl PortfolioTargetRepositoryTrait for PortfolioTargetRepository {
         self.writer
             .exec(
                 move |conn: &mut SqliteConnection| -> Result<HoldingTarget> {
-                    let db_target: NewHoldingTargetDB = target.into();
-                    diesel::insert_into(holding_targets)
-                        .values(&db_target)
-                        .on_conflict(crate::schema::holding_targets::id)
-                        .do_update()
-                        .set((
-                            crate::schema::holding_targets::target_percent
-                                .eq(&db_target.target_percent),
-                            crate::schema::holding_targets::is_locked.eq(&db_target.is_locked),
-                            crate::schema::holding_targets::updated_at.eq(&db_target.updated_at),
-                        ))
-                        .execute(conn)
+                    let now = chrono::Utc::now().to_rfc3339();
+
+                    let existing: Option<HoldingTargetDB> = holding_targets
+                        .filter(
+                            allocation_id
+                                .eq(&target.allocation_id)
+                                .and(asset_id.eq(&target.asset_id)),
+                        )
+                        .first(conn)
+                        .optional()
                         .map_err(StorageError::from)?;
 
-                    let result: HoldingTargetDB = holding_targets
-                        .find(&db_target.id)
-                        .first(conn)
-                        .map_err(StorageError::from)?;
+                    let result = if let Some(existing) = existing {
+                        let updated = HoldingTargetDB {
+                            id: existing.id,
+                            allocation_id: existing.allocation_id,
+                            asset_id: existing.asset_id,
+                            target_percent: target.target_percent,
+                            is_locked: if target.is_locked { 1 } else { 0 },
+                            created_at: existing.created_at,
+                            updated_at: now,
+                        };
+                        diesel::update(holding_targets.find(&updated.id))
+                            .set(&updated)
+                            .returning(HoldingTargetDB::as_returning())
+                            .get_result(conn)
+                            .map_err(StorageError::from)?
+                    } else {
+                        let db = NewHoldingTargetDB {
+                            id: target.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                            allocation_id: target.allocation_id,
+                            asset_id: target.asset_id,
+                            target_percent: target.target_percent,
+                            is_locked: if target.is_locked { 1 } else { 0 },
+                            created_at: now.clone(),
+                            updated_at: now,
+                        };
+                        diesel::insert_into(holding_targets)
+                            .values(&db)
+                            .returning(HoldingTargetDB::as_returning())
+                            .get_result(conn)
+                            .map_err(StorageError::from)?
+                    };
+
                     Ok(result.into())
                 },
             )
@@ -332,25 +358,47 @@ impl PortfolioTargetRepositoryTrait for PortfolioTargetRepository {
             .exec(
                 move |conn: &mut SqliteConnection| -> Result<Vec<HoldingTarget>> {
                     conn.transaction(|conn| -> diesel::QueryResult<Vec<HoldingTarget>> {
+                        let now = chrono::Utc::now().to_rfc3339();
                         let mut results = Vec::with_capacity(targets.len());
                         for target in targets {
-                            let db_target: NewHoldingTargetDB = target.into();
-                            diesel::insert_into(holding_targets)
-                                .values(&db_target)
-                                .on_conflict(crate::schema::holding_targets::id)
-                                .do_update()
-                                .set((
-                                    crate::schema::holding_targets::target_percent
-                                        .eq(&db_target.target_percent),
-                                    crate::schema::holding_targets::is_locked
-                                        .eq(&db_target.is_locked),
-                                    crate::schema::holding_targets::updated_at
-                                        .eq(&db_target.updated_at),
-                                ))
-                                .execute(conn)?;
+                            let existing: Option<HoldingTargetDB> = holding_targets
+                                .filter(
+                                    allocation_id
+                                        .eq(&target.allocation_id)
+                                        .and(asset_id.eq(&target.asset_id)),
+                                )
+                                .first(conn)
+                                .optional()?;
 
-                            let result: HoldingTargetDB =
-                                holding_targets.find(&db_target.id).first(conn)?;
+                            let result = if let Some(existing) = existing {
+                                let updated = HoldingTargetDB {
+                                    id: existing.id,
+                                    allocation_id: existing.allocation_id,
+                                    asset_id: existing.asset_id,
+                                    target_percent: target.target_percent,
+                                    is_locked: if target.is_locked { 1 } else { 0 },
+                                    created_at: existing.created_at,
+                                    updated_at: now.clone(),
+                                };
+                                diesel::update(holding_targets.find(&updated.id))
+                                    .set(&updated)
+                                    .returning(HoldingTargetDB::as_returning())
+                                    .get_result(conn)?
+                            } else {
+                                let db = NewHoldingTargetDB {
+                                    id: target.id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                                    allocation_id: target.allocation_id,
+                                    asset_id: target.asset_id,
+                                    target_percent: target.target_percent,
+                                    is_locked: if target.is_locked { 1 } else { 0 },
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                };
+                                diesel::insert_into(holding_targets)
+                                    .values(&db)
+                                    .returning(HoldingTargetDB::as_returning())
+                                    .get_result(conn)?
+                            };
                             results.push(HoldingTarget::from(result));
                         }
                         Ok(results)

@@ -1,2 +1,0 @@
--- SQLite does not support DROP COLUMN in older versions; recreate table without the column if needed.
--- For most cases, leaving the column is safe as a no-op rollback.

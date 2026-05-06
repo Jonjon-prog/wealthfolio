@@ -12,7 +12,7 @@ use rust_decimal_macros::dec;
 
 use crate::errors::{Error, Result};
 use crate::portfolio::allocation::AllocationServiceTrait;
-use crate::portfolio::holdings::HoldingSummary;
+use crate::portfolio::holdings::{HoldingSummary, HoldingType};
 use crate::portfolio::targets::{HoldingTarget, PortfolioTargetServiceTrait};
 
 use super::{RebalancingInput, RebalancingPlan, TradeRecommendation};
@@ -94,26 +94,11 @@ impl RebalancingServiceImpl {
         new_total_value: Decimal,
         category_id: &str,
         category_name: &str,
-        category_sell_amount: Decimal,
     ) -> Vec<TradeRecommendation> {
         if holding_targets.is_empty() {
-            // No holding-level targets — sell category-level as one block
-            return vec![TradeRecommendation {
-                asset_id: category_id.to_string(),
-                symbol: category_id.to_string(),
-                name: Some(category_name.to_string()),
-                isin: None,
-                category_id: category_id.to_string(),
-                category_name: category_name.to_string(),
-                action: "SELL".to_string(),
-                shares: Decimal::ZERO,
-                price_per_share: Decimal::ZERO,
-                total_amount: category_sell_amount,
-                impact_percent: Decimal::ZERO,
-                current_percent_of_class: Decimal::ZERO,
-                target_percent_of_class: Decimal::ZERO,
-                residual_amount: Decimal::ZERO,
-            }];
+            // No holding-level targets — cannot generate actionable sell recommendations.
+            // Do not count this as proceeds; the overweight category must be resolved manually.
+            return vec![];
         }
 
         let mut recommendations = Vec::new();
@@ -1408,12 +1393,6 @@ impl RebalancingService for RebalancingServiceImpl {
             .map(|(k, v)| (k.clone(), *v))
             .collect();
 
-        let sell_shortfalls: HashMap<String, Decimal> = category_shortfalls
-            .iter()
-            .filter(|(_, v)| **v < Decimal::ZERO)
-            .map(|(k, v)| (k.clone(), v.abs()))
-            .collect();
-
         // Initialize plan
         let mut plan = RebalancingPlan::new(
             target.id.clone(),
@@ -1423,20 +1402,52 @@ impl RebalancingService for RebalancingServiceImpl {
             input.available_cash,
         );
 
-        // Step 3: Generate SELL recommendations first (buy_and_sell mode only)
-        if target.rebalance_mode == "buy_and_sell" {
-            for (category_id, sell_amount) in &sell_shortfalls {
-                let holdings_data = self
-                    .allocation_service
-                    .get_holdings_by_allocation(
-                        &target.account_id,
-                        &input.base_currency,
-                        &target.taxonomy_id,
-                        category_id,
-                    )
-                    .await?;
+        // Step 3: Handle overweight categories (both modes)
+        // - Cash overweight → redeploy directly as liquid (no SELL needed, cash is already liquid)
+        // - Non-cash overweight → generate SELL recommendations (buy_and_sell mode only)
+        for deviation in &deviation_report.deviations {
+            let target_value = (deviation.target_percent / dec!(100)) * new_total_value;
+            let excess = deviation.current_value - target_value;
+            if excess <= Decimal::ZERO {
+                continue;
+            }
 
-                let allocation = allocations.iter().find(|a| a.category_id == *category_id);
+            let holdings_data = self
+                .allocation_service
+                .get_holdings_by_allocation(
+                    &target.account_id,
+                    &input.base_currency,
+                    &target.taxonomy_id,
+                    &deviation.category_id,
+                )
+                .await?;
+
+            let all_cash = !holdings_data.holdings.is_empty()
+                && holdings_data
+                    .holdings
+                    .iter()
+                    .all(|h| h.holding_type == HoldingType::Cash);
+
+            if all_cash {
+                let allocation = allocations
+                    .iter()
+                    .find(|a| a.category_id == deviation.category_id);
+                let holding_targets = match allocation {
+                    Some(a) => self
+                        .target_service
+                        .get_holding_targets_by_allocation(&a.id)?,
+                    None => vec![],
+                };
+                if holding_targets.is_empty() {
+                    plan.liquid_cash_redeployed += excess;
+                }
+                continue;
+            }
+
+            if target.rebalance_mode == "buy_and_sell" {
+                let allocation = allocations
+                    .iter()
+                    .find(|a| a.category_id == deviation.category_id);
                 let holding_targets = match allocation {
                     Some(a) => self
                         .target_service
@@ -1444,21 +1455,13 @@ impl RebalancingService for RebalancingServiceImpl {
                     None => vec![],
                 };
 
-                let category_target_percent = deviation_report
-                    .deviations
-                    .iter()
-                    .find(|d| d.category_id == *category_id)
-                    .map(|d| d.target_percent)
-                    .unwrap_or(Decimal::ZERO);
-
                 let sell_recs = self.generate_sell_recommendations(
                     &holdings_data.holdings,
                     &holding_targets,
-                    category_target_percent,
+                    deviation.target_percent,
                     new_total_value,
-                    category_id,
-                    &holdings_data.category_name,
-                    *sell_amount,
+                    &deviation.category_id,
+                    &deviation.category_name,
                 );
 
                 for rec in sell_recs {
@@ -1467,8 +1470,9 @@ impl RebalancingService for RebalancingServiceImpl {
             }
         }
 
-        // Step 4: Scale buy shortfalls against total buy budget (available_cash + sell proceeds)
-        let total_buy_budget = input.available_cash + plan.total_sell_amount;
+        // Step 4: Scale buy shortfalls against total buy budget (available_cash + sell proceeds + liquid cash)
+        let total_buy_budget =
+            input.available_cash + plan.total_sell_amount + plan.liquid_cash_redeployed;
         let total_buy_shortfall: Decimal = buy_shortfalls.values().sum();
 
         let scale_factor = if total_buy_budget <= Decimal::ZERO {

@@ -85,6 +85,8 @@ pub struct RebalancingPlan {
     pub additional_cash_needed: Decimal,
     /// Total proceeds raised by sell recommendations (buy_and_sell mode only)
     pub total_sell_amount: Decimal,
+    /// Cash excess from overweight cash categories redeployed directly (no SELL needed)
+    pub liquid_cash_redeployed: Decimal,
     /// Budgets allocated to each category
     pub category_budgets: Vec<CategoryBudget>,
     /// List of trade recommendations (BUY and SELL)
@@ -110,6 +112,7 @@ impl RebalancingPlan {
             remaining_cash: available_cash,
             additional_cash_needed: Decimal::ZERO,
             total_sell_amount: Decimal::ZERO,
+            liquid_cash_redeployed: Decimal::ZERO,
             category_budgets: Vec::new(),
             recommendations: Vec::new(),
         }
@@ -133,14 +136,18 @@ impl RebalancingPlan {
     pub fn add_recommendation(&mut self, recommendation: TradeRecommendation) {
         self.total_allocated += recommendation.total_amount;
         self.recommendations.push(recommendation);
-        self.remaining_cash = (self.available_cash + self.total_sell_amount) - self.total_allocated;
+        self.remaining_cash =
+            (self.available_cash + self.total_sell_amount + self.liquid_cash_redeployed)
+                - self.total_allocated;
     }
 
     /// Adds a SELL recommendation and tracks proceeds.
     pub fn add_sell_recommendation(&mut self, recommendation: TradeRecommendation) {
         self.total_sell_amount += recommendation.total_amount;
         self.recommendations.push(recommendation);
-        self.remaining_cash = (self.available_cash + self.total_sell_amount) - self.total_allocated;
+        self.remaining_cash =
+            (self.available_cash + self.total_sell_amount + self.liquid_cash_redeployed)
+                - self.total_allocated;
     }
 
     /// Sets the additional cash needed to reach targets.

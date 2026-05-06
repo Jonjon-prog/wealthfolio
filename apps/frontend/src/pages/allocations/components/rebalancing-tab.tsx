@@ -96,7 +96,11 @@ export function RebalancingTab({
   }, [calculatedAt, storageKey]);
 
   const handleCalculate = async () => {
-    if (!activeTarget || !availableCash || parseFloat(availableCash) <= 0) return;
+    if (
+      !activeTarget ||
+      (activeTarget.rebalanceMode !== "buy_and_sell" && parseFloat(availableCash || "0") <= 0)
+    )
+      return;
     setIsCalculating(true);
     try {
       const result = await calculateRebalancingPlan({
@@ -170,7 +174,11 @@ export function RebalancingTab({
       if (s) s.suggestedBuy += rec.totalAmount;
     }
 
-    const newTotal = deviationReport.totalValue + plan.totalAllocated;
+    const newTotal =
+      deviationReport.totalValue +
+      plan.totalAllocated -
+      plan.totalSellAmount -
+      plan.liquidCashRedeployed;
     for (const s of summaries.values()) {
       const dev = deviationReport.deviations.find((d) => d.categoryId === s.categoryId);
       if (dev) {
@@ -262,7 +270,10 @@ export function RebalancingTab({
   }, [plan]);
 
   const newPortfolioValue = deviationReport
-    ? deviationReport.totalValue + (plan?.totalAllocated ?? 0)
+    ? deviationReport.totalValue +
+      (plan?.totalAllocated ?? 0) -
+      (plan?.totalSellAmount ?? 0) -
+      (plan?.liquidCashRedeployed ?? 0)
     : 0;
 
   const handleCopyToClipboard = async () => {
@@ -538,7 +549,11 @@ export function RebalancingTab({
             </div>
             <Button
               onClick={handleCalculate}
-              disabled={isCalculating || !availableCash || parseFloat(availableCash) <= 0}
+              disabled={
+                isCalculating ||
+                (activeTarget?.rebalanceMode !== "buy_and_sell" &&
+                  parseFloat(availableCash || "0") <= 0)
+              }
               className="w-full"
             >
               {isCalculating ? (
@@ -679,7 +694,7 @@ export function RebalancingTab({
                         </div>
                         <div />
                         <div className="text-right font-mono font-bold text-green-600 dark:text-green-400">
-                          +{formatAmount(s.budget, baseCurrency)}
+                          +{formatAmount(s.suggestedBuy, baseCurrency)}
                         </div>
                       </Fragment>
                     ))}
@@ -891,24 +906,43 @@ export function RebalancingTab({
               })}
 
               {/* Buy & Sell circuit — only shown when sells fund the buys */}
-              {activeTarget.rebalanceMode === "buy_and_sell" && plan.totalSellAmount > 0.01 && (
-                <div className="flex items-center gap-2 border-t border-dashed px-5 py-2.5 text-xs">
-                  <span className="text-muted-foreground">Sell proceeds</span>
-                  <span className="font-mono font-semibold text-orange-600 dark:text-orange-400">
-                    {formatAmount(plan.totalSellAmount, baseCurrency)}
-                  </span>
-                  <span className="text-muted-foreground">+</span>
-                  <span className="text-muted-foreground">new cash</span>
-                  <span className="font-mono font-semibold">
-                    {formatAmount(plan.availableCash, baseCurrency)}
-                  </span>
-                  <span className="text-muted-foreground">=</span>
-                  <span className="text-muted-foreground">available</span>
-                  <span className="font-mono font-semibold">
-                    {formatAmount(plan.totalSellAmount + plan.availableCash, baseCurrency)}
-                  </span>
-                </div>
-              )}
+              {activeTarget.rebalanceMode === "buy_and_sell" &&
+                (plan.totalSellAmount > 0.01 || plan.liquidCashRedeployed > 0.01) && (
+                  <div className="flex items-center gap-2 border-t border-dashed px-5 py-2.5 text-xs">
+                    {plan.liquidCashRedeployed > 0.01 && (
+                      <>
+                        <span className="text-muted-foreground">Cash redeployed</span>
+                        <span className="font-mono font-semibold text-orange-600 dark:text-orange-400">
+                          {formatAmount(plan.liquidCashRedeployed, baseCurrency)}
+                        </span>
+                        {plan.totalSellAmount > 0.01 && (
+                          <span className="text-muted-foreground">+</span>
+                        )}
+                      </>
+                    )}
+                    {plan.totalSellAmount > 0.01 && (
+                      <>
+                        <span className="text-muted-foreground">Sell proceeds</span>
+                        <span className="font-mono font-semibold text-orange-600 dark:text-orange-400">
+                          {formatAmount(plan.totalSellAmount, baseCurrency)}
+                        </span>
+                      </>
+                    )}
+                    <span className="text-muted-foreground">+</span>
+                    <span className="text-muted-foreground">new cash</span>
+                    <span className="font-mono font-semibold">
+                      {formatAmount(plan.availableCash, baseCurrency)}
+                    </span>
+                    <span className="text-muted-foreground">=</span>
+                    <span className="text-muted-foreground">available</span>
+                    <span className="font-mono font-semibold">
+                      {formatAmount(
+                        plan.liquidCashRedeployed + plan.totalSellAmount + plan.availableCash,
+                        baseCurrency,
+                      )}
+                    </span>
+                  </div>
+                )}
 
               {/* Footer stats */}
               <div className="flex flex-wrap items-center gap-8 border-t px-5 py-4">

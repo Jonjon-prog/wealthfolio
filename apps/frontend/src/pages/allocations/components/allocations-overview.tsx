@@ -126,6 +126,7 @@ export function AllocationsOverview({
           accountId,
           taxonomyId: "asset_classes",
           isActive: true,
+          rebalanceMode: "buy_only",
         });
         const withTargetId = allocations.map((a) => ({ ...a, targetId: newTarget.id }));
         batchSaveAllocationsMutation.mutate(withTargetId);

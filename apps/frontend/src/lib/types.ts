@@ -2108,6 +2108,7 @@ export interface RebalancingPlan {
   remainingCash: number;
   additionalCashNeeded: number;
   totalSellAmount: number;
+  liquidCashRedeployed: number;
   categoryBudgets: CategoryBudget[];
   recommendations: TradeRecommendation[];
 }
