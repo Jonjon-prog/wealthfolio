@@ -168,6 +168,8 @@ impl ValuationRepositoryTrait for ValuationRepository {
                     id, account_id, valuation_date, account_currency, base_currency, \
                     fx_rate_to_base, cash_balance, investment_market_value, total_value, \
                     cost_basis, net_contribution, calculated_at, \
+                    cash_balance_base, investment_market_value_base, total_value_base, \
+                    cost_basis_base, net_contribution_base, \
                     ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY valuation_date DESC) as rn \
                 FROM {} \
                 WHERE account_id IN ({}) \
@@ -175,11 +177,12 @@ impl ValuationRepositoryTrait for ValuationRepository {
             SELECT \
                 id, account_id, valuation_date, account_currency, base_currency, \
                 fx_rate_to_base, cash_balance, investment_market_value, total_value, \
-                cost_basis, net_contribution, calculated_at \
+                cost_basis, net_contribution, calculated_at, \
+                cash_balance_base, investment_market_value_base, total_value_base, \
+                cost_basis_base, net_contribution_base \
             FROM RankedValuations \
             WHERE rn = 1",
-            "daily_account_valuation", // Use direct table name string
-            placeholders
+            "daily_account_valuation", placeholders
         );
 
         let mut query_builder = sql_query(sql).into_boxed::<Sqlite>();
@@ -298,5 +301,93 @@ impl ValuationRepositoryTrait for ValuationRepository {
             .collect();
 
         Ok(history_records)
+    }
+
+    fn get_portfolio_historical_valuations(
+        &self,
+        input_account_ids: &[String],
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>> {
+        use chrono::Utc;
+        use rust_decimal::Decimal;
+        use std::collections::BTreeMap;
+
+        if input_account_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+
+        let mut query = daily_account_valuation::table
+            .filter(account_id.eq_any(input_account_ids))
+            .order(valuation_date.asc())
+            .into_boxed();
+
+        if let Some(start) = start_date_opt {
+            query = query.filter(valuation_date.ge(start));
+        }
+        if let Some(end) = end_date_opt {
+            query = query.filter(valuation_date.le(end));
+        }
+
+        let rows: Vec<DailyAccountValuationDB> = query
+            .load::<DailyAccountValuationDB>(&mut conn)
+            .map_err(StorageError::from)?;
+
+        // Aggregate base-currency fields by date in Rust using Decimal to preserve precision.
+        // BTreeMap keeps dates sorted.
+        struct DateBucket {
+            cash_balance_base: Decimal,
+            investment_market_value_base: Decimal,
+            total_value_base: Decimal,
+            cost_basis_base: Decimal,
+            net_contribution_base: Decimal,
+            base_currency: String,
+        }
+
+        let mut by_date: BTreeMap<NaiveDate, DateBucket> = BTreeMap::new();
+
+        for row in rows {
+            let v = DailyAccountValuation::from(row);
+            let bucket = by_date.entry(v.valuation_date).or_insert(DateBucket {
+                cash_balance_base: Decimal::ZERO,
+                investment_market_value_base: Decimal::ZERO,
+                total_value_base: Decimal::ZERO,
+                cost_basis_base: Decimal::ZERO,
+                net_contribution_base: Decimal::ZERO,
+                base_currency: v.base_currency.clone(),
+            });
+            bucket.cash_balance_base += v.cash_balance_base;
+            bucket.investment_market_value_base += v.investment_market_value_base;
+            bucket.total_value_base += v.total_value_base;
+            bucket.cost_basis_base += v.cost_basis_base;
+            bucket.net_contribution_base += v.net_contribution_base;
+        }
+
+        let result = by_date
+            .into_iter()
+            .map(|(date, b)| DailyAccountValuation {
+                id: format!("PORTFOLIO_{}", date),
+                account_id: String::new(),
+                valuation_date: date,
+                account_currency: b.base_currency.clone(),
+                base_currency: b.base_currency.clone(),
+                fx_rate_to_base: Decimal::ONE,
+                cash_balance: b.cash_balance_base,
+                investment_market_value: b.investment_market_value_base,
+                total_value: b.total_value_base,
+                cost_basis: b.cost_basis_base,
+                net_contribution: b.net_contribution_base,
+                calculated_at: Utc::now(),
+                cash_balance_base: b.cash_balance_base,
+                investment_market_value_base: b.investment_market_value_base,
+                total_value_base: b.total_value_base,
+                cost_basis_base: b.cost_basis_base,
+                net_contribution_base: b.net_contribution_base,
+            })
+            .collect();
+
+        Ok(result)
     }
 }

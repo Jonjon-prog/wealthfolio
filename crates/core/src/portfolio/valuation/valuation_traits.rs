@@ -47,4 +47,14 @@ pub trait ValuationRepositoryTrait: Send + Sync {
         &self,
         account_ids: &[String],
     ) -> Result<Vec<NegativeBalanceInfo>>;
+
+    /// Get synthetic portfolio valuation history by aggregating member account valuations.
+    /// Sums base-currency fields by date. Result rows are in base currency (fx_rate = 1).
+    /// Safe to call for any set of accounts regardless of their individual currencies.
+    fn get_portfolio_historical_valuations(
+        &self,
+        account_ids: &[String],
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<DailyAccountValuation>>;
 }
