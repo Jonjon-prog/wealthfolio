@@ -29,6 +29,11 @@ pub struct DailyAccountValuationDB {
     pub cost_basis: String,
     pub net_contribution: String,
     pub calculated_at: String,
+    pub cash_balance_base: String,
+    pub investment_market_value_base: String,
+    pub total_value_base: String,
+    pub cost_basis_base: String,
+    pub net_contribution_base: String,
 }
 
 impl From<DailyAccountValuation> for DailyAccountValuationDB {
@@ -52,6 +57,26 @@ impl From<DailyAccountValuation> for DailyAccountValuationDB {
                 .round_dp(DECIMAL_PRECISION)
                 .to_string(),
             calculated_at: value.calculated_at.to_rfc3339(),
+            cash_balance_base: value
+                .cash_balance_base
+                .round_dp(DECIMAL_PRECISION)
+                .to_string(),
+            investment_market_value_base: value
+                .investment_market_value_base
+                .round_dp(DECIMAL_PRECISION)
+                .to_string(),
+            total_value_base: value
+                .total_value_base
+                .round_dp(DECIMAL_PRECISION)
+                .to_string(),
+            cost_basis_base: value
+                .cost_basis_base
+                .round_dp(DECIMAL_PRECISION)
+                .to_string(),
+            net_contribution_base: value
+                .net_contribution_base
+                .round_dp(DECIMAL_PRECISION)
+                .to_string(),
         }
     }
 }
@@ -76,6 +101,13 @@ impl From<DailyAccountValuationDB> for DailyAccountValuation {
             calculated_at: DateTime::parse_from_rfc3339(&value.calculated_at)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
+            cash_balance_base: Decimal::from_str(&value.cash_balance_base).unwrap_or_default(),
+            investment_market_value_base: Decimal::from_str(&value.investment_market_value_base)
+                .unwrap_or_default(),
+            total_value_base: Decimal::from_str(&value.total_value_base).unwrap_or_default(),
+            cost_basis_base: Decimal::from_str(&value.cost_basis_base).unwrap_or_default(),
+            net_contribution_base: Decimal::from_str(&value.net_contribution_base)
+                .unwrap_or_default(),
         }
     }
 }
@@ -109,6 +141,11 @@ mod tests {
             cost_basis: "25".to_string(),
             net_contribution: "5".to_string(),
             calculated_at: "2026-04-22T00:00:00Z".to_string(),
+            cash_balance_base: "0".to_string(),
+            investment_market_value_base: "0".to_string(),
+            total_value_base: "0".to_string(),
+            cost_basis_base: "0".to_string(),
+            net_contribution_base: "0".to_string(),
         };
 
         let valuation = DailyAccountValuation::from(db_value);

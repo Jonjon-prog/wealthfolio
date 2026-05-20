@@ -102,6 +102,13 @@ pub fn calculate_valuation(
         cost_basis: cost_basis_acct_ccy,
         net_contribution: net_contribution_acct_ccy,
         calculated_at: Utc::now(),
+        cash_balance_base: total_cash_value_acct_ccy * fx_rate_to_base,
+        investment_market_value_base: total_investment_market_value_acct_ccy * fx_rate_to_base,
+        total_value_base: total_market_value_acct_ccy * fx_rate_to_base,
+        cost_basis_base: cost_basis_acct_ccy * fx_rate_to_base,
+        // net_contribution_base comes from the snapshot: contributions were converted at flow
+        // dates, so multiplying by today's fx_rate would give the wrong value.
+        net_contribution_base: holdings_snapshot.net_contribution_base,
     };
 
     Ok(metrics)

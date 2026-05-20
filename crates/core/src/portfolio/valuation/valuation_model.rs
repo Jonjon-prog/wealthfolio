@@ -34,4 +34,11 @@ pub struct DailyAccountValuation {
     pub cost_basis: Decimal,
     pub net_contribution: Decimal,
     pub calculated_at: DateTime<Utc>,
+    // Base-currency equivalents — populated at write time, safe to aggregate across accounts.
+    // net_contribution_base comes from the snapshot (converted at flow dates, not valuation date).
+    pub cash_balance_base: Decimal,
+    pub investment_market_value_base: Decimal,
+    pub total_value_base: Decimal,
+    pub cost_basis_base: Decimal,
+    pub net_contribution_base: Decimal,
 }
