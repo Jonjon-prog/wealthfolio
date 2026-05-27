@@ -75,6 +75,8 @@ import {
   LayoutDashboard,
   Link,
   List,
+  Lock,
+  LockOpen,
   ListChecks,
   ListCollapse,
   ListFilter,
@@ -308,6 +310,8 @@ const IconsInternal = {
   Folder: Folder,
   FolderOpen: FolderOpen,
   List: List,
+  Lock: Lock,
+  LockOpen: LockOpen,
   Pin: Pin,
   PinOff: PinOff,
   Presentation: Presentation,
@@ -880,6 +884,8 @@ export type IconName =
   | "Folder"
   | "FolderOpen"
   | "List"
+  | "Lock"
+  | "LockOpen"
   | "Pin"
   | "PinOff"
   | "Presentation"
