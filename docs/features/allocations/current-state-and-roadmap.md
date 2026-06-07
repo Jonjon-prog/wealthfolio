@@ -1,6 +1,8 @@
 # Allocation & Rebalance — Current State, Research & Open Questions
 
-Status: Living document Date: 2026-06-07 Audience: Afadil, contributors
+Status: Living document | Created: 2026-06-07 | Last updated: 2026-06-08 (Afadil
+review incorporated — PR #1070)\
+Audience: Afadil, contributors
 
 ---
 
@@ -13,12 +15,11 @@ companion. It records:
 - What actually shipped (and how it diverged from the v1 spec).
 - Industry research on how comparable tools approach rebalancing.
 - Improvement opportunities backed by that research.
-- Open questions we need Afadil to answer to plan v2 / the rest of the SOTA
-  north-star.
+- Answers to open questions from the Afadil review (PR #1070).
+- Agreed roadmap going forward.
 
 The goal is to converge on a correct, agreed picture of where the feature stands
-and where it goes next — including whether a **v2 design document** already
-exists on Afadil's side.
+and where it goes next.
 
 ---
 
@@ -34,10 +35,12 @@ Verified against `main` on 2026-06-07.
 | **M3** Simple Sell Mode  | #1054                | ✅     | `ScenarioMode` {CashFlowOnly, SellToRebalance, Hybrid}, `allow_sells`          |
 | ↳ Planner redesign       | ae4f626a0, 2952d794e | ✅     | UI redesign, settings in one card, taxonomy wired into drift, react-query      |
 | ↳ Proportional top-up    | 31a12d74d, bb765c502 | ✅     | deploys leftover cash ∝ `target_bps` after greedy drift gains exhaust          |
-| **M4** Integration Hooks | —                    | ❌     | tax-lot trait boundary + no-op tax warning provider — **not started**          |
+| **M4** Integration Hooks | —                    | ⏸️     | tax-lot trait boundary — **deferred** per Afadil (PR #1070); see §6 Q1         |
+| ↳ Desktop/web scope gap  | #1073                | ✅     | `AccountPurpose::Holdings` scope now consistent across web + desktop           |
 
-So v1 (M1–M3) is delivered. **M4 is the only unshipped v1 milestone**, and it is
-a thin extension-point milestone (no tax logic, just a trait boundary).
+So v1 (M1–M3) is delivered. **M4 is deferred**: Afadil confirmed tax-specific
+hooks should not precede a global tax/accounting design. Any near-term extension
+points should be generic trade/account constraints, not tax-specific boundaries.
 
 ---
 
@@ -52,7 +55,7 @@ disagree.
 | `saveRebalanceDraft`, `rebalance_drafts` table | **Removed** — settled in PR #1036           | Afadil's call ("remove saved rebalance draft storage for now"); a plan is stale once prices move. Future history, if wanted, is `RebalanceRun` (SOTA §5.8), not `rebalance_drafts`. |
 | `base_currency` per target                     | **Deferred** — app-level base currency only | No per-profile FX picker yet; revisit when multi-currency targets are needed                                                                                                        |
 | Drift band = absolute `drift_band_bps`         | Absolute today; moving to hybrid            | §4.3 — agreed to relative ~20% + absolute floor; absolute was the simple v1 default                                                                                                 |
-| (not in spec) proportional top-up              | **Added** — see `rebalance-algorithm.md`    | Deploys residual cash once drift can't be improved, instead of leaving it idle                                                                                                      |
+| (not in spec) proportional top-up              | **Shipped** — see `rebalance-algorithm.md`  | Deploys residual cash once drift can't be improved, instead of leaving it idle                                                                                                      |
 
 ---
 
@@ -122,12 +125,12 @@ Reviewed across five sources to test whether the field agrees.
   Vanguard agrees the return lift is "slight" — the real, reliable benefit is
   **risk control + lower turnover/cost**, not alpha.
 
-**Decision (agreed 2026-06-07):** move to a **hybrid band — relative ~20% by
-default with an absolute floor**. The absolute floor solves the zero/near-zero
-target edge case (a 0%-target sleeve has no meaningful relative band) and the
-"tiny sleeve, micro-trades" case. We will frame the change as _fairer trigger +
-lower churn_, not as a return enhancement (the evidence for alpha is weak). See
-§5 item 1.
+**Decision (agreed 2026-06-07, confirmed by Afadil PR #1070):** move to a
+**hybrid band — relative ~20% by default with an absolute floor of 100 bps**.
+The absolute floor solves the zero/near-zero target edge case (a 0%-target
+sleeve has no meaningful relative band) and the "tiny sleeve, micro-trades"
+case. We will frame the change as _fairer trigger + lower churn_, not as a
+return enhancement (the evidence for alpha is weak). See §5.1.
 
 ### 4.4 Drift definition convention — non-issue for us
 
@@ -159,8 +162,15 @@ we believe is the better foundation for this lever.
 Wealthfront uses a **cost-benefit** model per lot (trading cost vs. opportunity
 cost of waiting). Betterment uses **Parallel Position Management** (paired
 securities to harvest losses without triggering wash sales, routing every
-deposit/withdrawal tax-efficiently). This is the Phase 4 tax-lot work and
-depends on lot-level cost basis we don't persist yet.
+deposit/withdrawal tax-efficiently). This is the Phase 4 tax-lot work.
+
+**Factual correction (Afadil, PR #1070):** lots and disposals are already
+persisted. The accurate statement is: _the current snapshot/lot calculation path
+supports FIFO only; allocation/rebalancing does not yet consume persisted lots
+or a global tax policy layer._
+
+**Status:** deferred until a separate global tax/accounting design exists.
+Allocation will consume that design, not define it.
 
 ### 4.7 Value averaging (Phase 3 funding)
 
@@ -168,15 +178,25 @@ Value averaging = set a target portfolio value per period, contribute (or sell)
 whatever closes the gap. It's literally "DCA + rebalancing." Maps directly to
 the SOTA `FundingPolicy` + recurring-contribution concept.
 
+**Status:** deferred per Afadil (PR #1070). If added later, it should generate
+suggested plans/reminders only — not auto-execute trades.
+
 ### 4.8 Where the open-source field is
 
 Ghostfolio and Portfolio Performance offer **basic single-dimension
 rebalancing** (drift vs. a flat target list). **Wealthfolio is already ahead**
 with exposure-aware multi-category planning (one ETF updates several taxonomy
-sleeves per trade). The differentiators that would extend the lead are §4.3
-(relative bands), §4.9 (account tax-wrapper) and §4.6 (tax-aware).
+sleeves per trade). The differentiator that would extend the lead most is §4.3
+(hybrid bands) + generic trade/account constraints (Phase 2).
 
-### 4.9 Account tax-wrapper model (worldwide) — proposed
+### 4.9 Account tax-wrapper model (worldwide) — DEFERRED
+
+> **Status: deferred until Wealthfolio has a global tax/accounting design.**
+> Afadil (PR #1070): "Tax touches accounts, lots, disposals, cost-basis methods,
+> jurisdiction rules, import behavior, reporting, and future tax views.
+> Allocation should consume that design later, but it should not define tax
+> policy itself." If tax-wrapper tagging is added later, start lightweight:
+> tags/warnings/routing hints only, no tax engine.
 
 The asset-location lever (§4.5) only works if the app knows how each account is
 taxed. Rather than hard-coding US categories, model a **tax wrapper per
@@ -228,12 +248,12 @@ approximation — flagged so we don't over-simplify.
   holding. Few tools do this; US tools ignore it because US wrappers have no
   such condition. Genuine differentiator for FR/DE/etc.
 
-**Two scope levels (a key question for Afadil):**
+**Two scope levels (for reference when global tax design exists):**
 
-1. **Lightweight (proposed MVP).** Account gets a `tax_treatment` archetype tag
-   (+ optional holding-period bound). Planner uses it for sell-ordering, cash
-   routing and warnings only. **No gain computation, no tax lots** — decoupled
-   from Phase 4. Captures ~80% of the value cheaply.
+1. **Lightweight.** Account gets a `tax_treatment` archetype tag (+ optional
+   holding-period bound). Planner uses it for sell-ordering, cash routing and
+   warnings only. **No gain computation, no tax lots** — decoupled from Phase 4.
+   Captures ~80% of the value cheaply.
 2. **Full.** Real tax engine: cost basis, short/long gains, dated allowances per
    country. Large surface; depends on lot-level data (Phase 4).
 
@@ -280,32 +300,31 @@ be an addon.
 
 ## 5. Improvement opportunities (research-backed, no commitment)
 
-Ordered by leverage-to-effort.
+Ordered by leverage-to-effort, updated per Afadil review (PR #1070).
 
-1. **Hybrid tolerance bands** (§4.3) — **agreed direction.** Move to relative
-   ~20% by default with an absolute floor (floor handles zero-target sleeves and
-   micro-trades). Per-target setting, absolute override allowed. Low effort,
-   improves trigger fairness; framed as fairness/churn, not alpha.
-2. **M4 tax-lot trait boundary** — cheap to add now, unblocks Phase 4 later
-   without schema churn. Already specified in `v1-spec.md` §6.5.
-3. **Turnover cap + do-not-trade list** (SOTA Phase 2) — standard advisor
-   controls; both are simple planner constraints layered on the existing greedy.
-   The do-not-trade list at **account** granularity is also the ultra-light
-   bridge toward §4.9.
-4. **Account tax-wrapper model — lightweight** (§4.9, SOTA Phase 3) — the
-   highest differentiation lever. MVP = per-account archetype tag +
-   sell-ordering + cash routing + warnings, no tax engine. Needs the account
-   metadata + (eventually) household grouping.
-5. **Value-averaging funding policy** (§4.7, SOTA Phase 3).
+1. **Hybrid tolerance bands** (§4.3) — **confirmed direction + defaults.** Move
+   to relative 20% by default with 100 bps absolute floor. Per-target setting,
+   absolute override allowed. Low effort, improves trigger fairness; framed as
+   fairness/churn, not alpha.
+2. **Generic trade/account constraints** — do-not-sell flag per asset/account;
+   optional per-plan turnover cap (% of portfolio). Replaces the M4 tax-specific
+   hooks as the near-term extension point.
+3. **Better plan explanations** — clear per-trade reason (why buy/sell/skip).
+   Phase 2 item.
+4. **Addon extension points** — for advanced policies (funding, guardrails,
+   specialist constraints). No core bloat.
+5. **Account tax-wrapper model — lightweight** (§4.9) — deferred until global
+   tax/accounting design.
 6. **Tax-aware optimizer — full** (§4.6/§4.9 level 2, SOTA Phase 4) — gated on
-   lot-level cost basis.
+   global tax design + lot-level cost basis.
 7. **Drift-number convention** (§4.4) — non-issue, no action (kept for the
    record).
 
 ### 5.1 Proposed change: absolute → hybrid tolerance bands
 
-This is the one change we want to **commit to and implement next** (pending your
-sign-off on the numbers, Q5). Writing it out in full so the intent is explicit.
+**Status: ready to build. Defaults confirmed by Afadil (PR #1070): `20%`
+relative factor + `100 bps` absolute floor. Existing targets preserve
+absolute-band behavior until edited/migrated intentionally.**
 
 **Problem.** Today a target carries a single absolute band, `drift_band_bps`
 (e.g. ±500 bps = ±5pp), applied identically to every sleeve. The breach test is:
@@ -329,10 +348,10 @@ out_of_band_c  ⇔  |current_bps_c − target_bps_c| > band_c
 ```
 
 - `relative_factor` default **0.20** (Daryanani / Tamarac), per-target editable.
-- `absolute_floor_bps` default small (e.g. **100 bps = 1pp**), per-target
-  editable. The floor is what makes the rule sane for **zero / near-zero target
-  sleeves** (a 0% target has no meaningful relative band) and stops micro-trades
-  on tiny sleeves.
+- `absolute_floor_bps` default **100 bps = 1pp**, per-target editable. The floor
+  is what makes the rule sane for **zero / near-zero target sleeves** (a 0%
+  target has no meaningful relative band) and stops micro-trades on tiny
+  sleeves.
 
 Example, `relative_factor = 0.20`, `floor = 100 bps`:
 
@@ -395,125 +414,147 @@ copy avoids over-claiming.
 fields + editor UI. No optimizer rewrite (the greedy already scores per-category
 drift).
 
-**Status:** proposed, ready to build once Q5 (default factor + floor) is
-confirmed.
+---
+
+## 6. Resolved questions (answers from Afadil, PR #1070)
+
+All questions from the original PR have been answered. Recorded here for
+reference.
+
+### Q1 — M4 hooks
+
+**Answer:** defer tax-specific hooks. If a boundary is needed, make it generic
+around trade/account constraints, not tax. No tax-lot trait boundary in core
+until a global tax/accounting design exists.
+
+### Q3 — base_currency per target
+
+**Answer:** stay app-level for v2.
+
+### Q4 — Turnover cap / do-not-trade
+
+**Answer:** add generic do-not-sell / avoid-selling constraints. Defer gain/loss
+budgets (those need tax lots).
+
+### Q5 — Hybrid drift bands
+
+**Answer:** yes. Defaults confirmed: `20%` relative factor + `100 bps` absolute
+floor. Existing targets preserve absolute-band behavior until edited/migrated
+intentionally. Ready to build — see §5.1.
+
+### Q6 — Funding policy / value averaging
+
+**Answer:** defer. If added later, it should generate suggested plans/reminders
+only — not auto-execute trades.
+
+### Q7 — Guardrail enforcement
+
+**Answer:** monitor/notify only. No auto-trade semantics in core.
+
+### Q8 — Account tax-wrapper model
+
+**Answer:** defer until global tax/accounting design. If added later, start
+lightweight with tags/warnings/routing hints only.
+
+### Q8b — Jurisdiction wrapper catalog
+
+**Answer:** yes, prefer addon/community-maintained catalogs over core.
+
+### Q9 — Tax-lot model
+
+**Answer:** keep tax lots out of allocation for now. Lots exist, FIFO-only
+calculation exists, but no allocation tax policy yet.
+
+### Q10 — HoldingTarget / per-ticker targets
+
+**Answer:** defer. Real feature, not a quick add. Keep v2 taxonomy/exposure
+based first.
+
+### Q11 — Model marketplace
+
+**Answer:** no hosted marketplace in core. Prefer local import/export and
+addon-bundled template packs.
+
+### Q12 — v2 design doc
+
+**Answer:** yes, draft a concise v2 design doc after narrowing this roadmap.
+
+### Q13 — Next milestone
+
+**Answer:** finish Phase 2 first — hybrid bands, generic constraints,
+explanations. Defer tax-wrapper, funding policy, guardrails, holding targets,
+and marketplace work.
 
 ---
 
-## 6. Open questions for Afadil
+## 7. Agreed roadmap (post Afadil review, PR #1070)
 
-Each item carries a one-line **Research** finding (how the field handles it) and
-the **lean** we'd recommend, so these are decisions to confirm — not blank
-questions.
+Direction: keep Wealthfolio's core rebalancing **smart, explainable, and
+simple**. No advisor-grade optimizer or tax engine in core. Niche / advanced
+behavior → addons.
 
-### 6.0 Already settled (recorded, not questions)
+**Phase 2 (next milestone):**
 
-- **Drafts — settled (PR #1036).** Saved rebalance drafts were removed on
-  Afadil's recommendation; the planner is stateless. Future history, if ever
-  wanted, is `RebalanceRun` (SOTA §5.8), not `rebalance_drafts`. No action.
-- **Drift ÷2 convention — non-issue** (§4.4). No action.
-- **Absolute → hybrid bands — direction agreed** (§5.1 proposal). Pending only
-  Afadil's sign-off on defaults (Q5).
+1. Hybrid drift bands (§5.1) — defaults confirmed, ready to build.
+2. Generic trade/account constraints — do-not-sell flag, optional turnover cap.
+3. Better plan explanations — per-trade reason (buy/sell/skip).
+4. Addon-ready extension points for advanced policies.
 
-### 6.1 Immediate (closing out v1)
+**Deferred (needs global tax/accounting design first):**
 
-- **Q1. M4 hooks** — implement the tax-lot trait boundary + no-op tax warning
-  provider now (closes v1), or defer until the tax feature actually starts?
-- **Q3. base_currency per target** — reintroduce, or stay app-level for v2?
+- Account tax-wrapper model (§4.9).
+- Tax-lot aware optimizer (§4.6).
+- M4 tax-specific trait boundary.
+- Jurisdiction-specific wrapper catalog → addon.
 
-### 6.2 SOTA Phase 2 remainder
+**Deferred (later phases):**
 
-- **Q5. Hybrid drift bands** — see the §5.1 proposal. Pending only your sign-off
-  on the default relative % and the absolute floor value.
-- **Q4. Turnover cap** and **do-not-trade list** — in scope for the next
-  iteration?
-  - **Research:** advisor tools express turnover control two ways — a simple **%
-    turnover cap** per rebalance (churn/cost control, no tax data), and a richer
-    **gain/loss budget** (annual $ or % cap on realised capital gains, used as
-    an optimizer constraint — but that needs tax lots). Do-not-trade lists are
-    standard: mark positions the rebalancer must not sell (low basis,
-    concentrated/restricted, employer stock).
-  - **Lean:** ship the **non-tax pair now** — a per-plan turnover cap (% of
-    portfolio) + an asset-level "do not sell" flag (and the account-level
-    `avoid_selling` from §4.9). Defer the gain/loss budget to Phase 4 (needs
-    lots).
-
-### 6.3 SOTA Phase 3 (advanced policies)
-
-- **Q6.** `FundingPolicy` / recurring contributions / **value averaging** —
-  priority and intended UX?
-  - **Research:** robo/broker auto-invest = a schedule (weekly/biweekly/monthly)
-    - amount + source account; each contribution is routed through cash-flow
-      rebalancing (which we already have). Value averaging differs by targeting
-      a portfolio **value** trajectory and contributing/selling the gap, not a
-      fixed amount.
-  - **Lean:** a `FundingPolicy` = schedule + rule (fixed amount **or** value
-    target). Because we're local-first with no broker, it **generates a
-    suggested plan on schedule and notifies** — it does not auto-execute. Reuses
-    the existing cash-flow planner; value averaging is one rule variant.
-- **Q7.** `TargetGuardrail` enforcement (vs. monitor-only today) — what does
-  "enforced" mean operationally without execution?
-  - **Research:** the field splits guardrails into **monitor-only** (alert when
-    out of band, human acts — non-discretionary) vs. **enforced**
-    (auto-rebalance on breach — discretionary robo). Enforcement assumes
-    execution authority.
-  - **Lean:** for a local-first app with no broker link, "enforced" cannot mean
-    auto-trade. Define it as a **persisted, actively-notifying rule** (badge /
-    notification on breach, persists across sessions) vs. today's passive band
-    you only see on the page. Worth confirming this interpretation with Afadil.
-- **Q8.** **Account tax-wrapper model** (§4.9) — is the per-account archetype +
-  asset-location placement the intended Phase 3 centerpiece? Which scope:
-  **lightweight** (tag + warnings + routing, no tax engine) or **full** (tax
-  engine, depends on lots)? We recommend starting lightweight.
-- **Q8b.** Should the **per-jurisdiction wrapper catalog be an addon**
-  (community-maintained) rather than core? Fits the addon SDK and keeps core
-  jurisdiction-agnostic.
-
-### 6.4 SOTA Phase 4–5
-
-- **Q9.** Tax-lot model — does this wait for a separate cost-basis/lot feature,
-  and should allocation just expose the trait (Q1)?
-  - **Research:** the IRS recognises only **FIFO** and **specific
-    identification**; HIFO/min-tax/LIFO are flavours of specific ID (LIFO is not
-    allowed for securities). Schwab's "Tax Lot Optimizer" = automated specific
-    ID over basis + holding period. This is its own cost-basis subsystem.
-  - **Lean:** keep tax lots **out of allocation**. Allocation exposes the M4
-    trait (Q1) and consumes lot data when a separate cost-basis feature provides
-    it. Confirms our boundary.
-- **Q10.** `HoldingTarget` (per-ticker targets, SOTA §5.4) — v2 priority, or
-  stays taxonomy-only?
-  - **Research:** M1's "pies" are the reference — per-holding target %, must sum
-    to 100%, min 1% per slice, nestable sub-pies; every deposit/rebalance flows
-    to per-holding targets. It's an alternative axis to taxonomy targets ("10%
-    VTI" vs. "30% equities").
-  - **Lean:** real v2 feature, not a quick add. Our exposure-aware engine
-    already works per holding, so the planner side is tractable; the work is the
-    data model + editor + sum/lock rules. Sequence it **after** the band +
-    tax-wrapper work.
-- **Q11.** Phase 5 model marketplace / addon SDK for allocation state — on the
-  roadmap or out of scope?
-  - **Research:** institutional "model marketplaces" (Betterment, Altruist,
-    IBKR, OneVest) are curated catalogs of provider portfolios — heavy, advisor-
-    facing. The realistic open-source analogue is **import/export of target
-    models as files** (Morningstar-style holdings import) plus community-shared
-    templates.
-  - **Lean:** for a local-first app, do **import/export of a target model**
-    (JSON) + optional **addon-bundled template packs**. No hosted marketplace.
-    Fits the addon SDK (same vehicle as the §4.9 wrapper catalog).
-
-### 6.5 Direction
-
-- **Q12. Do you already have a v2 / SOTA-continuation design document?** If so
-  we align to it. If not, we can draft one from this research and the SOTA spec
-  for your review.
-- **Q13.** What's the next milestone you want prioritized: finish Phase 2
-  (hybrid bands → turnover/DNT), or jump to Phase 3 (account tax-wrapper /
-  funding / guardrails)? Our lean: **hybrid bands first** (small, agreed), then
-  the **lightweight account tax-wrapper** (biggest differentiation).
+- HoldingTarget / per-ticker targets.
+- FundingPolicy / value averaging.
+- Guardrail enforcement beyond monitor/notify.
+- Model marketplace (local import/export + addon template packs instead).
 
 ---
 
-## 7. References
+## 8. Related proposal — interest-bearing savings accounts (discussion #1043)
+
+> **Note:** this is an **allocation categorization** problem, not a tax problem.
+> Raised in
+> [discussion #1043](https://github.com/wealthfolio/wealthfolio/discussions/1043)
+> — worth reviewing alongside Phase 2.
+
+**The problem.** A French Livret A (or any interest-bearing savings account —
+HYSA, Cash ISA, Tagesgeld, CD…) is tracked today as a `CASH` account. It shows
+up as "Cash" in allocation charts. But economically it is fixed income. The
+allocation chart is misleading — you appear to hold X% cash when part of it is
+remunerated savings.
+
+The root cause is that `allocation_service.rs`'s `cash_category_id()` hardcodes
+`CASH_BANK_DEPOSITS` for all `CASH` account types with no override mechanism.
+
+**The minimal fix — Block A: `asset_class_override` on `Account`.** One optional
+field. When set, the allocation service uses it instead of the hardcoded
+`CASH_BANK_DEPOSITS`. The user picks: "this CASH account counts as
+`FIXED_INCOME` in my allocation."
+
+- ~1 DB field + 1 migration + 1 condition in `allocation_service.rs` + 1 select
+  in the account form.
+- Fixes every country in the table (Livret A, ISA, HYSA, CD, Tagesgeld, …).
+- Zero tax logic.
+
+**Proposed scope (aligned with "keep it simple"):**
+
+- Block A (asset-class override) — minimal effort, high impact, ship with Phase
+  2 or standalone.
+- Optional: a `current_rate` field to document the rate (manual entry, no
+  auto-accrual). Just a note field for the account. Auto-accrual is out of scope
+  — too complex, too many country-specific rules.
+- **Out of scope:** savings sub-types/catalogs, auto-accrual scheduler,
+  contribution limits integration — those can be addons later.
+
+---
+
+## 9. References
 
 Research sources (accessed 2026-06-07):
 
