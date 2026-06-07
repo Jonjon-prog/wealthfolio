@@ -23,6 +23,10 @@ import Balance from "@/pages/dashboard/balance";
 import {
   AnimatedToggleGroup,
   Icons,
+  MonthYearPicker,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   PrivacyAmount,
   Skeleton,
   formatCompactAmount,
@@ -57,10 +61,11 @@ import { RecentActivityCard } from "./recent-activity-card";
 
 const FUTURE_BAR = "#E5E7EB";
 const SPENDING_TAXONOMY = "spending_categories";
-type SpendingDashboardPeriod = "MTD" | "30D" | "3M" | "6M" | "YTD" | "1Y";
+type SpendingDashboardPeriod = "MTD" | "LAST_MONTH" | "30D" | "3M" | "6M" | "YTD" | "1Y";
 
 const SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
   "MTD",
+  "LAST_MONTH",
   "30D",
   "3M",
   "6M",
@@ -72,6 +77,7 @@ const DEFAULT_INTERVAL: SpendingDashboardPeriod = "MTD";
 const INTERVAL_STORAGE_KEY = "spending-interval";
 const INTERVAL_DESCRIPTIONS: Record<SpendingDashboardPeriod, string> = {
   MTD: "this month",
+  LAST_MONTH: "last month",
   "30D": "past 30 days",
   "3M": "past 3 months",
   "6M": "past 6 months",
@@ -83,6 +89,12 @@ const SPENDING_DASHBOARD_PERIOD_LABELS: Record<SpendingDashboardPeriod, ReactNod
     <>
       <span className="hidden sm:inline">This month</span>
       <span className="sm:hidden">MTD</span>
+    </>
+  ),
+  LAST_MONTH: (
+    <>
+      <span className="hidden sm:inline">Last month</span>
+      <span className="sm:hidden">Prev</span>
     </>
   ),
   "30D": "30D",
@@ -145,20 +157,27 @@ function normalizeSpendingDashboardPeriod(
 
 function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string | null) {
   const today = getZonedDateParts(new Date(), timezone);
-  const start = (() => {
+  const { start, end } = (() => {
     switch (code) {
       case "MTD":
-        return { year: today.year, month: today.month, day: 1 };
+        return { start: { year: today.year, month: today.month, day: 1 }, end: today };
+      case "LAST_MONTH": {
+        const lm = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -1);
+        return {
+          start: { year: lm.year, month: lm.month, day: 1 },
+          end: { year: lm.year, month: lm.month, day: daysInCalendarMonth(lm.year, lm.month) },
+        };
+      }
       case "30D":
-        return addCalendarDays(today, -29);
+        return { start: addCalendarDays(today, -29), end: today };
       case "3M":
-        return addCalendarMonths(today, -3);
+        return { start: addCalendarMonths(today, -3), end: today };
       case "6M":
-        return addCalendarMonths(today, -6);
+        return { start: addCalendarMonths(today, -6), end: today };
       case "YTD":
-        return { year: today.year, month: 1, day: 1 };
+        return { start: { year: today.year, month: 1, day: 1 }, end: today };
       case "1Y":
-        return { ...today, year: today.year - 1 };
+        return { start: { ...today, year: today.year - 1 }, end: today };
     }
   })();
 
@@ -167,18 +186,21 @@ function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string |
     description: INTERVAL_DESCRIPTIONS[code],
     range: {
       from: localDateFromParts(start),
-      to: localDateFromParts(today),
+      to: localDateFromParts(end),
     },
   };
 }
 
 function insightPeriodForDashboardInterval(code: SpendingDashboardPeriod): ReportsPeriod {
+  if (code === "LAST_MONTH") return "MTD";
   return code;
 }
 
 interface SpendingDashboardPeriodSelectorProps {
   value: SpendingDashboardPeriod;
   onValueChange: (next: SpendingDashboardPeriod) => void;
+  customMonth: { year: number; month: number } | null;
+  onCustomMonthChange: (month: { year: number; month: number } | null) => void;
   isLoading?: boolean;
   className?: string;
 }
@@ -186,6 +208,8 @@ interface SpendingDashboardPeriodSelectorProps {
 function SpendingDashboardPeriodSelector({
   value,
   onValueChange,
+  customMonth,
+  onCustomMonthChange,
   isLoading,
   className,
 }: SpendingDashboardPeriodSelectorProps) {
@@ -195,6 +219,13 @@ function SpendingDashboardPeriodSelector({
     label: SPENDING_DASHBOARD_PERIOD_LABELS[period],
     title: INTERVAL_DESCRIPTIONS[period],
   }));
+
+  const today = new Date();
+  const prevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const maxPickDate = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+  const customMonthStr = customMonth
+    ? `${customMonth.year}-${String(customMonth.month).padStart(2, "0")}`
+    : undefined;
 
   return (
     <div
@@ -211,14 +242,25 @@ function SpendingDashboardPeriodSelector({
           "[-webkit-overflow-scrolling:touch]",
         )}
       >
-        <AnimatedToggleGroup
-          items={items}
-          value={value}
-          onValueChange={onValueChange}
-          size={isMobile ? "compact" : "sm"}
-          variant="default"
-          className="pointer-events-auto bg-transparent"
-        />
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          <AnimatedToggleGroup<string>
+            items={items}
+            value={customMonth ? "" : value}
+            onValueChange={(v) => onValueChange(v as SpendingDashboardPeriod)}
+            size={isMobile ? "compact" : "sm"}
+            variant="default"
+            className="bg-transparent"
+          />
+          <MonthPickerButton
+            value={customMonthStr}
+            maxDate={maxPickDate}
+            onSelect={(monthStr) => {
+              const [y, m] = monthStr.split("-").map(Number);
+              onCustomMonthChange({ year: y, month: m });
+            }}
+            onClear={customMonth ? () => onCustomMonthChange(null) : undefined}
+          />
+        </div>
       </div>
     </div>
   );
@@ -281,6 +323,9 @@ export default function SpendingTabContent() {
     searchParams.get("spendingInterval") ?? persistedInterval,
   );
   const [activeCode, setActiveCode] = useState<SpendingDashboardPeriod>(intervalCode);
+  const [customMonthPick, setCustomMonthPick] = useState<{ year: number; month: number } | null>(
+    null,
+  );
   const theme: Palette = FOREST_THEME;
 
   const [whereItWentView, setWhereItWentView] = usePersistentState<"list" | "map">(
@@ -296,11 +341,12 @@ export default function SpendingTabContent() {
   );
 
   useEffect(() => {
+    if (customMonthPick) return;
     const initial = spendingIntervalData(intervalCode, appTimezone);
     setActiveCode(intervalCode);
     setDateRange(initial.range);
     setSelectedIntervalDescription(initial.description);
-  }, [intervalCode, appTimezone]);
+  }, [intervalCode, appTimezone, customMonthPick]);
 
   const reportReq = useMemo(
     () => rangeToReportRequest(dateRange, appTimezone),
@@ -438,6 +484,7 @@ export default function SpendingTabContent() {
 
   const handleIntervalSelect = (code: SpendingDashboardPeriod) => {
     const initial = spendingIntervalData(code, appTimezone);
+    setCustomMonthPick(null);
     setActiveCode(code);
     setPersistedInterval(code);
     setSelectedIntervalDescription(initial.description);
@@ -452,9 +499,38 @@ export default function SpendingTabContent() {
     );
   };
 
+  const handleCustomMonthSelect = (year: number, month: number) => {
+    const start = { year, month, day: 1 };
+    const end = { year, month, day: daysInCalendarMonth(year, month) };
+    setCustomMonthPick({ year, month });
+    setDateRange({ from: localDateFromParts(start), to: localDateFromParts(end) });
+    const label = new Date(year, month - 1, 1).toLocaleString(undefined, {
+      month: "long",
+      year: "numeric",
+    });
+    setSelectedIntervalDescription(label);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("spendingInterval");
+        return p;
+      },
+      { replace: true },
+    );
+  };
+
+  const handleCustomMonthClear = () => {
+    setCustomMonthPick(null);
+    const initial = spendingIntervalData(activeCode, appTimezone);
+    setDateRange(initial.range);
+    setSelectedIntervalDescription(initial.description);
+  };
+
   const granularity: "day" | "week" | "month" = useMemo(() => {
+    if (customMonthPick) return "day";
     switch (activeCode) {
       case "MTD":
+      case "LAST_MONTH":
       case "30D":
         return "day";
       case "3M":
@@ -463,7 +539,7 @@ export default function SpendingTabContent() {
       default:
         return "month";
     }
-  }, [activeCode]);
+  }, [activeCode, customMonthPick]);
 
   const { barData, avgValue, avgLabel } = useMemo(() => {
     const buckets = report?.byDay ?? [];
@@ -868,6 +944,11 @@ export default function SpendingTabContent() {
               className="pointer-events-auto relative z-20 w-full max-w-screen-sm sm:max-w-screen-md md:max-w-2xl lg:max-w-3xl"
               value={activeCode}
               onValueChange={handleIntervalSelect}
+              customMonth={customMonthPick}
+              onCustomMonthChange={(m) => {
+                if (m) handleCustomMonthSelect(m.year, m.month);
+                else handleCustomMonthClear();
+              }}
               isLoading={isLoading}
             />
           </div>
@@ -1668,6 +1749,69 @@ function truncateForBox(text: string, boxWidth: number, fontSize: number): strin
   const charW = fontSize * 0.62;
   const max = Math.max(2, Math.floor(boxWidth / charW));
   return text.length > max ? text.slice(0, Math.max(1, max - 1)) + "…" : text;
+}
+
+function MonthPickerButton({
+  value,
+  maxDate,
+  onSelect,
+  onClear,
+}: {
+  value?: string;
+  maxDate: string;
+  onSelect: (monthStr: string) => void;
+  onClear?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const label = value
+    ? (() => {
+        const [y, m] = value.split("-").map(Number);
+        const short = new Date(y, m - 1, 1).toLocaleString(undefined, { month: "short" });
+        return `${short} '${String(y).slice(2)}`;
+      })()
+    : null;
+
+  return (
+    <div className="flex items-center gap-1">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "flex items-center justify-center rounded-full transition-colors",
+              label
+                ? "bg-background/80 border-border/60 h-8 gap-1 border px-2.5 text-xs font-medium"
+                : "bg-muted text-foreground/90 hover:text-foreground h-8 w-8",
+            )}
+            aria-label={label ? `Viewing ${label}, click to change` : "Pick a specific month"}
+          >
+            {label ? <span>{label}</span> : <Icons.Calendar className="h-3.5 w-3.5" />}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="center">
+          <MonthYearPicker
+            value={value}
+            maxDate={maxDate}
+            onChange={(m) => {
+              onSelect(m);
+              setOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+      {label && onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-muted-foreground hover:text-foreground flex h-5 w-5 items-center justify-center rounded-full text-base leading-none transition-colors"
+          aria-label="Clear month selection"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
 }
 
 function SpendingDeltaLine({
