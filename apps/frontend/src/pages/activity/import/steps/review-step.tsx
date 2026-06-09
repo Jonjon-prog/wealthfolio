@@ -217,8 +217,27 @@ export function ReviewStep() {
       nonDuplicateFilters.size === 0 && (hasDuplicateCsvFilter || hasDuplicateDbFilter);
 
     if (isDuplicateOnlyFilter) {
-      const filtered = draftsMatchingFacetFilters.filter(matchesStatusFilter);
-      const groupedDrafts = buildDuplicateReviewRows(filtered);
+      const duplicateRows = draftsMatchingFacetFilters.filter(matchesStatusFilter);
+
+      // buildDuplicateReviewRows looks up source rows (the original of a CSV duplicate)
+      // from the dataset it receives. Re-attach any source rows from the full facet-filtered
+      // set so they appear as non-selectable context when filtering by duplicate_csv.
+      let rowsForGrouping = duplicateRows;
+      if (hasDuplicateCsvFilter) {
+        const byLineNumber = new Map(draftsMatchingFacetFilters.map((d) => [d.rowIndex + 1, d]));
+        const duplicateRowIndexes = new Set(duplicateRows.map((d) => d.rowIndex));
+        const sourceRows = duplicateRows
+          .filter((d) => typeof d.duplicateOfLineNumber === "number")
+          .map((d) => byLineNumber.get(d.duplicateOfLineNumber!))
+          .filter(
+            (d): d is DraftActivity => d !== undefined && !duplicateRowIndexes.has(d.rowIndex),
+          );
+        if (sourceRows.length > 0) {
+          rowsForGrouping = [...duplicateRows, ...sourceRows];
+        }
+      }
+
+      const groupedDrafts = buildDuplicateReviewRows(rowsForGrouping);
       return {
         facetFilteredDrafts: groupedDrafts,
         nonSelectableRowIndexes: findDuplicateContextRowIndexes(groupedDrafts),
