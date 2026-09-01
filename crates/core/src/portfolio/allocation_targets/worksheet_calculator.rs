@@ -26,6 +26,10 @@ pub struct CategoryTarget {
     pub category_name: String,
     pub target_bps: i32,
     pub current_value: Decimal,
+    /// The taxonomy's cash sleeve. No security carries it, so the allocation
+    /// rule has nothing to spread its gap over — it is filled by the cash left
+    /// after the increases, and by what the reductions raise.
+    pub is_cash: bool,
 }
 
 /// Where one security's units sit, and whether they may be reduced.
@@ -225,8 +229,19 @@ fn spread_gaps_where(
     let mut intents = Vec::new();
     let mut unresolved = Vec::new();
 
+    let is_cash: HashMap<&str, bool> = categories
+        .iter()
+        .map(|category| (category.category_id.as_str(), category.is_cash))
+        .collect();
+
     for (category_id, gap) in category_gaps(categories, planning_total) {
         if !accept(gap) {
+            continue;
+        }
+        // The cash sleeve is not filled by buying a security, so its gap is
+        // neither spread nor unresolved. Deploying less cash and raising more
+        // through reductions is what moves it.
+        if is_cash.get(category_id.as_str()).copied().unwrap_or(false) {
             continue;
         }
         match split_gap(&category_id, gap, securities) {
@@ -311,12 +326,22 @@ pub struct SequenceInput<'a> {
     pub categories: &'a [CategoryTarget],
     pub securities: &'a [SecurityInput],
     pub planning_total: Decimal,
-    /// Cash the first pass may deploy: the tracked cash the user selected plus
-    /// any hypothetical external cash.
+    /// Recorded cash the user selected for deployment. Already sitting in the
+    /// cash sleeve, so deploying it draws that sleeve down.
     pub cash: Decimal,
-    /// The taxonomy's cash sleeve, when it has one. Deploying cash draws it
-    /// down, and the second pass has to see that.
+    /// Hypothetical cash not recorded anywhere yet. It arrives in the sleeve
+    /// before it is deployed, so it must not be drawn out of a balance that
+    /// never held it.
+    pub external_cash: Decimal,
+    /// The taxonomy's cash sleeve, when it has one. The second pass has to see
+    /// what the first one spent.
     pub cash_category_id: Option<String>,
+}
+
+impl SequenceInput<'_> {
+    fn deployable_cash(&self) -> Decimal {
+        self.cash + self.external_cash
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -352,10 +377,11 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
     // The cash is what it is. When the gaps ask for more, every intent is
     // scaled by the same factor — dropping one would be a choice between
     // securities.
+    let available = input.deployable_cash();
     let wanted: Decimal = cash_intents.values().sum();
-    let deployed = wanted.min(input.cash);
-    if wanted > input.cash && wanted > Decimal::ZERO {
-        let factor = input.cash / wanted;
+    let deployed = wanted.min(available);
+    if wanted > available && wanted > Decimal::ZERO {
+        let factor = available / wanted;
         for amount in cash_intents.values_mut() {
             *amount *= factor;
         }
@@ -385,10 +411,13 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
         input.categories,
         input.securities,
         &cash_intents,
+        // External cash lands in the sleeve on its way out, so only the part
+        // that was already recorded there is actually drawn down. Deploying
+        // less than the contribution leaves the sleeve fuller than it started.
         input
             .cash_category_id
             .as_deref()
-            .map(|category_id| (category_id, deployed)),
+            .map(|category_id| (category_id, deployed - input.external_cash)),
     );
     let (remaining_intents, remaining_unresolved) =
         spread_gaps(&projected, input.planning_total, input.securities);
@@ -515,40 +544,90 @@ fn unit_price_of(securities: &[SecurityInput], asset_id: &str) -> Option<Decimal
         .filter(|price| *price > Decimal::ZERO)
 }
 
+/// A security's single net amount, once every pass has had its say (§4.5).
+///
+/// The limits act on this rather than on the passes' drafts: a security bought
+/// through one category and sold through another is one trade, and only what
+/// survives the netting is actually bought or sold.
+#[derive(Debug, Clone, PartialEq)]
+struct NetAdjustment {
+    asset_id: String,
+    /// Signed: negative for a reduction.
+    amount: Decimal,
+    /// How much of a net increase the first pass already covered with cash.
+    /// Zero once the netting leaves a reduction, since nothing is bought.
+    cash_committed: Decimal,
+}
+
+/// §4.5 — one amount per security, ordered by asset id so the result is
+/// reproducible in an export.
+fn net_by_security(
+    increases: &[DraftIncrease],
+    reductions: &[DraftReduction],
+) -> Vec<NetAdjustment> {
+    let mut totals: HashMap<String, (Decimal, Decimal)> = HashMap::new();
+    for increase in increases {
+        let entry = totals.entry(increase.asset_id.clone()).or_default();
+        entry.0 += increase.amount;
+        if increase.funding == IncreaseFunding::Cash {
+            entry.1 += increase.amount;
+        }
+    }
+    for reduction in reductions {
+        totals.entry(reduction.asset_id.clone()).or_default().0 -= reduction.amount;
+    }
+
+    let mut netted: Vec<NetAdjustment> = totals
+        .into_iter()
+        .filter(|(_, (amount, _))| *amount != Decimal::ZERO)
+        .map(|(asset_id, (amount, cash))| NetAdjustment {
+            asset_id,
+            amount,
+            cash_committed: if amount > Decimal::ZERO {
+                cash.min(amount)
+            } else {
+                Decimal::ZERO
+            },
+        })
+        .collect();
+    netted.sort_by(|left, right| left.asset_id.cmp(&right.asset_id));
+    netted
+}
+
 /// §4.6 step 1 — a reduction cannot exceed the recorded position it is drawn
 /// from. Positions a do-not-sell constraint covers are not drawn from at all.
-fn cap_to_held_quantity(reductions: &mut [DraftReduction], securities: &[SecurityInput]) {
-    for reduction in reductions.iter_mut() {
-        let Some(security) = securities
+fn cap_to_held_quantity(nets: &mut [NetAdjustment], securities: &[SecurityInput]) {
+    for net in nets.iter_mut().filter(|net| net.amount < Decimal::ZERO) {
+        let held_value = securities
             .iter()
-            .find(|security| security.asset_id == reduction.asset_id)
-        else {
-            reduction.amount = Decimal::ZERO;
-            continue;
-        };
-        let held_value =
-            security.unit_price.unwrap_or(Decimal::ZERO) * security.reducible_quantity();
-        reduction.amount = reduction.amount.min(held_value);
+            .find(|security| security.asset_id == net.asset_id)
+            .map(|security| {
+                security.unit_price.unwrap_or(Decimal::ZERO) * security.reducible_quantity()
+            })
+            .unwrap_or(Decimal::ZERO);
+        net.amount = net.amount.max(-held_value);
     }
 }
 
 /// §4.6 step 2 — every reduction is scaled by the same factor to fit the cap.
 ///
-/// Returns the factor when the cap bound, so the result can state that the
-/// scaling was applied.
-fn scale_to_turnover_cap(
-    reductions: &mut [DraftReduction],
-    cap: Option<Decimal>,
-) -> Option<Decimal> {
+/// The cap measures what is actually sold, so it looks at the netted amounts:
+/// a security the passes bought through one category and sold through another
+/// consumes no turnover if it ends up bought.
+fn scale_to_turnover_cap(nets: &mut [NetAdjustment], cap: Option<Decimal>) -> Option<Decimal> {
     let cap = cap?;
-    let total: Decimal = reductions.iter().map(|reduction| reduction.amount).sum();
+    let total: Decimal = nets
+        .iter()
+        .filter(|net| net.amount < Decimal::ZERO)
+        .map(|net| -net.amount)
+        .sum();
     if total <= cap || total <= Decimal::ZERO {
         return None;
     }
 
     let factor = cap / total;
-    for reduction in reductions.iter_mut() {
-        reduction.amount *= factor;
+    for net in nets.iter_mut().filter(|net| net.amount < Decimal::ZERO) {
+        net.amount *= factor;
     }
     Some(factor)
 }
@@ -559,16 +638,20 @@ fn scale_to_turnover_cap(
 /// the shortfall belongs to the increases that depend on reduction proceeds, so
 /// scaling the cash-funded ones would leave selected cash undeployed for no
 /// reason.
-fn scale_to_funding(increases: &mut [DraftIncrease], available: Decimal) -> Option<Decimal> {
-    let total: Decimal = increases.iter().map(|increase| increase.amount).sum();
+fn scale_to_funding(nets: &mut [NetAdjustment], available: Decimal) -> Option<Decimal> {
+    let total: Decimal = nets
+        .iter()
+        .filter(|net| net.amount > Decimal::ZERO)
+        .map(|net| net.amount)
+        .sum();
     if total <= available {
         return None;
     }
 
-    let proceeds_funded: Decimal = increases
+    let proceeds_funded: Decimal = nets
         .iter()
-        .filter(|increase| increase.funding == IncreaseFunding::Proceeds)
-        .map(|increase| increase.amount)
+        .filter(|net| net.amount > Decimal::ZERO)
+        .map(|net| net.amount - net.cash_committed)
         .sum();
     if proceeds_funded <= Decimal::ZERO {
         return None;
@@ -577,37 +660,10 @@ fn scale_to_funding(increases: &mut [DraftIncrease], available: Decimal) -> Opti
     // Clamped: a shortfall deeper than the proceeds-funded total would mean the
     // first pass sized increases beyond the cash it had, which it does not do.
     let factor = ((proceeds_funded - (total - available)) / proceeds_funded).max(Decimal::ZERO);
-    for increase in increases.iter_mut() {
-        if increase.funding == IncreaseFunding::Proceeds {
-            increase.amount *= factor;
-        }
+    for net in nets.iter_mut().filter(|net| net.amount > Decimal::ZERO) {
+        net.amount = net.cash_committed + (net.amount - net.cash_committed) * factor;
     }
     Some(factor)
-}
-
-/// §4.5 — one amount per security, so a security the first pass increased and
-/// the second reduced nets out instead of producing two opposing lines.
-///
-/// Sorted by asset id: the result feeds an export, and an order that depended
-/// on hash iteration would not be reproducible.
-fn net_by_security(
-    increases: &[DraftIncrease],
-    reductions: &[DraftReduction],
-) -> Vec<(String, Decimal)> {
-    let mut net: HashMap<String, Decimal> = HashMap::new();
-    for increase in increases {
-        *net.entry(increase.asset_id.clone()).or_default() += increase.amount;
-    }
-    for reduction in reductions {
-        *net.entry(reduction.asset_id.clone()).or_default() -= reduction.amount;
-    }
-
-    let mut netted: Vec<(String, Decimal)> = net
-        .into_iter()
-        .filter(|(_, amount)| *amount != Decimal::ZERO)
-        .collect();
-    netted.sort_by(|left, right| left.0.cmp(&right.0));
-    netted
 }
 
 /// §4.6 steps 5 and 6 — quantities are floored under whole-unit policy, and a
@@ -643,29 +699,36 @@ fn finalize(
     }
 }
 
-/// Applies §4.6 in order: held quantity, turnover cap, available proceeds,
-/// funding, rounding, minimum line size, remaining cash.
+/// Applies §4.6 in order, to one net amount per security: held quantity,
+/// turnover cap, available proceeds, funding, rounding, minimum line size,
+/// remaining cash.
 pub fn apply_limits(
-    mut increases: Vec<DraftIncrease>,
-    mut reductions: Vec<DraftReduction>,
+    increases: Vec<DraftIncrease>,
+    reductions: Vec<DraftReduction>,
     securities: &[SecurityInput],
     limits: &LimitsInput,
 ) -> LimitedAdjustments {
-    cap_to_held_quantity(&mut reductions, securities);
-    let reduction_factor = scale_to_turnover_cap(&mut reductions, limits.turnover_cap);
+    let mut nets = net_by_security(&increases, &reductions);
+
+    cap_to_held_quantity(&mut nets, securities);
+    let reduction_factor = scale_to_turnover_cap(&mut nets, limits.turnover_cap);
 
     // Step 3 — what the reductions actually raise, added to the cash the user
     // selected, is the funding available to the increases.
-    let proceeds: Decimal = reductions.iter().map(|reduction| reduction.amount).sum();
+    let proceeds: Decimal = nets
+        .iter()
+        .filter(|net| net.amount < Decimal::ZERO)
+        .map(|net| -net.amount)
+        .sum();
     let available = limits.tracked_cash + limits.external_cash + proceeds;
 
-    let increase_factor = scale_to_funding(&mut increases, available);
+    let increase_factor = scale_to_funding(&mut nets, available);
 
-    let lines: Vec<LimitedLine> = net_by_security(&increases, &reductions)
+    let lines: Vec<LimitedLine> = nets
         .into_iter()
-        .filter_map(|(asset_id, amount)| {
-            let price = unit_price_of(securities, &asset_id)?;
-            Some(finalize(&asset_id, amount, price, limits))
+        .filter_map(|net| {
+            let price = unit_price_of(securities, &net.asset_id)?;
+            Some(finalize(&net.asset_id, net.amount, price, limits))
         })
         .filter(|line| line.amount != Decimal::ZERO)
         .collect();
@@ -757,12 +820,18 @@ fn apportion(
 /// `eligible_accounts` maps an asset to the accounts permitted to receive it:
 /// in scope, and not blocked by a constraint. Account type, tax wrapper and
 /// contribution room are never inputs.
+/// `min_line_amount` re-checks §4.6 step 6 against the lines the user actually
+/// sees: **Review adjustments** is account-level, so a security-level reduction
+/// that clears the minimum can split into account lines that do not.
 pub fn assign_accounts(
     lines: &[LimitedLine],
     securities: &[SecurityInput],
     eligible_accounts: &HashMap<String, Vec<String>>,
     whole_shares_only: bool,
+    min_line_amount: Decimal,
 ) -> Vec<AssignedLine> {
+    let below_minimum =
+        |amount: Decimal| min_line_amount > Decimal::ZERO && amount.abs() < min_line_amount;
     let mut assigned = Vec::new();
 
     for line in lines {
@@ -786,7 +855,7 @@ pub fn assign_accounts(
                 amount: line.amount,
                 quantity: line.quantity,
                 unit_price: line.unit_price,
-                is_below_minimum: line.is_below_minimum,
+                is_below_minimum: below_minimum(line.amount),
             });
             continue;
         }
@@ -813,7 +882,7 @@ pub fn assign_accounts(
                 amount: -(quantity * line.unit_price),
                 quantity: -quantity,
                 unit_price: line.unit_price,
-                is_below_minimum: line.is_below_minimum,
+                is_below_minimum: below_minimum(quantity * line.unit_price),
             });
         }
     }
@@ -896,6 +965,7 @@ mod tests {
             category_name: format!("{id} name"),
             target_bps,
             current_value,
+            is_cash: false,
         }
     }
 
@@ -1401,6 +1471,7 @@ mod tests {
             securities,
             planning_total: dec!(10000),
             cash,
+            external_cash: Decimal::ZERO,
             cash_category_id: None,
         }
     }
@@ -1611,7 +1682,13 @@ mod tests {
         let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
         let eligible = HashMap::from([("vti".to_string(), vec!["acc-1".to_string()])]);
 
-        let assigned = assign_accounts(&[line("vti", dec!(500))], &securities, &eligible, false);
+        let assigned = assign_accounts(
+            &[line("vti", dec!(500))],
+            &securities,
+            &eligible,
+            false,
+            Decimal::ZERO,
+        );
 
         assert_eq!(assigned[0].account_id.as_deref(), Some("acc-1"));
     }
@@ -1624,7 +1701,13 @@ mod tests {
             vec!["acc-1".to_string(), "acc-2".to_string()],
         )]);
 
-        let assigned = assign_accounts(&[line("vti", dec!(500))], &securities, &eligible, false);
+        let assigned = assign_accounts(
+            &[line("vti", dec!(500))],
+            &securities,
+            &eligible,
+            false,
+            Decimal::ZERO,
+        );
 
         // No default, no tiebreak, no largest-position heuristic.
         assert_eq!(assigned.len(), 1);
@@ -1641,6 +1724,7 @@ mod tests {
             &securities,
             &HashMap::new(),
             false,
+            Decimal::ZERO,
         );
 
         assert_eq!(assigned[0].account_id, None);
@@ -1656,6 +1740,7 @@ mod tests {
             &[security],
             &HashMap::new(),
             false,
+            Decimal::ZERO,
         );
 
         // 10 units split 30/10, which is a fact about where they sit.
@@ -1677,6 +1762,7 @@ mod tests {
             &[security],
             &HashMap::new(),
             false,
+            Decimal::ZERO,
         );
 
         assert_eq!(assigned.len(), 1);
@@ -1697,6 +1783,7 @@ mod tests {
             &[security],
             &HashMap::new(),
             true,
+            Decimal::ZERO,
         );
 
         assert_eq!(assigned[0].quantity, dec!(-4));
@@ -1715,6 +1802,7 @@ mod tests {
             &[security],
             &HashMap::new(),
             true,
+            Decimal::ZERO,
         );
 
         // The security-level line raised 700; placed in accounts it raises 600.
@@ -1796,6 +1884,116 @@ mod tests {
         let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), Decimal::ZERO);
 
         assert!(shortfalls.is_empty());
+    }
+
+    // ── Review findings on #1612 ─────────────────────────────────────────────
+
+    #[test]
+    fn turnover_is_measured_on_what_is_actually_sold() {
+        // +500 through equity and -300 through fixed income on one security is
+        // a 200 purchase. Nothing is sold, so no turnover is consumed and a
+        // 100 cap has nothing to bite on.
+        let securities = vec![security(
+            "blend",
+            &[("EQUITY", dec!(6000)), ("FIXED_INCOME", dec!(4000))],
+        )];
+        let mut input = limits();
+        input.tracked_cash = dec!(500);
+        input.turnover_cap = Some(dec!(100));
+
+        let result = apply_limits(
+            vec![increase("blend", dec!(500), IncreaseFunding::Cash)],
+            vec![reduction("blend", dec!(300))],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.lines.len(), 1);
+        assert_eq!(result.lines[0].amount, dec!(200));
+        assert_eq!(result.scaling.reduction_factor, None);
+    }
+
+    #[test]
+    fn external_cash_arrives_in_the_sleeve_before_it_is_deployed() {
+        // The 500 is not recorded anywhere yet, so deploying it must not push
+        // the cash sleeve below zero.
+        let categories = vec![
+            category("CASH", 0, Decimal::ZERO),
+            category("EQUITY", 10000, dec!(1000)),
+        ];
+        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            dec!(500),
+        );
+        input.cash_category_id = Some("CASH".to_string());
+        input.external_cash = dec!(500);
+
+        let result = run_sequence(&input);
+
+        assert!(result.reductions.is_empty(), "nothing should be sold here");
+    }
+
+    #[test]
+    fn a_cash_sleeve_is_filled_by_proceeds_not_by_buying_a_security() {
+        // No security carries cash. An underweight cash sleeve is filled by
+        // what the reductions raise, so it is not an unresolved amount.
+        let categories = vec![
+            CategoryTarget {
+                is_cash: true,
+                ..category("CASH", 1000, Decimal::ZERO)
+            },
+            category("EQUITY", 9000, dec!(10000)),
+        ];
+        let securities = vec![holding("vti", &[("EQUITY", dec!(10000))])];
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            Decimal::ZERO,
+        ));
+
+        assert!(
+            result.unresolved.is_empty(),
+            "cash is not an unresolved category: {:?}",
+            result.unresolved
+        );
+        assert_eq!(result.reductions[0].amount, dec!(1000));
+    }
+
+    #[test]
+    fn minimum_line_status_follows_the_lines_the_user_sees() {
+        let mut security = holding("vti", &[("EQUITY", dec!(3000))]);
+        in_accounts(
+            &mut security,
+            &[
+                ("acc-1", dec!(10)),
+                ("acc-2", dec!(10)),
+                ("acc-3", dec!(10)),
+            ],
+        );
+
+        // One 900 reduction clears a 500 minimum; split three ways it is 300 an
+        // account, and the account line is what Review adjustments shows.
+        let assigned = assign_accounts(
+            &[LimitedLine {
+                asset_id: "vti".to_string(),
+                amount: dec!(-900),
+                quantity: dec!(-9),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            }],
+            &[security],
+            &HashMap::new(),
+            false,
+            dec!(500),
+        );
+
+        assert_eq!(assigned.len(), 3);
+        assert!(assigned.iter().all(|line| line.is_below_minimum));
     }
 
     #[test]
