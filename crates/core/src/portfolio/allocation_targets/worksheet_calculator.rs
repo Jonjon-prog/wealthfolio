@@ -483,7 +483,9 @@ pub struct LimitedAdjustments {
     /// opposing lines. Ordered by asset id so the result is reproducible.
     pub lines: Vec<LimitedLine>,
     pub scaling: AdjustmentScaling,
-    /// Left after rounding and minimum-line reporting. Never redistributed.
+    /// Left after rounding and minimum-line reporting, before the lines are
+    /// placed in accounts. Never redistributed. Use [`remaining_cash`] once
+    /// assignment has run, since a whole-unit split can raise less than this.
     pub remaining_cash: Decimal,
 }
 
@@ -682,6 +684,205 @@ pub fn apply_limits(
         },
         remaining_cash,
     }
+}
+
+// ── Accounts (§6) ────────────────────────────────────────────────────────────
+
+/// A line once it knows which account it belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignedLine {
+    pub asset_id: String,
+    /// `None` when several accounts could receive the increase, so the user
+    /// places it. Reductions always carry the account they are drawn from.
+    pub account_id: Option<String>,
+    /// Signed: negative for a reduction.
+    pub amount: Decimal,
+    pub quantity: Decimal,
+    pub unit_price: Decimal,
+    pub is_below_minimum: bool,
+}
+
+/// An increase assigned to an account that account cannot fund on its own
+/// (§6). No transfer between accounts is assumed, so this is reported rather
+/// than resolved by moving cash.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountFundingShortfall {
+    pub account_id: String,
+    pub required: Decimal,
+    pub available: Decimal,
+}
+
+/// Splits a quantity across accounts in proportion to what each holds.
+///
+/// Proportional to the recorded position is the only split that states a fact.
+/// Sending the units to one account over another would be an assignment, and
+/// §6 keeps that out of the app — the account a reduction comes from decides
+/// which tax wrapper it leaves, which is exactly the judgement the non-goals
+/// in §3 rule out.
+///
+/// Under whole-unit policy each share is floored and the remainder is simply
+/// not drawn. Handing that last unit to one account would reintroduce the
+/// choice this split exists to avoid, so the reduction comes out slightly
+/// smaller instead and shows up in the remaining cash.
+fn apportion(
+    total: Decimal,
+    weights: &[(String, Decimal)],
+    whole_units: bool,
+) -> Vec<(String, Decimal)> {
+    let weight_total: Decimal = weights.iter().map(|(_, weight)| *weight).sum();
+    if weight_total <= Decimal::ZERO {
+        return Vec::new();
+    }
+
+    weights
+        .iter()
+        .map(|(account_id, weight)| {
+            let share = total * *weight / weight_total;
+            (
+                account_id.clone(),
+                if whole_units { share.floor() } else { share },
+            )
+        })
+        .collect()
+}
+
+/// Places each line in an account (§6).
+///
+/// A reduction is drawn from the accounts that actually hold the security,
+/// which is a fact rather than an assignment. An increase is auto-assigned only
+/// when exactly one account is eligible; when several are, the line arrives
+/// unallocated and the user places it. No default, no tiebreak, no
+/// largest-position heuristic.
+///
+/// `eligible_accounts` maps an asset to the accounts permitted to receive it:
+/// in scope, and not blocked by a constraint. Account type, tax wrapper and
+/// contribution room are never inputs.
+pub fn assign_accounts(
+    lines: &[LimitedLine],
+    securities: &[SecurityInput],
+    eligible_accounts: &HashMap<String, Vec<String>>,
+    whole_shares_only: bool,
+) -> Vec<AssignedLine> {
+    let mut assigned = Vec::new();
+
+    for line in lines {
+        let security = securities
+            .iter()
+            .find(|security| security.asset_id == line.asset_id);
+
+        if line.amount >= Decimal::ZERO {
+            let mut eligible = eligible_accounts
+                .get(&line.asset_id)
+                .cloned()
+                .unwrap_or_default();
+            eligible.sort();
+            eligible.dedup();
+            assigned.push(AssignedLine {
+                asset_id: line.asset_id.clone(),
+                account_id: match eligible.as_slice() {
+                    [only] => Some(only.clone()),
+                    _ => None,
+                },
+                amount: line.amount,
+                quantity: line.quantity,
+                unit_price: line.unit_price,
+                is_below_minimum: line.is_below_minimum,
+            });
+            continue;
+        }
+
+        let mut sources: Vec<(String, Decimal)> = security
+            .map(|security| {
+                security
+                    .positions
+                    .iter()
+                    .filter(|position| position.can_reduce && position.quantity > Decimal::ZERO)
+                    .map(|position| (position.account_id.clone(), position.quantity))
+                    .collect()
+            })
+            .unwrap_or_default();
+        sources.sort_by(|left, right| left.0.cmp(&right.0));
+
+        for (account_id, quantity) in apportion(line.quantity.abs(), &sources, whole_shares_only) {
+            if quantity <= Decimal::ZERO {
+                continue;
+            }
+            assigned.push(AssignedLine {
+                asset_id: line.asset_id.clone(),
+                account_id: Some(account_id),
+                amount: -(quantity * line.unit_price),
+                quantity: -quantity,
+                unit_price: line.unit_price,
+                is_below_minimum: line.is_below_minimum,
+            });
+        }
+    }
+
+    assigned
+}
+
+/// Cash left once the lines are placed in accounts (§4.6 step 7).
+///
+/// Recomputed after assignment, because a whole-unit split across several
+/// accounts draws fewer units than the security-level reduction asked for and
+/// therefore raises less. Prefer this over
+/// [`LimitedAdjustments::remaining_cash`], which is the figure before the lines
+/// know where they sit.
+///
+/// Goes negative when the increases were sized against proceeds the split did
+/// not raise. That is a funding gap to report, not something to redistribute.
+pub fn remaining_cash(
+    lines: &[AssignedLine],
+    tracked_cash: Decimal,
+    external_cash: Decimal,
+) -> Decimal {
+    tracked_cash + external_cash - lines.iter().map(|line| line.amount).sum::<Decimal>()
+}
+
+/// Checks that every increase an account was given can be funded from that
+/// account (§6).
+///
+/// An increase in one account cannot be funded by cash recorded in another, and
+/// no transfer is assumed or implied. Hypothetical external cash is not
+/// recorded anywhere, so it counts everywhere. Unallocated increases are not
+/// checked: the user has not placed them yet.
+pub fn account_funding_shortfalls(
+    lines: &[AssignedLine],
+    cash_by_account: &HashMap<String, Decimal>,
+    external_cash: Decimal,
+) -> Vec<AccountFundingShortfall> {
+    let mut required: HashMap<String, Decimal> = HashMap::new();
+    let mut raised: HashMap<String, Decimal> = HashMap::new();
+
+    for line in lines {
+        let Some(account_id) = line.account_id.as_ref() else {
+            continue;
+        };
+        if line.amount > Decimal::ZERO {
+            *required.entry(account_id.clone()).or_default() += line.amount;
+        } else {
+            *raised.entry(account_id.clone()).or_default() += -line.amount;
+        }
+    }
+
+    let mut shortfalls: Vec<AccountFundingShortfall> = required
+        .into_iter()
+        .filter_map(|(account_id, needed)| {
+            let available = cash_by_account
+                .get(&account_id)
+                .copied()
+                .unwrap_or(Decimal::ZERO)
+                + raised.get(&account_id).copied().unwrap_or(Decimal::ZERO)
+                + external_cash;
+            (needed > available).then_some(AccountFundingShortfall {
+                account_id,
+                required: needed,
+                available,
+            })
+        })
+        .collect();
+    shortfalls.sort_by(|left, right| left.account_id.cmp(&right.account_id));
+    shortfalls
 }
 
 #[cfg(test)]
@@ -1380,5 +1581,236 @@ mod tests {
             result.unresolved[0].reason,
             UnresolvedReason::NoRecordedSecurity
         );
+    }
+
+    // ── Accounts (§6) ────────────────────────────────────────────────────────
+
+    fn line(asset_id: &str, amount: Decimal) -> LimitedLine {
+        LimitedLine {
+            asset_id: asset_id.to_string(),
+            amount,
+            quantity: amount / dec!(100),
+            unit_price: dec!(100),
+            is_below_minimum: false,
+        }
+    }
+
+    fn in_accounts(security: &mut SecurityInput, accounts: &[(&str, Decimal)]) {
+        security.positions = accounts
+            .iter()
+            .map(|(account_id, quantity)| PositionInput {
+                account_id: account_id.to_string(),
+                quantity: *quantity,
+                can_reduce: true,
+            })
+            .collect();
+    }
+
+    #[test]
+    fn an_increase_is_assigned_when_exactly_one_account_is_eligible() {
+        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+        let eligible = HashMap::from([("vti".to_string(), vec!["acc-1".to_string()])]);
+
+        let assigned = assign_accounts(&[line("vti", dec!(500))], &securities, &eligible, false);
+
+        assert_eq!(assigned[0].account_id.as_deref(), Some("acc-1"));
+    }
+
+    #[test]
+    fn an_increase_with_several_eligible_accounts_stays_unallocated() {
+        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+        let eligible = HashMap::from([(
+            "vti".to_string(),
+            vec!["acc-1".to_string(), "acc-2".to_string()],
+        )]);
+
+        let assigned = assign_accounts(&[line("vti", dec!(500))], &securities, &eligible, false);
+
+        // No default, no tiebreak, no largest-position heuristic.
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].account_id, None);
+        assert_eq!(assigned[0].amount, dec!(500));
+    }
+
+    #[test]
+    fn an_increase_with_no_eligible_account_stays_unallocated() {
+        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+
+        let assigned = assign_accounts(
+            &[line("vti", dec!(500))],
+            &securities,
+            &HashMap::new(),
+            false,
+        );
+
+        assert_eq!(assigned[0].account_id, None);
+    }
+
+    #[test]
+    fn a_reduction_is_drawn_from_the_accounts_that_hold_it() {
+        let mut security = holding("vti", &[("EQUITY", dec!(4000))]);
+        in_accounts(&mut security, &[("acc-1", dec!(30)), ("acc-2", dec!(10))]);
+
+        let assigned = assign_accounts(
+            &[line("vti", dec!(-1000))],
+            &[security],
+            &HashMap::new(),
+            false,
+        );
+
+        // 10 units split 30/10, which is a fact about where they sit.
+        assert_eq!(assigned.len(), 2);
+        assert_eq!(assigned[0].account_id.as_deref(), Some("acc-1"));
+        assert_eq!(assigned[0].quantity, dec!(-7.5));
+        assert_eq!(assigned[1].account_id.as_deref(), Some("acc-2"));
+        assert_eq!(assigned[1].quantity, dec!(-2.5));
+    }
+
+    #[test]
+    fn a_protected_account_is_not_drawn_from() {
+        let mut security = holding("vti", &[("EQUITY", dec!(4000))]);
+        in_accounts(&mut security, &[("acc-1", dec!(30)), ("acc-2", dec!(10))]);
+        security.positions[1].can_reduce = false;
+
+        let assigned = assign_accounts(
+            &[line("vti", dec!(-1000))],
+            &[security],
+            &HashMap::new(),
+            false,
+        );
+
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].account_id.as_deref(), Some("acc-1"));
+        assert_eq!(assigned[0].quantity, dec!(-10));
+    }
+
+    #[test]
+    fn a_whole_unit_split_draws_less_rather_than_favouring_an_account() {
+        let mut security = holding("vti", &[("EQUITY", dec!(4000))]);
+        in_accounts(&mut security, &[("acc-1", dec!(20)), ("acc-2", dec!(10))]);
+
+        // 7 units over a 2:1 split is 4.67 and 2.33. Both floor, so 6 units are
+        // drawn and the seventh is left alone: handing it to one account would
+        // decide which wrapper it leaves.
+        let assigned = assign_accounts(
+            &[line("vti", dec!(-700))],
+            &[security],
+            &HashMap::new(),
+            true,
+        );
+
+        assert_eq!(assigned[0].quantity, dec!(-4));
+        assert_eq!(assigned[1].quantity, dec!(-2));
+        let total: Decimal = assigned.iter().map(|line| line.quantity).sum();
+        assert_eq!(total, dec!(-6));
+    }
+
+    #[test]
+    fn the_unit_a_split_left_behind_shows_up_in_the_remaining_cash() {
+        let mut security = holding("vti", &[("EQUITY", dec!(4000))]);
+        in_accounts(&mut security, &[("acc-1", dec!(20)), ("acc-2", dec!(10))]);
+
+        let assigned = assign_accounts(
+            &[line("vti", dec!(-700))],
+            &[security],
+            &HashMap::new(),
+            true,
+        );
+
+        // The security-level line raised 700; placed in accounts it raises 600.
+        assert_eq!(
+            remaining_cash(&assigned, Decimal::ZERO, Decimal::ZERO),
+            dec!(600)
+        );
+    }
+
+    #[test]
+    fn remaining_cash_goes_negative_when_a_split_underfunds_the_increases() {
+        let assigned = vec![
+            AssignedLine {
+                asset_id: "vti".to_string(),
+                account_id: Some("acc-1".to_string()),
+                amount: dec!(700),
+                quantity: dec!(7),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+            AssignedLine {
+                asset_id: "bnd".to_string(),
+                account_id: Some("acc-1".to_string()),
+                amount: dec!(-600),
+                quantity: dec!(-6),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+        ];
+
+        // A funding gap to report, not something to redistribute.
+        assert_eq!(
+            remaining_cash(&assigned, Decimal::ZERO, Decimal::ZERO),
+            dec!(-100)
+        );
+    }
+
+    #[test]
+    fn an_account_cannot_fund_an_increase_with_another_account_cash() {
+        let lines = vec![AssignedLine {
+            asset_id: "vti".to_string(),
+            account_id: Some("acc-1".to_string()),
+            amount: dec!(500),
+            quantity: dec!(5),
+            unit_price: dec!(100),
+            is_below_minimum: false,
+        }];
+        let cash = HashMap::from([("acc-2".to_string(), dec!(1000))]);
+
+        let shortfalls = account_funding_shortfalls(&lines, &cash, Decimal::ZERO);
+
+        assert_eq!(shortfalls.len(), 1);
+        assert_eq!(shortfalls[0].account_id, "acc-1");
+        assert_eq!(shortfalls[0].required, dec!(500));
+        assert_eq!(shortfalls[0].available, Decimal::ZERO);
+    }
+
+    #[test]
+    fn proceeds_raised_in_an_account_fund_increases_in_that_account() {
+        let lines = vec![
+            AssignedLine {
+                asset_id: "vti".to_string(),
+                account_id: Some("acc-1".to_string()),
+                amount: dec!(500),
+                quantity: dec!(5),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+            AssignedLine {
+                asset_id: "bnd".to_string(),
+                account_id: Some("acc-1".to_string()),
+                amount: dec!(-500),
+                quantity: dec!(-5),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+        ];
+
+        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), Decimal::ZERO);
+
+        assert!(shortfalls.is_empty());
+    }
+
+    #[test]
+    fn an_unallocated_increase_is_not_checked_for_funding() {
+        let lines = vec![AssignedLine {
+            asset_id: "vti".to_string(),
+            account_id: None,
+            amount: dec!(500),
+            quantity: dec!(5),
+            unit_price: dec!(100),
+            is_below_minimum: false,
+        }];
+
+        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), Decimal::ZERO);
+
+        assert!(shortfalls.is_empty());
     }
 }
