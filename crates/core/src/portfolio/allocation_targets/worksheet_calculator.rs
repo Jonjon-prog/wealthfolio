@@ -16,6 +16,7 @@ use rust_decimal::Decimal;
 
 use super::model::{
     AdjustmentScaling, UnresolvedCategoryAmount, UnresolvedReason, WorksheetDirection,
+    WorksheetMode,
 };
 
 /// A target category as the calculation sees it, taken from the drift report.
@@ -207,10 +208,27 @@ pub fn spread_gaps(
     planning_total: Decimal,
     securities: &[SecurityInput],
 ) -> (Vec<Intent>, Vec<UnresolvedCategoryAmount>) {
+    spread_gaps_where(categories, planning_total, securities, |_| true)
+}
+
+/// [`spread_gaps`], restricted to the gaps a pass is allowed to act on.
+///
+/// The first pass only fills underweight categories, since cash cannot create
+/// a reduction. A gap the pass skips is not unresolved — it is simply not this
+/// pass's business.
+fn spread_gaps_where(
+    categories: &[CategoryTarget],
+    planning_total: Decimal,
+    securities: &[SecurityInput],
+    accept: impl Fn(Decimal) -> bool,
+) -> (Vec<Intent>, Vec<UnresolvedCategoryAmount>) {
     let mut intents = Vec::new();
     let mut unresolved = Vec::new();
 
     for (category_id, gap) in category_gaps(categories, planning_total) {
+        if !accept(gap) {
+            continue;
+        }
         match split_gap(&category_id, gap, securities) {
             Ok(placed) => intents.extend(placed),
             Err(reason) => {
@@ -230,6 +248,174 @@ pub fn spread_gaps(
     }
 
     (intents, unresolved)
+}
+
+// ── Pass sequence (§4.5) ─────────────────────────────────────────────────────
+
+/// Recomputes each category's current value from the amounts actually applied
+/// to securities (§4.5).
+///
+/// A multi-category security's amount is spread by its own classification, so
+/// a security classified 60 % equity / 40 % fixed income moves both categories
+/// once, by the amount applied to it — never by the per-category intents that
+/// produced that amount.
+pub fn project_categories(
+    categories: &[CategoryTarget],
+    securities: &[SecurityInput],
+    applied: &HashMap<String, Decimal>,
+    cash_drawdown: Option<(&str, Decimal)>,
+) -> Vec<CategoryTarget> {
+    let mut deltas: HashMap<String, Decimal> = HashMap::new();
+
+    for security in securities {
+        let Some(amount) = applied.get(&security.asset_id).copied() else {
+            continue;
+        };
+        let classified: Decimal = security
+            .category_values
+            .iter()
+            .map(|(_, value)| *value)
+            .sum();
+        if amount == Decimal::ZERO || classified <= Decimal::ZERO {
+            continue;
+        }
+        for (category_id, value) in &security.category_values {
+            *deltas.entry(category_id.clone()).or_default() += amount * *value / classified;
+        }
+    }
+
+    // Cash spent leaves the cash sleeve. Without this the second pass would
+    // still see the cash sitting there and keep reducing to fill categories the
+    // first pass already filled.
+    if let Some((cash_category_id, drawn)) = cash_drawdown {
+        *deltas.entry(cash_category_id.to_string()).or_default() -= drawn;
+    }
+
+    categories
+        .iter()
+        .map(|category| CategoryTarget {
+            current_value: category.current_value
+                + deltas
+                    .get(&category.category_id)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO),
+            ..category.clone()
+        })
+        .collect()
+}
+
+/// What the pass sequence needs to know.
+#[derive(Debug, Clone)]
+pub struct SequenceInput<'a> {
+    pub mode: WorksheetMode,
+    pub categories: &'a [CategoryTarget],
+    pub securities: &'a [SecurityInput],
+    pub planning_total: Decimal,
+    /// Cash the first pass may deploy: the tracked cash the user selected plus
+    /// any hypothetical external cash.
+    pub cash: Decimal,
+    /// The taxonomy's cash sleeve, when it has one. Deploying cash draws it
+    /// down, and the second pass has to see that.
+    pub cash_category_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SequenceOutput {
+    pub increases: Vec<DraftIncrease>,
+    pub reductions: Vec<DraftReduction>,
+    pub unresolved: Vec<UnresolvedCategoryAmount>,
+}
+
+fn sorted_by_asset(amounts: HashMap<String, Decimal>) -> Vec<(String, Decimal)> {
+    let mut sorted: Vec<(String, Decimal)> = amounts.into_iter().collect();
+    sorted.sort_by(|left, right| left.0.cmp(&right.0));
+    sorted
+}
+
+/// Runs the mode's pass sequence (§4.5).
+///
+/// **Invest cash** runs one pass. **Rebalance** runs a fixed sequence of
+/// exactly two, cash first. It is fixed, not a loop: nothing is recalculated
+/// again after the second pass, and the number of passes never depends on the
+/// result.
+pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
+    // Pass 1 — deploy the selected cash against the gaps. Only underweight
+    // categories are filled, since cash cannot create a reduction.
+    let (intents, unresolved) = spread_gaps_where(
+        input.categories,
+        input.planning_total,
+        input.securities,
+        |gap| gap > Decimal::ZERO,
+    );
+    let mut cash_intents = combine_intents(&intents);
+
+    // The cash is what it is. When the gaps ask for more, every intent is
+    // scaled by the same factor — dropping one would be a choice between
+    // securities.
+    let wanted: Decimal = cash_intents.values().sum();
+    let deployed = wanted.min(input.cash);
+    if wanted > input.cash && wanted > Decimal::ZERO {
+        let factor = input.cash / wanted;
+        for amount in cash_intents.values_mut() {
+            *amount *= factor;
+        }
+    }
+
+    let mut increases: Vec<DraftIncrease> = sorted_by_asset(cash_intents.clone())
+        .into_iter()
+        .filter(|(_, amount)| *amount > Decimal::ZERO)
+        .map(|(asset_id, amount)| DraftIncrease {
+            asset_id,
+            amount,
+            funding: IncreaseFunding::Cash,
+        })
+        .collect();
+
+    if input.mode == WorksheetMode::InvestCash {
+        return SequenceOutput {
+            increases,
+            reductions: Vec::new(),
+            unresolved,
+        };
+    }
+
+    // Pass 2 — reductions cover the differences the cash did not, and fund the
+    // increases those differences imply.
+    let projected = project_categories(
+        input.categories,
+        input.securities,
+        &cash_intents,
+        input
+            .cash_category_id
+            .as_deref()
+            .map(|category_id| (category_id, deployed)),
+    );
+    let (remaining_intents, remaining_unresolved) =
+        spread_gaps(&projected, input.planning_total, input.securities);
+
+    let mut reductions = Vec::new();
+    for (asset_id, amount) in sorted_by_asset(combine_intents(&remaining_intents)) {
+        if amount > Decimal::ZERO {
+            increases.push(DraftIncrease {
+                asset_id,
+                amount,
+                funding: IncreaseFunding::Proceeds,
+            });
+        } else if amount < Decimal::ZERO {
+            reductions.push(DraftReduction {
+                asset_id,
+                amount: -amount,
+            });
+        }
+    }
+
+    SequenceOutput {
+        increases,
+        reductions,
+        // The second pass sees the projected state, so its list is the complete
+        // one: a category the first pass could not place is still unplaced here.
+        unresolved: remaining_unresolved,
+    }
 }
 
 // ── Limits (§4.6) ────────────────────────────────────────────────────────────
@@ -292,11 +478,23 @@ pub struct LimitedLine {
 
 #[derive(Debug, Clone)]
 pub struct LimitedAdjustments {
-    pub increases: Vec<LimitedLine>,
-    pub reductions: Vec<LimitedLine>,
+    /// One line per security, signed (§4.5). A security the first pass
+    /// increased and the second reduced nets out rather than producing two
+    /// opposing lines. Ordered by asset id so the result is reproducible.
+    pub lines: Vec<LimitedLine>,
     pub scaling: AdjustmentScaling,
     /// Left after rounding and minimum-line reporting. Never redistributed.
     pub remaining_cash: Decimal,
+}
+
+impl LimitedAdjustments {
+    pub fn increases(&self) -> impl Iterator<Item = &LimitedLine> {
+        self.lines.iter().filter(|line| line.amount > Decimal::ZERO)
+    }
+
+    pub fn reductions(&self) -> impl Iterator<Item = &LimitedLine> {
+        self.lines.iter().filter(|line| line.amount < Decimal::ZERO)
+    }
 }
 
 /// The turnover cap as an amount, from the target's `max_turnover_bps`.
@@ -385,26 +583,54 @@ fn scale_to_funding(increases: &mut [DraftIncrease], available: Decimal) -> Opti
     Some(factor)
 }
 
+/// §4.5 — one amount per security, so a security the first pass increased and
+/// the second reduced nets out instead of producing two opposing lines.
+///
+/// Sorted by asset id: the result feeds an export, and an order that depended
+/// on hash iteration would not be reproducible.
+fn net_by_security(
+    increases: &[DraftIncrease],
+    reductions: &[DraftReduction],
+) -> Vec<(String, Decimal)> {
+    let mut net: HashMap<String, Decimal> = HashMap::new();
+    for increase in increases {
+        *net.entry(increase.asset_id.clone()).or_default() += increase.amount;
+    }
+    for reduction in reductions {
+        *net.entry(reduction.asset_id.clone()).or_default() -= reduction.amount;
+    }
+
+    let mut netted: Vec<(String, Decimal)> = net
+        .into_iter()
+        .filter(|(_, amount)| *amount != Decimal::ZERO)
+        .collect();
+    netted.sort_by(|left, right| left.0.cmp(&right.0));
+    netted
+}
+
 /// §4.6 steps 5 and 6 — quantities are floored under whole-unit policy, and a
 /// line below the minimum is flagged rather than dropped or re-rounded.
+///
+/// `amount` is signed. Flooring works on the magnitude, so a whole-unit policy
+/// buys fewer units and sells fewer units — never more than asked either way.
 fn finalize(
     asset_id: &str,
     amount: Decimal,
     unit_price: Decimal,
-    direction: WorksheetDirection,
     limits: &LimitsInput,
 ) -> LimitedLine {
-    let mut quantity = amount / unit_price;
+    let sign = if amount < Decimal::ZERO {
+        Decimal::NEGATIVE_ONE
+    } else {
+        Decimal::ONE
+    };
+    let mut quantity = amount.abs() / unit_price;
     if limits.whole_shares_only {
         quantity = quantity.floor();
     }
     let resolved = quantity * unit_price;
     let is_below_minimum =
         limits.min_line_amount > Decimal::ZERO && resolved < limits.min_line_amount;
-    let sign = match direction {
-        WorksheetDirection::Increase => Decimal::ONE,
-        WorksheetDirection::Reduce => Decimal::NEGATIVE_ONE,
-    };
 
     LimitedLine {
         asset_id: asset_id.to_string(),
@@ -433,44 +659,23 @@ pub fn apply_limits(
 
     let increase_factor = scale_to_funding(&mut increases, available);
 
-    let reductions: Vec<LimitedLine> = reductions
-        .iter()
-        .filter(|reduction| reduction.amount > Decimal::ZERO)
-        .filter_map(|reduction| {
-            let price = unit_price_of(securities, &reduction.asset_id)?;
-            Some(finalize(
-                &reduction.asset_id,
-                reduction.amount,
-                price,
-                WorksheetDirection::Reduce,
-                limits,
-            ))
+    let lines: Vec<LimitedLine> = net_by_security(&increases, &reductions)
+        .into_iter()
+        .filter_map(|(asset_id, amount)| {
+            let price = unit_price_of(securities, &asset_id)?;
+            Some(finalize(&asset_id, amount, price, limits))
         })
-        .collect();
-    let increases: Vec<LimitedLine> = increases
-        .iter()
-        .filter(|increase| increase.amount > Decimal::ZERO)
-        .filter_map(|increase| {
-            let price = unit_price_of(securities, &increase.asset_id)?;
-            Some(finalize(
-                &increase.asset_id,
-                increase.amount,
-                price,
-                WorksheetDirection::Increase,
-                limits,
-            ))
-        })
+        .filter(|line| line.amount != Decimal::ZERO)
         .collect();
 
     // Step 7 — whatever rounding and minimum-line reporting left behind. Not
-    // redistributed: that would be another round of construction.
-    let deployed: Decimal = increases.iter().map(|line| line.amount).sum();
-    let raised: Decimal = reductions.iter().map(|line| line.amount.abs()).sum();
-    let remaining_cash = limits.tracked_cash + limits.external_cash + raised - deployed;
+    // redistributed: that would be another round of construction. Signed
+    // amounts mean the reductions already offset what they raised.
+    let net_deployed: Decimal = lines.iter().map(|line| line.amount).sum();
+    let remaining_cash = limits.tracked_cash + limits.external_cash - net_deployed;
 
     LimitedAdjustments {
-        increases,
-        reductions,
+        lines,
         scaling: AdjustmentScaling {
             reduction_factor,
             increase_factor,
@@ -756,8 +961,8 @@ mod tests {
             &limits(),
         );
 
-        assert_eq!(result.reductions[0].amount, dec!(-1000));
-        assert_eq!(result.reductions[0].quantity, dec!(-10));
+        assert_eq!(result.reductions().next().unwrap().amount, dec!(-1000));
+        assert_eq!(result.reductions().next().unwrap().quantity, dec!(-10));
     }
 
     #[test]
@@ -772,7 +977,7 @@ mod tests {
             &limits(),
         );
 
-        assert!(result.reductions.is_empty());
+        assert_eq!(result.reductions().count(), 0);
     }
 
     #[test]
@@ -793,8 +998,8 @@ mod tests {
 
         // 1200 of reductions scaled by 0.5 to fit a 600 cap.
         assert_eq!(result.scaling.reduction_factor, Some(dec!(0.5)));
-        assert_eq!(result.reductions[0].amount, dec!(-400));
-        assert_eq!(result.reductions[1].amount, dec!(-200));
+        assert_eq!(result.reductions().next().unwrap().amount, dec!(-400));
+        assert_eq!(result.reductions().nth(1).unwrap().amount, dec!(-200));
     }
 
     #[test]
@@ -811,7 +1016,7 @@ mod tests {
         );
 
         assert_eq!(result.scaling.reduction_factor, None);
-        assert_eq!(result.reductions[0].amount, dec!(-500));
+        assert_eq!(result.reductions().next().unwrap().amount, dec!(-500));
     }
 
     #[test]
@@ -828,7 +1033,7 @@ mod tests {
         );
 
         assert_eq!(result.scaling.increase_factor, Some(dec!(0.4)));
-        assert_eq!(result.increases[0].amount, dec!(400));
+        assert_eq!(result.increases().next().unwrap().amount, dec!(400));
     }
 
     #[test]
@@ -857,12 +1062,12 @@ mod tests {
 
         assert_eq!(result.scaling.increase_factor, Some(dec!(0.4)));
         assert_eq!(
-            result.increases[0].amount,
+            result.increases().next().unwrap().amount,
             dec!(500),
             "cash-funded untouched"
         );
         assert_eq!(
-            result.increases[1].amount,
+            result.increases().nth(1).unwrap().amount,
             dec!(200),
             "absorbs the shortfall"
         );
@@ -882,7 +1087,7 @@ mod tests {
         );
 
         assert_eq!(result.scaling.increase_factor, None);
-        assert_eq!(result.increases[0].amount, dec!(600));
+        assert_eq!(result.increases().next().unwrap().amount, dec!(600));
         assert_eq!(result.remaining_cash, dec!(400));
     }
 
@@ -901,8 +1106,8 @@ mod tests {
         );
 
         // 9.5 units at 100 floors to 9, so 900 is deployed and 50 is left.
-        assert_eq!(result.increases[0].quantity, dec!(9));
-        assert_eq!(result.increases[0].amount, dec!(900));
+        assert_eq!(result.increases().next().unwrap().quantity, dec!(9));
+        assert_eq!(result.increases().next().unwrap().amount, dec!(900));
         assert_eq!(result.remaining_cash, dec!(50));
     }
 
@@ -920,9 +1125,13 @@ mod tests {
             &input,
         );
 
-        assert_eq!(result.increases.len(), 1);
-        assert!(result.increases[0].is_below_minimum);
-        assert_eq!(result.increases[0].amount, dec!(50), "never re-rounded up");
+        assert_eq!(result.increases().count(), 1);
+        assert!(result.increases().next().unwrap().is_below_minimum);
+        assert_eq!(
+            result.increases().next().unwrap().amount,
+            dec!(50),
+            "never re-rounded up"
+        );
     }
 
     #[test]
@@ -940,8 +1149,236 @@ mod tests {
         );
 
         assert_eq!(result.scaling.increase_factor, None);
-        assert_eq!(result.increases[0].amount, dec!(700));
-        assert_eq!(result.reductions[0].amount, dec!(-700));
+        assert_eq!(result.increases().next().unwrap().amount, dec!(700));
+        assert_eq!(result.reductions().next().unwrap().amount, dec!(-700));
         assert_eq!(result.remaining_cash, Decimal::ZERO);
+    }
+
+    #[test]
+    fn a_security_increased_then_reduced_nets_into_one_line() {
+        // The first pass buys 500 of a 60/40 security through equity, the
+        // second sells 300 of it through fixed income. One line, not two.
+        let securities = vec![security(
+            "blend",
+            &[("EQUITY", dec!(6000)), ("FIXED_INCOME", dec!(4000))],
+        )];
+        let mut input = limits();
+        input.tracked_cash = dec!(500);
+
+        let result = apply_limits(
+            vec![increase("blend", dec!(500), IncreaseFunding::Cash)],
+            vec![reduction("blend", dec!(300))],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.lines.len(), 1);
+        assert_eq!(result.lines[0].amount, dec!(200));
+        assert_eq!(result.lines[0].quantity, dec!(2));
+    }
+
+    // ── Pass sequence (§4.5) ─────────────────────────────────────────────────
+
+    /// A security whose recorded quantity matches the value it carries, so
+    /// reduction caps and category values agree.
+    fn holding(id: &str, values: &[(&str, Decimal)]) -> SecurityInput {
+        let total: Decimal = values.iter().map(|(_, value)| *value).sum();
+        let mut security = security(id, values);
+        security.positions[0].quantity = total / dec!(100);
+        security
+    }
+
+    fn sequence<'a>(
+        mode: WorksheetMode,
+        categories: &'a [CategoryTarget],
+        securities: &'a [SecurityInput],
+        cash: Decimal,
+    ) -> SequenceInput<'a> {
+        SequenceInput {
+            mode,
+            categories,
+            securities,
+            planning_total: dec!(10000),
+            cash,
+            cash_category_id: None,
+        }
+    }
+
+    /// 4000 of equity against a 6000 target, 6000 of fixed income against 4000.
+    fn tilted() -> (Vec<CategoryTarget>, Vec<SecurityInput>) {
+        (
+            vec![
+                category("EQUITY", 6000, dec!(4000)),
+                category("FIXED_INCOME", 4000, dec!(6000)),
+            ],
+            vec![
+                holding("vti", &[("EQUITY", dec!(4000))]),
+                holding("bnd", &[("FIXED_INCOME", dec!(6000))]),
+            ],
+        )
+    }
+
+    #[test]
+    fn invest_cash_never_reduces_an_overweight_category() {
+        let (categories, securities) = tilted();
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::InvestCash,
+            &categories,
+            &securities,
+            dec!(500),
+        ));
+
+        assert!(result.reductions.is_empty());
+        // Fixed income stays overweight, and that is not an unresolved amount —
+        // the mode simply does not act on it.
+        assert!(result.unresolved.is_empty());
+    }
+
+    #[test]
+    fn invest_cash_scales_every_intent_to_the_cash_available() {
+        let (categories, securities) = tilted();
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::InvestCash,
+            &categories,
+            &securities,
+            dec!(500),
+        ));
+
+        // The equity gap asks for 2000 and only 500 is on the table.
+        assert_eq!(result.increases.len(), 1);
+        assert_eq!(result.increases[0].asset_id, "vti");
+        assert_eq!(result.increases[0].amount, dec!(500));
+        assert_eq!(result.increases[0].funding, IncreaseFunding::Cash);
+    }
+
+    #[test]
+    fn rebalance_deploys_cash_first_then_covers_the_rest_with_reductions() {
+        let (categories, securities) = tilted();
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            dec!(500),
+        ));
+
+        // Pass 1 puts the 500 of cash into equity. Pass 2 sees equity at 4500,
+        // so 1500 of the gap is left for the reductions to fund.
+        assert_eq!(result.increases.len(), 2);
+        assert_eq!(result.increases[0].amount, dec!(500));
+        assert_eq!(result.increases[0].funding, IncreaseFunding::Cash);
+        assert_eq!(result.increases[1].amount, dec!(1500));
+        assert_eq!(result.increases[1].funding, IncreaseFunding::Proceeds);
+        assert_eq!(result.reductions.len(), 1);
+        assert_eq!(result.reductions[0].asset_id, "bnd");
+        assert_eq!(result.reductions[0].amount, dec!(2000));
+    }
+
+    #[test]
+    fn rebalance_without_cash_is_reductions_funding_increases() {
+        let (categories, securities) = tilted();
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            Decimal::ZERO,
+        ));
+
+        // What the retired sell-to-rebalance mode did: a single pass in
+        // substance, since the first one deploys nothing.
+        assert_eq!(result.increases.len(), 1);
+        assert_eq!(result.increases[0].amount, dec!(2000));
+        assert_eq!(result.increases[0].funding, IncreaseFunding::Proceeds);
+        assert_eq!(result.reductions[0].amount, dec!(2000));
+    }
+
+    #[test]
+    fn projection_spreads_an_amount_by_the_security_own_classification() {
+        let categories = vec![
+            category("EQUITY", 6000, dec!(6000)),
+            category("FIXED_INCOME", 4000, dec!(4000)),
+        ];
+        let securities = vec![holding(
+            "blend",
+            &[("EQUITY", dec!(6000)), ("FIXED_INCOME", dec!(4000))],
+        )];
+        let applied = HashMap::from([("blend".to_string(), dec!(1000))]);
+
+        let projected = project_categories(&categories, &securities, &applied, None);
+
+        assert_eq!(projected[0].current_value, dec!(6600));
+        assert_eq!(projected[1].current_value, dec!(4400));
+    }
+
+    #[test]
+    fn projection_draws_deployed_cash_out_of_the_cash_sleeve() {
+        let categories = vec![
+            category("CASH", 0, dec!(1000)),
+            category("EQUITY", 10000, dec!(9000)),
+        ];
+        let securities = vec![holding("vti", &[("EQUITY", dec!(9000))])];
+        let applied = HashMap::from([("vti".to_string(), dec!(500))]);
+
+        let projected = project_categories(
+            &categories,
+            &securities,
+            &applied,
+            Some(("CASH", dec!(500))),
+        );
+
+        assert_eq!(projected[0].current_value, dec!(500));
+        assert_eq!(projected[1].current_value, dec!(9500));
+    }
+
+    #[test]
+    fn the_second_pass_sees_the_cash_the_first_one_spent() {
+        // Without the drawdown the second pass would still count the cash as
+        // sitting in its sleeve and reduce equity to refill it.
+        let categories = vec![
+            category("CASH", 1000, dec!(2000)),
+            category("EQUITY", 9000, dec!(8000)),
+        ];
+        let securities = vec![holding("vti", &[("EQUITY", dec!(8000))])];
+        let mut input = sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            dec!(1000),
+        );
+        input.cash_category_id = Some("CASH".to_string());
+
+        let result = run_sequence(&input);
+
+        // Cash goes from 2000 to 1000, which is its target, so the second pass
+        // has nothing left to reduce.
+        assert_eq!(result.increases[0].amount, dec!(1000));
+        assert!(result.reductions.is_empty());
+    }
+
+    #[test]
+    fn an_unplaceable_category_survives_both_passes_as_unresolved() {
+        let categories = vec![
+            category("EQUITY", 8000, dec!(9000)),
+            category("COMMODITIES", 2000, dec!(1000)),
+        ];
+        let securities = vec![holding("vti", &[("EQUITY", dec!(9000))])];
+
+        let result = run_sequence(&sequence(
+            WorksheetMode::Rebalance,
+            &categories,
+            &securities,
+            dec!(500),
+        ));
+
+        assert_eq!(result.unresolved.len(), 1);
+        assert_eq!(result.unresolved[0].category_id, "COMMODITIES");
+        assert_eq!(result.unresolved[0].amount, dec!(1000));
+        assert_eq!(
+            result.unresolved[0].reason,
+            UnresolvedReason::NoRecordedSecurity
+        );
     }
 }
