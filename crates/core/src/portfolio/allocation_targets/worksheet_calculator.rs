@@ -14,7 +14,9 @@ use std::collections::HashMap;
 
 use rust_decimal::Decimal;
 
-use super::model::{UnresolvedCategoryAmount, UnresolvedReason, WorksheetDirection};
+use super::model::{
+    AdjustmentScaling, UnresolvedCategoryAmount, UnresolvedReason, WorksheetDirection,
+};
 
 /// A target category as the calculation sees it, taken from the drift report.
 #[derive(Debug, Clone)]
@@ -228,6 +230,253 @@ pub fn spread_gaps(
     }
 
     (intents, unresolved)
+}
+
+// ── Limits (§4.6) ────────────────────────────────────────────────────────────
+//
+// Applied in the order below before the worksheet is prefilled. Every step
+// either scales proportionally or reports; none of them drops a line, since
+// dropping would be a choice between securities.
+
+/// Which funding an increase depends on (§4.6 step 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IncreaseFunding {
+    /// Sized against the cash deployed in the first pass. A shortfall in
+    /// reduction proceeds does not belong to it, so it is never scaled.
+    Cash,
+    /// Depends on what the reductions raise, so it absorbs any shortfall.
+    Proceeds,
+}
+
+/// An increase before the limits are applied. Amount is positive.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DraftIncrease {
+    pub asset_id: String,
+    pub amount: Decimal,
+    pub funding: IncreaseFunding,
+}
+
+/// A reduction before the limits are applied. Amount is a positive magnitude.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DraftReduction {
+    pub asset_id: String,
+    pub amount: Decimal,
+}
+
+/// What the user's target and guardrails allow, in base currency.
+#[derive(Debug, Clone)]
+pub struct LimitsInput {
+    /// Tracked cash the user selected for deployment.
+    pub tracked_cash: Decimal,
+    /// Hypothetical cash not currently recorded.
+    pub external_cash: Decimal,
+    /// Absolute cap on the reduction total. Derive it from the target's
+    /// `max_turnover_bps` with [`turnover_cap_value`].
+    pub turnover_cap: Option<Decimal>,
+    pub min_line_amount: Decimal,
+    pub whole_shares_only: bool,
+}
+
+/// One line after the limits are applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitedLine {
+    pub asset_id: String,
+    /// Signed: negative for a reduction.
+    pub amount: Decimal,
+    pub quantity: Decimal,
+    pub unit_price: Decimal,
+    /// Below the target's minimum — reported, never dropped, never re-rounded
+    /// to lift it over the threshold (§4.6 step 6).
+    pub is_below_minimum: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LimitedAdjustments {
+    pub increases: Vec<LimitedLine>,
+    pub reductions: Vec<LimitedLine>,
+    pub scaling: AdjustmentScaling,
+    /// Left after rounding and minimum-line reporting. Never redistributed.
+    pub remaining_cash: Decimal,
+}
+
+/// The turnover cap as an amount, from the target's `max_turnover_bps`.
+pub fn turnover_cap_value(
+    planning_total: Decimal,
+    max_turnover_bps: Option<i32>,
+) -> Option<Decimal> {
+    max_turnover_bps.map(|bps| planning_total * Decimal::from(bps) / Decimal::from(10_000))
+}
+
+fn unit_price_of(securities: &[SecurityInput], asset_id: &str) -> Option<Decimal> {
+    securities
+        .iter()
+        .find(|security| security.asset_id == asset_id)
+        .and_then(|security| security.unit_price)
+        .filter(|price| *price > Decimal::ZERO)
+}
+
+/// §4.6 step 1 — a reduction cannot exceed the recorded position it is drawn
+/// from. Positions a do-not-sell constraint covers are not drawn from at all.
+fn cap_to_held_quantity(reductions: &mut [DraftReduction], securities: &[SecurityInput]) {
+    for reduction in reductions.iter_mut() {
+        let Some(security) = securities
+            .iter()
+            .find(|security| security.asset_id == reduction.asset_id)
+        else {
+            reduction.amount = Decimal::ZERO;
+            continue;
+        };
+        let held_value =
+            security.unit_price.unwrap_or(Decimal::ZERO) * security.reducible_quantity();
+        reduction.amount = reduction.amount.min(held_value);
+    }
+}
+
+/// §4.6 step 2 — every reduction is scaled by the same factor to fit the cap.
+///
+/// Returns the factor when the cap bound, so the result can state that the
+/// scaling was applied.
+fn scale_to_turnover_cap(
+    reductions: &mut [DraftReduction],
+    cap: Option<Decimal>,
+) -> Option<Decimal> {
+    let cap = cap?;
+    let total: Decimal = reductions.iter().map(|reduction| reduction.amount).sum();
+    if total <= cap || total <= Decimal::ZERO {
+        return None;
+    }
+
+    let factor = cap / total;
+    for reduction in reductions.iter_mut() {
+        reduction.amount *= factor;
+    }
+    Some(factor)
+}
+
+/// §4.6 step 4 — increases are scaled down to the funding available to them.
+///
+/// Increases already covered by cash deployed in the first pass are left alone:
+/// the shortfall belongs to the increases that depend on reduction proceeds, so
+/// scaling the cash-funded ones would leave selected cash undeployed for no
+/// reason.
+fn scale_to_funding(increases: &mut [DraftIncrease], available: Decimal) -> Option<Decimal> {
+    let total: Decimal = increases.iter().map(|increase| increase.amount).sum();
+    if total <= available {
+        return None;
+    }
+
+    let proceeds_funded: Decimal = increases
+        .iter()
+        .filter(|increase| increase.funding == IncreaseFunding::Proceeds)
+        .map(|increase| increase.amount)
+        .sum();
+    if proceeds_funded <= Decimal::ZERO {
+        return None;
+    }
+
+    // Clamped: a shortfall deeper than the proceeds-funded total would mean the
+    // first pass sized increases beyond the cash it had, which it does not do.
+    let factor = ((proceeds_funded - (total - available)) / proceeds_funded).max(Decimal::ZERO);
+    for increase in increases.iter_mut() {
+        if increase.funding == IncreaseFunding::Proceeds {
+            increase.amount *= factor;
+        }
+    }
+    Some(factor)
+}
+
+/// §4.6 steps 5 and 6 — quantities are floored under whole-unit policy, and a
+/// line below the minimum is flagged rather than dropped or re-rounded.
+fn finalize(
+    asset_id: &str,
+    amount: Decimal,
+    unit_price: Decimal,
+    direction: WorksheetDirection,
+    limits: &LimitsInput,
+) -> LimitedLine {
+    let mut quantity = amount / unit_price;
+    if limits.whole_shares_only {
+        quantity = quantity.floor();
+    }
+    let resolved = quantity * unit_price;
+    let is_below_minimum =
+        limits.min_line_amount > Decimal::ZERO && resolved < limits.min_line_amount;
+    let sign = match direction {
+        WorksheetDirection::Increase => Decimal::ONE,
+        WorksheetDirection::Reduce => Decimal::NEGATIVE_ONE,
+    };
+
+    LimitedLine {
+        asset_id: asset_id.to_string(),
+        amount: resolved * sign,
+        quantity: quantity * sign,
+        unit_price,
+        is_below_minimum,
+    }
+}
+
+/// Applies §4.6 in order: held quantity, turnover cap, available proceeds,
+/// funding, rounding, minimum line size, remaining cash.
+pub fn apply_limits(
+    mut increases: Vec<DraftIncrease>,
+    mut reductions: Vec<DraftReduction>,
+    securities: &[SecurityInput],
+    limits: &LimitsInput,
+) -> LimitedAdjustments {
+    cap_to_held_quantity(&mut reductions, securities);
+    let reduction_factor = scale_to_turnover_cap(&mut reductions, limits.turnover_cap);
+
+    // Step 3 — what the reductions actually raise, added to the cash the user
+    // selected, is the funding available to the increases.
+    let proceeds: Decimal = reductions.iter().map(|reduction| reduction.amount).sum();
+    let available = limits.tracked_cash + limits.external_cash + proceeds;
+
+    let increase_factor = scale_to_funding(&mut increases, available);
+
+    let reductions: Vec<LimitedLine> = reductions
+        .iter()
+        .filter(|reduction| reduction.amount > Decimal::ZERO)
+        .filter_map(|reduction| {
+            let price = unit_price_of(securities, &reduction.asset_id)?;
+            Some(finalize(
+                &reduction.asset_id,
+                reduction.amount,
+                price,
+                WorksheetDirection::Reduce,
+                limits,
+            ))
+        })
+        .collect();
+    let increases: Vec<LimitedLine> = increases
+        .iter()
+        .filter(|increase| increase.amount > Decimal::ZERO)
+        .filter_map(|increase| {
+            let price = unit_price_of(securities, &increase.asset_id)?;
+            Some(finalize(
+                &increase.asset_id,
+                increase.amount,
+                price,
+                WorksheetDirection::Increase,
+                limits,
+            ))
+        })
+        .collect();
+
+    // Step 7 — whatever rounding and minimum-line reporting left behind. Not
+    // redistributed: that would be another round of construction.
+    let deployed: Decimal = increases.iter().map(|line| line.amount).sum();
+    let raised: Decimal = reductions.iter().map(|line| line.amount.abs()).sum();
+    let remaining_cash = limits.tracked_cash + limits.external_cash + raised - deployed;
+
+    LimitedAdjustments {
+        increases,
+        reductions,
+        scaling: AdjustmentScaling {
+            reduction_factor,
+            increase_factor,
+        },
+        remaining_cash,
+    }
 }
 
 #[cfg(test)]
@@ -457,5 +706,242 @@ mod tests {
         assert_eq!(unresolved[0].category_id, "COMMODITIES");
         assert_eq!(unresolved[0].amount, dec!(1000));
         assert_eq!(unresolved[0].reason, UnresolvedReason::NoRecordedSecurity);
+    }
+
+    // ── Limits (§4.6) ────────────────────────────────────────────────────────
+
+    fn limits() -> LimitsInput {
+        LimitsInput {
+            tracked_cash: Decimal::ZERO,
+            external_cash: Decimal::ZERO,
+            turnover_cap: None,
+            min_line_amount: Decimal::ZERO,
+            whole_shares_only: false,
+        }
+    }
+
+    fn increase(asset_id: &str, amount: Decimal, funding: IncreaseFunding) -> DraftIncrease {
+        DraftIncrease {
+            asset_id: asset_id.to_string(),
+            amount,
+            funding,
+        }
+    }
+
+    fn reduction(asset_id: &str, amount: Decimal) -> DraftReduction {
+        DraftReduction {
+            asset_id: asset_id.to_string(),
+            amount,
+        }
+    }
+
+    #[test]
+    fn turnover_cap_derives_an_amount_from_basis_points() {
+        assert_eq!(
+            turnover_cap_value(dec!(10000), Some(1000)),
+            Some(dec!(1000))
+        );
+        assert_eq!(turnover_cap_value(dec!(10000), None), None);
+    }
+
+    #[test]
+    fn a_reduction_cannot_exceed_the_recorded_position() {
+        // 10 units at 100 is 1000 held, against a 2500 intent.
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+
+        let result = apply_limits(
+            vec![],
+            vec![reduction("vti", dec!(2500))],
+            &securities,
+            &limits(),
+        );
+
+        assert_eq!(result.reductions[0].amount, dec!(-1000));
+        assert_eq!(result.reductions[0].quantity, dec!(-10));
+    }
+
+    #[test]
+    fn a_protected_position_holds_nothing_to_reduce() {
+        let mut securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        securities[0].positions[0].can_reduce = false;
+
+        let result = apply_limits(
+            vec![],
+            vec![reduction("vti", dec!(500))],
+            &securities,
+            &limits(),
+        );
+
+        assert!(result.reductions.is_empty());
+    }
+
+    #[test]
+    fn turnover_cap_scales_every_reduction_by_the_same_factor() {
+        let securities = vec![
+            security("vti", &[("EQUITY", dec!(1000))]),
+            security("vxus", &[("EQUITY", dec!(1000))]),
+        ];
+        let mut input = limits();
+        input.turnover_cap = Some(dec!(600));
+
+        let result = apply_limits(
+            vec![],
+            vec![reduction("vti", dec!(800)), reduction("vxus", dec!(400))],
+            &securities,
+            &input,
+        );
+
+        // 1200 of reductions scaled by 0.5 to fit a 600 cap.
+        assert_eq!(result.scaling.reduction_factor, Some(dec!(0.5)));
+        assert_eq!(result.reductions[0].amount, dec!(-400));
+        assert_eq!(result.reductions[1].amount, dec!(-200));
+    }
+
+    #[test]
+    fn turnover_cap_that_does_not_bind_is_not_reported() {
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = limits();
+        input.turnover_cap = Some(dec!(900));
+
+        let result = apply_limits(
+            vec![],
+            vec![reduction("vti", dec!(500))],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.scaling.reduction_factor, None);
+        assert_eq!(result.reductions[0].amount, dec!(-500));
+    }
+
+    #[test]
+    fn increases_are_scaled_to_the_funding_available() {
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = limits();
+        input.tracked_cash = dec!(400);
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(1000), IncreaseFunding::Proceeds)],
+            vec![],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.scaling.increase_factor, Some(dec!(0.4)));
+        assert_eq!(result.increases[0].amount, dec!(400));
+    }
+
+    #[test]
+    fn a_shortfall_never_scales_increases_the_first_pass_already_funded() {
+        // 500 of cash-funded increases, plus 500 that expected proceeds. The
+        // turnover cap leaves only 200 of proceeds, so the 300 shortfall comes
+        // off the proceeds-funded line alone.
+        let securities = vec![
+            security("vti", &[("EQUITY", dec!(1000))]),
+            security("vxus", &[("EQUITY", dec!(1000))]),
+            security("bnd", &[("FIXED_INCOME", dec!(1000))]),
+        ];
+        let mut input = limits();
+        input.tracked_cash = dec!(500);
+        input.turnover_cap = Some(dec!(200));
+
+        let result = apply_limits(
+            vec![
+                increase("vti", dec!(500), IncreaseFunding::Cash),
+                increase("vxus", dec!(500), IncreaseFunding::Proceeds),
+            ],
+            vec![reduction("bnd", dec!(500))],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.scaling.increase_factor, Some(dec!(0.4)));
+        assert_eq!(
+            result.increases[0].amount,
+            dec!(500),
+            "cash-funded untouched"
+        );
+        assert_eq!(
+            result.increases[1].amount,
+            dec!(200),
+            "absorbs the shortfall"
+        );
+    }
+
+    #[test]
+    fn funding_that_covers_everything_scales_nothing() {
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = limits();
+        input.tracked_cash = dec!(1000);
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(600), IncreaseFunding::Cash)],
+            vec![],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.scaling.increase_factor, None);
+        assert_eq!(result.increases[0].amount, dec!(600));
+        assert_eq!(result.remaining_cash, dec!(400));
+    }
+
+    #[test]
+    fn whole_unit_policy_floors_quantities_and_leaves_the_residue_as_cash() {
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = limits();
+        input.tracked_cash = dec!(950);
+        input.whole_shares_only = true;
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(950), IncreaseFunding::Cash)],
+            vec![],
+            &securities,
+            &input,
+        );
+
+        // 9.5 units at 100 floors to 9, so 900 is deployed and 50 is left.
+        assert_eq!(result.increases[0].quantity, dec!(9));
+        assert_eq!(result.increases[0].amount, dec!(900));
+        assert_eq!(result.remaining_cash, dec!(50));
+    }
+
+    #[test]
+    fn a_sub_minimum_line_is_reported_rather_than_dropped() {
+        let securities = vec![security("vti", &[("EQUITY", dec!(1000))])];
+        let mut input = limits();
+        input.tracked_cash = dec!(50);
+        input.min_line_amount = dec!(200);
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(50), IncreaseFunding::Cash)],
+            vec![],
+            &securities,
+            &input,
+        );
+
+        assert_eq!(result.increases.len(), 1);
+        assert!(result.increases[0].is_below_minimum);
+        assert_eq!(result.increases[0].amount, dec!(50), "never re-rounded up");
+    }
+
+    #[test]
+    fn reduction_proceeds_fund_increases() {
+        let securities = vec![
+            security("vti", &[("EQUITY", dec!(1000))]),
+            security("bnd", &[("FIXED_INCOME", dec!(1000))]),
+        ];
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(700), IncreaseFunding::Proceeds)],
+            vec![reduction("bnd", dec!(700))],
+            &securities,
+            &limits(),
+        );
+
+        assert_eq!(result.scaling.increase_factor, None);
+        assert_eq!(result.increases[0].amount, dec!(700));
+        assert_eq!(result.reductions[0].amount, dec!(-700));
+        assert_eq!(result.remaining_cash, Decimal::ZERO);
     }
 }
