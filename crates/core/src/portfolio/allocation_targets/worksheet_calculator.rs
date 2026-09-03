@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use rust_decimal::Decimal;
 
 use super::model::{
-    AdjustmentScaling, UnresolvedCategoryAmount, UnresolvedReason, WorksheetDirection,
-    WorksheetMode,
+    AccountFundingShortfall, AdjustmentScaling, UnresolvedCategoryAmount, UnresolvedReason,
+    WorksheetDirection, WorksheetMode,
 };
 
 /// A target category as the calculation sees it, taken from the drift report.
@@ -329,18 +329,27 @@ pub struct SequenceInput<'a> {
     /// Recorded cash the user selected for deployment. Already sitting in the
     /// cash sleeve, so deploying it draws that sleeve down.
     pub cash: Decimal,
-    /// Hypothetical cash not recorded anywhere yet. It arrives in the sleeve
-    /// before it is deployed, so it must not be drawn out of a balance that
-    /// never held it.
-    pub external_cash: Decimal,
+    /// Hypothetical cash not recorded anywhere yet, keyed by the account it
+    /// would arrive in. It arrives in the sleeve before it is deployed, so it
+    /// must not be drawn out of a balance that never held it.
+    ///
+    /// The passes only need the total — accounts are decided afterwards
+    /// ([`assign_accounts`]). The split is carried this far so that the total
+    /// the sequence spends and the amounts
+    /// [`account_funding_shortfalls`] checks can never disagree.
+    pub external_cash: &'a HashMap<String, Decimal>,
     /// The taxonomy's cash sleeve, when it has one. The second pass has to see
     /// what the first one spent.
     pub cash_category_id: Option<String>,
 }
 
 impl SequenceInput<'_> {
+    fn external_total(&self) -> Decimal {
+        self.external_cash.values().sum()
+    }
+
     fn deployable_cash(&self) -> Decimal {
-        self.cash + self.external_cash
+        self.cash + self.external_total()
     }
 }
 
@@ -413,7 +422,7 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
         input
             .cash_category_id
             .as_deref()
-            .map(|category_id| (category_id, deployed - input.external_cash)),
+            .map(|category_id| (category_id, deployed - input.external_total())),
     );
     let (remaining_intents, remaining_unresolved) =
         spread_gaps(&projected, input.planning_total, input.securities);
@@ -464,8 +473,10 @@ pub struct DraftReduction {
 pub struct LimitsInput {
     /// Tracked cash the user selected for deployment.
     pub tracked_cash: Decimal,
-    /// Hypothetical cash not currently recorded.
-    pub external_cash: Decimal,
+    /// Hypothetical cash not currently recorded, keyed by the account it would
+    /// arrive in. Only the total funds the limits; the split matters to
+    /// [`account_funding_shortfalls`].
+    pub external_cash: HashMap<String, Decimal>,
     /// Absolute cap on the reduction total. Derive it from the target's
     /// `max_turnover_bps` with [`turnover_cap_value`].
     pub turnover_cap: Option<Decimal>,
@@ -665,6 +676,7 @@ pub fn apply_limits(
     limits: &LimitsInput,
 ) -> LimitedAdjustments {
     let mut nets = net_by_security(&increases, &reductions);
+    let external_cash: Decimal = limits.external_cash.values().sum();
 
     cap_to_held_quantity(&mut nets, securities);
     let reduction_factor = scale_to_turnover_cap(&mut nets, limits.turnover_cap);
@@ -676,7 +688,7 @@ pub fn apply_limits(
         .filter(|net| net.amount < Decimal::ZERO)
         .map(|net| -net.amount)
         .sum();
-    let available = limits.tracked_cash + limits.external_cash + proceeds;
+    let available = limits.tracked_cash + external_cash + proceeds;
 
     let increase_factor = scale_to_funding(&mut nets, available);
 
@@ -693,7 +705,7 @@ pub fn apply_limits(
     // redistributed: that would be another round of construction. Signed
     // amounts mean the reductions already offset what they raised.
     let net_deployed: Decimal = lines.iter().map(|line| line.amount).sum();
-    let remaining_cash = limits.tracked_cash + limits.external_cash - net_deployed;
+    let remaining_cash = limits.tracked_cash + external_cash - net_deployed;
 
     LimitedAdjustments {
         lines,
@@ -719,16 +731,6 @@ pub struct AssignedLine {
     pub quantity: Decimal,
     pub unit_price: Decimal,
     pub is_below_minimum: bool,
-}
-
-/// An increase assigned to an account that account cannot fund on its own
-/// (§6). No transfer between accounts is assumed, so this is reported rather
-/// than resolved by moving cash.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AccountFundingShortfall {
-    pub account_id: String,
-    pub required: Decimal,
-    pub available: Decimal,
 }
 
 /// Splits a quantity across accounts in proportion to what each holds.
@@ -868,13 +870,17 @@ pub fn remaining_cash(
 /// account (§6).
 ///
 /// An increase in one account cannot be funded by cash recorded in another, and
-/// no transfer is assumed or implied. Hypothetical external cash is not
-/// recorded anywhere, so it counts everywhere. Unallocated increases are not
-/// checked: the user has not placed them yet.
+/// no transfer is assumed or implied. Unallocated increases are not checked:
+/// the user has not placed them yet.
+///
+/// External cash counts only in the account the user said it would arrive in.
+/// Counting the whole contribution everywhere would let two accounts each
+/// needing 3000 both pass against a single 5000 contribution, and the account
+/// they were short by would only be funded by a transfer §6 rules out.
 pub fn account_funding_shortfalls(
     lines: &[AssignedLine],
     cash_by_account: &HashMap<String, Decimal>,
-    external_cash: Decimal,
+    external_cash: &HashMap<String, Decimal>,
 ) -> Vec<AccountFundingShortfall> {
     let mut required: HashMap<String, Decimal> = HashMap::new();
     let mut raised: HashMap<String, Decimal> = HashMap::new();
@@ -898,7 +904,10 @@ pub fn account_funding_shortfalls(
                 .copied()
                 .unwrap_or(Decimal::ZERO)
                 + raised.get(&account_id).copied().unwrap_or(Decimal::ZERO)
-                + external_cash;
+                + external_cash
+                    .get(&account_id)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO);
             (needed > available).then_some(AccountFundingShortfall {
                 account_id,
                 required: needed,
@@ -914,6 +923,7 @@ pub fn account_funding_shortfalls(
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+    use std::sync::OnceLock;
 
     fn category(id: &str, target_bps: i32, current_value: Decimal) -> CategoryTarget {
         CategoryTarget {
@@ -1142,10 +1152,17 @@ mod tests {
 
     // ── Limits (§4.6) ────────────────────────────────────────────────────────
 
+    /// No external contribution, in a form [`SequenceInput`] can borrow for as
+    /// long as the test needs it.
+    fn no_external_cash() -> &'static HashMap<String, Decimal> {
+        static EMPTY: OnceLock<HashMap<String, Decimal>> = OnceLock::new();
+        EMPTY.get_or_init(HashMap::new)
+    }
+
     fn limits() -> LimitsInput {
         LimitsInput {
             tracked_cash: Decimal::ZERO,
-            external_cash: Decimal::ZERO,
+            external_cash: HashMap::new(),
             turnover_cap: None,
             min_line_amount: Decimal::ZERO,
             whole_shares_only: false,
@@ -1413,7 +1430,7 @@ mod tests {
             securities,
             planning_total: dec!(10000),
             cash,
-            external_cash: Decimal::ZERO,
+            external_cash: no_external_cash(),
             cash_category_id: None,
         }
     }
@@ -1790,12 +1807,48 @@ mod tests {
         }];
         let cash = HashMap::from([("acc-2".to_string(), dec!(1000))]);
 
-        let shortfalls = account_funding_shortfalls(&lines, &cash, Decimal::ZERO);
+        let shortfalls = account_funding_shortfalls(&lines, &cash, no_external_cash());
 
         assert_eq!(shortfalls.len(), 1);
         assert_eq!(shortfalls[0].account_id, "acc-1");
         assert_eq!(shortfalls[0].required, dec!(500));
         assert_eq!(shortfalls[0].available, Decimal::ZERO);
+    }
+
+    #[test]
+    fn external_cash_funds_only_the_account_it_would_arrive_in() {
+        // 5000 of external cash cannot cover 3000 in each of two accounts.
+        // Counted globally both would pass, and the account left short could
+        // only be filled by a transfer §6 rules out.
+        let lines = vec![
+            AssignedLine {
+                asset_id: "vti".to_string(),
+                account_id: Some("acc-1".to_string()),
+                amount: dec!(3000),
+                quantity: dec!(30),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+            AssignedLine {
+                asset_id: "vti".to_string(),
+                account_id: Some("acc-2".to_string()),
+                amount: dec!(3000),
+                quantity: dec!(30),
+                unit_price: dec!(100),
+                is_below_minimum: false,
+            },
+        ];
+        let external = HashMap::from([
+            ("acc-1".to_string(), dec!(3000)),
+            ("acc-2".to_string(), dec!(2000)),
+        ]);
+
+        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), &external);
+
+        assert_eq!(shortfalls.len(), 1);
+        assert_eq!(shortfalls[0].account_id, "acc-2");
+        assert_eq!(shortfalls[0].required, dec!(3000));
+        assert_eq!(shortfalls[0].available, dec!(2000));
     }
 
     #[test]
@@ -1819,7 +1872,7 @@ mod tests {
             },
         ];
 
-        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), Decimal::ZERO);
+        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), no_external_cash());
 
         assert!(shortfalls.is_empty());
     }
@@ -1866,8 +1919,9 @@ mod tests {
             &securities,
             dec!(500),
         );
+        let external = HashMap::from([("acc-1".to_string(), dec!(500))]);
         input.cash_category_id = Some("CASH".to_string());
-        input.external_cash = dec!(500);
+        input.external_cash = &external;
 
         let result = run_sequence(&input);
 
@@ -1945,7 +1999,7 @@ mod tests {
             is_below_minimum: false,
         }];
 
-        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), Decimal::ZERO);
+        let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), no_external_cash());
 
         assert!(shortfalls.is_empty());
     }

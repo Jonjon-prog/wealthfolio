@@ -571,6 +571,18 @@ pub struct CalculatedAdjustment {
     pub is_below_minimum: bool,
 }
 
+/// An increase placed in an account that account cannot fund on its own (§6).
+///
+/// No transfer between accounts is assumed, so this is reported rather than
+/// resolved by moving cash.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountFundingShortfall {
+    pub account_id: String,
+    pub required: Decimal,
+    pub available: Decimal,
+}
+
 /// The calculated adjustments the worksheet is prefilled with (§4, §5).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -583,6 +595,8 @@ pub struct CalculatedAdjustments {
     /// Left over after rounding and minimum-line reporting. Never
     /// redistributed — that would be another round of construction (§4.6).
     pub remaining_cash: Decimal,
+    /// Accounts whose increases exceed what they can fund on their own (§6).
+    pub funding_shortfalls: Vec<AccountFundingShortfall>,
 }
 
 #[cfg(test)]
