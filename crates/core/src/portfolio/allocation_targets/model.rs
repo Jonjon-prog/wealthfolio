@@ -599,6 +599,199 @@ pub struct CalculatedAdjustments {
     pub funding_shortfalls: Vec<AccountFundingShortfall>,
 }
 
+/// What the worksheet is prefilled from (§4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateCalculatedAdjustmentsInput {
+    pub target_id: String,
+    pub account_ids: Vec<String>,
+    pub base_currency: String,
+    pub aggregated_account_id: String,
+    pub mode: WorksheetMode,
+    pub rule: AllocationRule,
+    pub cash: WorksheetCashInput,
+    /// Securities the user marked as able to receive increases (§4.1). `None`
+    /// is every recorded security, which is a fact rather than a selection.
+    ///
+    /// An empty list is a valid state and not a validation error: the increases
+    /// that cannot be placed become unresolved category amounts (§4.4).
+    #[serde(default)]
+    pub eligible_asset_ids: Option<Vec<String>>,
+}
+
+// ── Worksheet request and preview types ──────────────────────────────────────
+//
+// The worksheet the user edits and the result that validates it. Ported from
+// `feature/allocation-worksheet-refactor`, where the worksheet started empty.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorksheetInputMode {
+    Amount,
+    Quantity,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetCashInput {
+    pub tracked_cash_to_use: Decimal,
+    /// Hypothetical cash not recorded anywhere, keyed by the account it would
+    /// arrive in (§6). A single-account scope has one entry, so the user is
+    /// asked for nothing beyond the amount; a multi-account scope is where the
+    /// split has to be stated, since no transfer between accounts is assumed.
+    #[serde(default)]
+    pub external_contribution: std::collections::HashMap<String, Decimal>,
+}
+
+impl WorksheetCashInput {
+    pub fn external_total(&self) -> Decimal {
+        self.external_contribution.values().sum()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllocationWorksheetLineInput {
+    pub line_id: String,
+    pub direction: WorksheetDirection,
+    pub asset_id: String,
+    pub account_id: String,
+    pub input_mode: WorksheetInputMode,
+    pub value: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalculateAllocationWorksheetInput {
+    pub target_id: String,
+    pub cash: WorksheetCashInput,
+    pub lines: Vec<AllocationWorksheetLineInput>,
+    pub account_ids: Vec<String>,
+    pub base_currency: String,
+    pub aggregated_account_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorksheetWarningKind {
+    StaleQuote,
+    StaleFx,
+    PartialClassification,
+    UnclassifiedAsset,
+    ExternalContribution,
+    BelowMinimumLine,
+    TurnoverExceeded,
+    AvoidConstraint,
+    /// The increases exceed the selected cash and the reduction proceeds.
+    /// Reported rather than corrected, because after prefill the worksheet is
+    /// the source of truth (§5).
+    InsufficientFunding,
+    /// An account's increases exceed what that account can fund on its own
+    /// (§6).
+    AccountFunding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetWarning {
+    pub id: String,
+    pub kind: WorksheetWarningKind,
+    pub line_id: Option<String>,
+    pub message: String,
+    pub acknowledgement_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetPricingSource {
+    pub id: String,
+    pub source_type: String,
+    pub value: Decimal,
+    pub from_currency: String,
+    pub to_currency: String,
+    pub timestamp: String,
+    pub is_stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetCategoryExposure {
+    pub category_id: String,
+    pub category_name: String,
+    pub weight_bps: i32,
+    pub value_delta: Decimal,
+    pub is_unclassified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllocationWorksheetLineResult {
+    pub line_id: String,
+    pub direction: WorksheetDirection,
+    pub asset_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub name: String,
+    pub input_mode: WorksheetInputMode,
+    pub input_value: Decimal,
+    pub quantity: Decimal,
+    pub unit_price: Decimal,
+    pub estimated_amount: Decimal,
+    pub contract_multiplier: Decimal,
+    pub quote_source: WorksheetPricingSource,
+    pub fx_source: Option<WorksheetPricingSource>,
+    pub category_exposures: Vec<WorksheetCategoryExposure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetCategoryResult {
+    pub category_id: String,
+    pub category_name: String,
+    pub color: String,
+    pub target_bps: i32,
+    pub current_value: Decimal,
+    pub projected_value: Decimal,
+    pub current_bps: i32,
+    pub projected_bps: i32,
+    pub current_difference_bps: i32,
+    pub projected_difference_bps: i32,
+    pub is_cash: bool,
+    pub is_unclassified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetSourceRecord {
+    pub source_type: String,
+    pub id: String,
+    pub version: String,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllocationWorksheetResult {
+    pub target_id: String,
+    pub target_name: String,
+    pub base_currency: String,
+    pub calculated_at: String,
+    pub source_fingerprint: String,
+    pub resolved_account_ids: Vec<String>,
+    pub observed_tracked_cash: Decimal,
+    pub tracked_cash_to_use: Decimal,
+    pub external_contribution: Decimal,
+    pub increase_total: Decimal,
+    pub reduction_total: Decimal,
+    pub cash_remaining: Decimal,
+    pub max_difference_bps_before: i32,
+    pub max_difference_bps_after: i32,
+    pub lines: Vec<AllocationWorksheetLineResult>,
+    pub categories: Vec<WorksheetCategoryResult>,
+    pub warnings: Vec<WorksheetWarning>,
+    pub source_records: Vec<WorksheetSourceRecord>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
