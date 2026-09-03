@@ -390,11 +390,7 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
     let mut increases: Vec<DraftIncrease> = sorted_by_asset(cash_intents.clone())
         .into_iter()
         .filter(|(_, amount)| *amount > Decimal::ZERO)
-        .map(|(asset_id, amount)| DraftIncrease {
-            asset_id,
-            amount,
-            funding: IncreaseFunding::Cash,
-        })
+        .map(|(asset_id, amount)| DraftIncrease { asset_id, amount })
         .collect();
 
     if input.mode == WorksheetMode::InvestCash {
@@ -425,11 +421,7 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
     let mut reductions = Vec::new();
     for (asset_id, amount) in sorted_by_asset(combine_intents(&remaining_intents)) {
         if amount > Decimal::ZERO {
-            increases.push(DraftIncrease {
-                asset_id,
-                amount,
-                funding: IncreaseFunding::Proceeds,
-            });
+            increases.push(DraftIncrease { asset_id, amount });
         } else if amount < Decimal::ZERO {
             reductions.push(DraftReduction {
                 asset_id,
@@ -453,22 +445,11 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
 // either scales proportionally or reports; none of them drops a line, since
 // dropping would be a choice between securities.
 
-/// Which funding an increase depends on (§4.6 step 4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IncreaseFunding {
-    /// Sized against the cash deployed in the first pass. A shortfall in
-    /// reduction proceeds does not belong to it, so it is never scaled.
-    Cash,
-    /// Depends on what the reductions raise, so it absorbs any shortfall.
-    Proceeds,
-}
-
 /// An increase before the limits are applied. Amount is positive.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DraftIncrease {
     pub asset_id: String,
     pub amount: Decimal,
-    pub funding: IncreaseFunding,
 }
 
 /// A reduction before the limits are applied. Amount is a positive magnitude.
@@ -554,9 +535,6 @@ struct NetAdjustment {
     asset_id: String,
     /// Signed: negative for a reduction.
     amount: Decimal,
-    /// How much of a net increase the first pass already covered with cash.
-    /// Zero once the netting leaves a reduction, since nothing is bought.
-    cash_committed: Decimal,
 }
 
 /// §4.5 — one amount per security, ordered by asset id so the result is
@@ -565,30 +543,18 @@ fn net_by_security(
     increases: &[DraftIncrease],
     reductions: &[DraftReduction],
 ) -> Vec<NetAdjustment> {
-    let mut totals: HashMap<String, (Decimal, Decimal)> = HashMap::new();
+    let mut totals: HashMap<String, Decimal> = HashMap::new();
     for increase in increases {
-        let entry = totals.entry(increase.asset_id.clone()).or_default();
-        entry.0 += increase.amount;
-        if increase.funding == IncreaseFunding::Cash {
-            entry.1 += increase.amount;
-        }
+        *totals.entry(increase.asset_id.clone()).or_default() += increase.amount;
     }
     for reduction in reductions {
-        totals.entry(reduction.asset_id.clone()).or_default().0 -= reduction.amount;
+        *totals.entry(reduction.asset_id.clone()).or_default() -= reduction.amount;
     }
 
     let mut netted: Vec<NetAdjustment> = totals
         .into_iter()
-        .filter(|(_, (amount, _))| *amount != Decimal::ZERO)
-        .map(|(asset_id, (amount, cash))| NetAdjustment {
-            asset_id,
-            amount,
-            cash_committed: if amount > Decimal::ZERO {
-                cash.min(amount)
-            } else {
-                Decimal::ZERO
-            },
-        })
+        .filter(|(_, amount)| *amount != Decimal::ZERO)
+        .map(|(asset_id, amount)| NetAdjustment { asset_id, amount })
         .collect();
     netted.sort_by(|left, right| left.asset_id.cmp(&right.asset_id));
     netted
@@ -632,36 +598,26 @@ fn scale_to_turnover_cap(nets: &mut [NetAdjustment], cap: Option<Decimal>) -> Op
     Some(factor)
 }
 
-/// §4.6 step 4 — increases are scaled down to the funding available to them.
+/// §4.6 step 4 — every positive net adjustment is scaled by the same factor
+/// when the funding falls short.
 ///
-/// Increases already covered by cash deployed in the first pass are left alone:
-/// the shortfall belongs to the increases that depend on reduction proceeds, so
-/// scaling the cash-funded ones would leave selected cash undeployed for no
-/// reason.
+/// No increase is protected: the cash-first sequence exists to reduce how much
+/// has to be sold, not to shelter the increases it happened to fund. Scaling
+/// them all equally spends the funding down to the last unit and keeps the
+/// result independent of which pass produced a line.
 fn scale_to_funding(nets: &mut [NetAdjustment], available: Decimal) -> Option<Decimal> {
     let total: Decimal = nets
         .iter()
         .filter(|net| net.amount > Decimal::ZERO)
         .map(|net| net.amount)
         .sum();
-    if total <= available {
+    if total <= available || total <= Decimal::ZERO {
         return None;
     }
 
-    let proceeds_funded: Decimal = nets
-        .iter()
-        .filter(|net| net.amount > Decimal::ZERO)
-        .map(|net| net.amount - net.cash_committed)
-        .sum();
-    if proceeds_funded <= Decimal::ZERO {
-        return None;
-    }
-
-    // Clamped: a shortfall deeper than the proceeds-funded total would mean the
-    // first pass sized increases beyond the cash it had, which it does not do.
-    let factor = ((proceeds_funded - (total - available)) / proceeds_funded).max(Decimal::ZERO);
+    let factor = (available / total).max(Decimal::ZERO);
     for net in nets.iter_mut().filter(|net| net.amount > Decimal::ZERO) {
-        net.amount = net.cash_committed + (net.amount - net.cash_committed) * factor;
+        net.amount *= factor;
     }
     Some(factor)
 }
@@ -1196,11 +1152,10 @@ mod tests {
         }
     }
 
-    fn increase(asset_id: &str, amount: Decimal, funding: IncreaseFunding) -> DraftIncrease {
+    fn increase(asset_id: &str, amount: Decimal) -> DraftIncrease {
         DraftIncrease {
             asset_id: asset_id.to_string(),
             amount,
-            funding,
         }
     }
 
@@ -1297,7 +1252,7 @@ mod tests {
         input.tracked_cash = dec!(400);
 
         let result = apply_limits(
-            vec![increase("vti", dec!(1000), IncreaseFunding::Proceeds)],
+            vec![increase("vti", dec!(1000))],
             vec![],
             &securities,
             &input,
@@ -1308,10 +1263,10 @@ mod tests {
     }
 
     #[test]
-    fn a_shortfall_never_scales_increases_the_first_pass_already_funded() {
-        // 500 of cash-funded increases, plus 500 that expected proceeds. The
-        // turnover cap leaves only 200 of proceeds, so the 300 shortfall comes
-        // off the proceeds-funded line alone.
+    fn a_shortfall_scales_every_increase_by_the_same_factor() {
+        // 1000 of increases against 500 of cash and a turnover cap that lets
+        // the reductions raise only 200. No increase is sheltered because the
+        // first pass happened to fund it: all of them take the same 0.7.
         let securities = vec![
             security("vti", &[("EQUITY", dec!(1000))]),
             security("vxus", &[("EQUITY", dec!(1000))]),
@@ -1322,26 +1277,18 @@ mod tests {
         input.turnover_cap = Some(dec!(200));
 
         let result = apply_limits(
-            vec![
-                increase("vti", dec!(500), IncreaseFunding::Cash),
-                increase("vxus", dec!(500), IncreaseFunding::Proceeds),
-            ],
+            vec![increase("vti", dec!(500)), increase("vxus", dec!(500))],
             vec![reduction("bnd", dec!(500))],
             &securities,
             &input,
         );
 
-        assert_eq!(result.scaling.increase_factor, Some(dec!(0.4)));
-        assert_eq!(
-            result.increases().next().unwrap().amount,
-            dec!(500),
-            "cash-funded untouched"
-        );
-        assert_eq!(
-            result.increases().nth(1).unwrap().amount,
-            dec!(200),
-            "absorbs the shortfall"
-        );
+        assert_eq!(result.scaling.increase_factor, Some(dec!(0.7)));
+        assert_eq!(result.increases().next().unwrap().amount, dec!(350));
+        assert_eq!(result.increases().nth(1).unwrap().amount, dec!(350));
+        // The funding is spent down to the last unit.
+        let deployed: Decimal = result.increases().map(|line| line.amount).sum();
+        assert_eq!(deployed, dec!(700));
     }
 
     #[test]
@@ -1351,7 +1298,7 @@ mod tests {
         input.tracked_cash = dec!(1000);
 
         let result = apply_limits(
-            vec![increase("vti", dec!(600), IncreaseFunding::Cash)],
+            vec![increase("vti", dec!(600))],
             vec![],
             &securities,
             &input,
@@ -1370,7 +1317,7 @@ mod tests {
         input.whole_shares_only = true;
 
         let result = apply_limits(
-            vec![increase("vti", dec!(950), IncreaseFunding::Cash)],
+            vec![increase("vti", dec!(950))],
             vec![],
             &securities,
             &input,
@@ -1389,12 +1336,7 @@ mod tests {
         input.tracked_cash = dec!(50);
         input.min_line_amount = dec!(200);
 
-        let result = apply_limits(
-            vec![increase("vti", dec!(50), IncreaseFunding::Cash)],
-            vec![],
-            &securities,
-            &input,
-        );
+        let result = apply_limits(vec![increase("vti", dec!(50))], vec![], &securities, &input);
 
         assert_eq!(result.increases().count(), 1);
         assert!(result.increases().next().unwrap().is_below_minimum);
@@ -1413,7 +1355,7 @@ mod tests {
         ];
 
         let result = apply_limits(
-            vec![increase("vti", dec!(700), IncreaseFunding::Proceeds)],
+            vec![increase("vti", dec!(700))],
             vec![reduction("bnd", dec!(700))],
             &securities,
             &limits(),
@@ -1437,7 +1379,7 @@ mod tests {
         input.tracked_cash = dec!(500);
 
         let result = apply_limits(
-            vec![increase("blend", dec!(500), IncreaseFunding::Cash)],
+            vec![increase("blend", dec!(500))],
             vec![reduction("blend", dec!(300))],
             &securities,
             &input,
@@ -1522,7 +1464,6 @@ mod tests {
         assert_eq!(result.increases.len(), 1);
         assert_eq!(result.increases[0].asset_id, "vti");
         assert_eq!(result.increases[0].amount, dec!(500));
-        assert_eq!(result.increases[0].funding, IncreaseFunding::Cash);
     }
 
     #[test]
@@ -1540,9 +1481,7 @@ mod tests {
         // so 1500 of the gap is left for the reductions to fund.
         assert_eq!(result.increases.len(), 2);
         assert_eq!(result.increases[0].amount, dec!(500));
-        assert_eq!(result.increases[0].funding, IncreaseFunding::Cash);
         assert_eq!(result.increases[1].amount, dec!(1500));
-        assert_eq!(result.increases[1].funding, IncreaseFunding::Proceeds);
         assert_eq!(result.reductions.len(), 1);
         assert_eq!(result.reductions[0].asset_id, "bnd");
         assert_eq!(result.reductions[0].amount, dec!(2000));
@@ -1563,7 +1502,6 @@ mod tests {
         // substance, since the first one deploys nothing.
         assert_eq!(result.increases.len(), 1);
         assert_eq!(result.increases[0].amount, dec!(2000));
-        assert_eq!(result.increases[0].funding, IncreaseFunding::Proceeds);
         assert_eq!(result.reductions[0].amount, dec!(2000));
     }
 
@@ -1902,7 +1840,7 @@ mod tests {
         input.turnover_cap = Some(dec!(100));
 
         let result = apply_limits(
-            vec![increase("blend", dec!(500), IncreaseFunding::Cash)],
+            vec![increase("blend", dec!(500))],
             vec![reduction("blend", dec!(300))],
             &securities,
             &input,
