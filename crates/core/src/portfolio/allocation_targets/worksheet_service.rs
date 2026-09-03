@@ -126,6 +126,28 @@ impl AllocationWorksheetService {
         }
     }
 
+    /// The tracked cash the worksheet may actually deploy.
+    ///
+    /// A rounding-sized overage is clamped rather than refused, since the
+    /// amount arrives from a control showing a rounded balance. The prefill and
+    /// the preview share the rule so a prefilled worksheet never fails a check
+    /// its own generation passed.
+    fn tracked_cash_to_use(
+        selected: Decimal,
+        deployable: Decimal,
+        base_currency: &str,
+    ) -> CoreResult<Decimal> {
+        if selected <= deployable {
+            return Ok(selected);
+        }
+        if selected - deployable <= currency_minor_unit(base_currency) {
+            return Ok(deployable);
+        }
+        Err(Self::invalid(format!(
+            "Tracked cash selected ({selected}) exceeds observed deployable cash ({deployable})"
+        )))
+    }
+
     fn bps(value: Decimal, total: Decimal) -> i32 {
         if total <= Decimal::ZERO {
             return 0;
@@ -744,19 +766,11 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             )
             .await?;
 
-        let tracked_cash_to_use = if input.cash.tracked_cash_to_use > drift.deployable_cash {
-            let overage = input.cash.tracked_cash_to_use - drift.deployable_cash;
-            if overage <= currency_minor_unit(&input.base_currency) {
-                drift.deployable_cash
-            } else {
-                return Err(Self::invalid(format!(
-                    "Tracked cash selected ({}) exceeds observed deployable cash ({})",
-                    input.cash.tracked_cash_to_use, drift.deployable_cash
-                )));
-            }
-        } else {
-            input.cash.tracked_cash_to_use
-        };
+        let tracked_cash_to_use = Self::tracked_cash_to_use(
+            input.cash.tracked_cash_to_use,
+            drift.deployable_cash,
+            &input.base_currency,
+        )?;
 
         let contributions = self
             .allocation_service
@@ -979,12 +993,11 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 &input.aggregated_account_id,
             )
             .await?;
-        if input.cash.tracked_cash_to_use > drift.deployable_cash {
-            return Err(Self::invalid(format!(
-                "Tracked cash selected ({}) exceeds observed deployable cash ({})",
-                input.cash.tracked_cash_to_use, drift.deployable_cash
-            )));
-        }
+        let tracked_cash_to_use = Self::tracked_cash_to_use(
+            input.cash.tracked_cash_to_use,
+            drift.deployable_cash,
+            &input.base_currency,
+        )?;
 
         let asset_ids = input
             .lines
@@ -1246,9 +1259,9 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         // §5 — an edit that spends more than the funding available is reported
         // and left alone. The worksheet is the source of truth once prefilled,
         // so nothing here rounds the numbers back into the budget.
-        let funding = input.cash.tracked_cash_to_use + external_total + reduction_total;
+        let funding = tracked_cash_to_use + external_total + reduction_total;
         let cash_remaining = Self::cash_remaining(
-            input.cash.tracked_cash_to_use,
+            tracked_cash_to_use,
             external_total,
             increase_total,
             reduction_total,
@@ -1303,7 +1316,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
 
         let planning_total = Self::planning_total(
             drift.total_value,
-            input.cash.tracked_cash_to_use,
+            tracked_cash_to_use,
             external_total,
             has_deployable_cash_categories(&target.taxonomy_id),
         );
@@ -1615,7 +1628,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             source_fingerprint,
             resolved_account_ids: input.account_ids,
             observed_tracked_cash: drift.deployable_cash,
-            tracked_cash_to_use: input.cash.tracked_cash_to_use,
+            tracked_cash_to_use,
             external_contribution: external_total,
             increase_total,
             reduction_total,
@@ -2176,6 +2189,20 @@ mod tests {
                 dec!(50)
             ),
             dec!(-50)
+        );
+    }
+
+    #[test]
+    fn a_rounding_sized_cash_overage_is_clamped_rather_than_refused() {
+        // Both halves of the service share the rule, so a prefilled worksheet
+        // never fails a check its own generation passed.
+        assert_eq!(
+            AllocationWorksheetService::tracked_cash_to_use(dec!(1000.004), dec!(1000), "USD")
+                .unwrap(),
+            dec!(1000)
+        );
+        assert!(
+            AllocationWorksheetService::tracked_cash_to_use(dec!(1100), dec!(1000), "USD").is_err()
         );
     }
 
