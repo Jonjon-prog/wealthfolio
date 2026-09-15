@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use crate::errors::MarketDataError;
 use crate::models::{
-    AssetProfile, Coverage, DividendEvent, InstrumentId, InstrumentKind, ProviderInstrument, Quote,
-    QuoteContext, SearchResult,
+    to_iso_alpha2, AssetProfile, Coverage, DividendEvent, InstrumentId, InstrumentKind,
+    ProviderInstrument, Quote, QuoteContext, SearchResult,
 };
 use crate::provider::{MarketDataProvider, ProviderCapabilities, RateLimit};
 use crate::resolver::ResolverChain;
@@ -493,7 +493,12 @@ impl CompanyOverviewResponse {
             industry: self.industry.clone(),
             website: None, // Alpha Vantage doesn't provide website
             description: self.description.clone(),
-            country: self.country.clone(),
+            // OVERVIEW sends "USA", the field documents an alpha-2 code.
+            country: self.country.as_deref().map(|c| {
+                to_iso_alpha2(c)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| c.to_string())
+            }),
             employees: None, // Alpha Vantage doesn't provide employee count
             logo_url: None,
             market_cap: Self::parse_f64(&self.market_capitalization),
@@ -518,10 +523,10 @@ impl AlphaVantageProvider {
     ///
     /// Returns an error if the HTTP client cannot be created.
     pub fn new(api_key: String) -> Self {
-        let client = Client::builder()
+        let client = wealthfolio_http::client_builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .unwrap_or_else(|_| wealthfolio_http::client());
 
         Self { client, api_key }
     }
@@ -1530,7 +1535,8 @@ mod tests {
             profile.industry,
             Some("COMPUTER & OFFICE EQUIPMENT".to_string())
         );
-        assert_eq!(profile.country, Some("USA".to_string()));
+        // OVERVIEW sends "USA"; the profile carries the alpha-2 the field documents.
+        assert_eq!(profile.country, Some("US".to_string()));
         assert_eq!(profile.market_cap, Some(191234567890.0));
         assert_eq!(profile.pe_ratio, Some(22.5));
         assert_eq!(profile.dividend_yield, Some(0.0455));

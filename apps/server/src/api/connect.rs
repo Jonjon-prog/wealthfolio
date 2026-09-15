@@ -5,6 +5,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use wealthfolio_core::settings::SettingsServiceTrait;
 
 use axum::{
     extract::{Query, State},
@@ -33,13 +34,10 @@ use wealthfolio_connect::{
     ConnectApiClient, PostLoginBootstrapReason, PostLoginBootstrapResult,
     PostLoginBootstrapSyncResult, PostLoginBrokerBootstrapDecision, SyncConfig, SyncOrchestrator,
     SyncProgressPayload, SyncProgressReporter, SyncResult, TokenLifecycleConfig,
-    TokenLifecycleError, CLOUD_ACCESS_TOKEN_KEY, CLOUD_REFRESH_TOKEN_KEY,
+    TokenLifecycleError, CLOUD_REFRESH_TOKEN_KEY,
 };
 #[cfg(feature = "device-sync")]
 use wealthfolio_device_sync::{EnableSyncResult, SyncState, SyncStateResult};
-
-#[cfg(feature = "device-sync")]
-const DEVICE_ID_KEY: &str = "sync_device_id";
 
 #[cfg(feature = "device-sync")]
 enum PostLoginDeviceBootstrapDecision {
@@ -365,12 +363,14 @@ async fn store_sync_session(
 ) -> ApiResult<Json<()>> {
     ensure_cloud_sync_enabled()?;
     state
-        .secret_store
-        .set_secret(CLOUD_REFRESH_TOKEN_KEY, &body.refresh_token)
-        .map_err(|e| ApiError::Internal(format!("Failed to store refresh token: {}", e)))?;
-    // Best-effort cleanup for legacy versions that stored access tokens at rest.
-    let _ = state.secret_store.delete_secret(CLOUD_ACCESS_TOKEN_KEY);
-    state.token_lifecycle.clear_cache().await;
+        .token_lifecycle
+        .store_session_after_restore(
+            state.secret_store.as_ref(),
+            state.settings_service.as_ref(),
+            &body.refresh_token,
+        )
+        .await
+        .map_err(map_token_lifecycle_error)?;
 
     Ok(Json(()))
 }
@@ -459,6 +459,9 @@ async fn run_post_login_device_bootstrap(state: Arc<AppState>) -> PostLoginBoots
     match decision {
         PostLoginDeviceBootstrapDecision::StartBackground => {}
         PostLoginDeviceBootstrapDecision::Skip(reason) => {
+            if matches!(reason, PostLoginBootstrapReason::AlreadyRunning) {
+                state.device_sync_runtime.notify_sync_work_available();
+            }
             return PostLoginBootstrapSyncResult::skipped(reason);
         }
     }
@@ -484,30 +487,43 @@ async fn clear_sync_session(State(state): State<Arc<AppState>>) -> ApiResult<Jso
     ensure_cloud_sync_enabled()?;
     info!("[Connect] Clearing sync session");
 
-    let _ = state.secret_store.delete_secret(CLOUD_REFRESH_TOKEN_KEY);
-    let _ = state.secret_store.delete_secret(CLOUD_ACCESS_TOKEN_KEY);
-
-    state.token_lifecycle.clear_cache().await;
-    #[cfg(feature = "device-sync")]
-    device_sync_engine::clear_min_snapshot_created_at_from_store();
-    let _ = state
-        .app_sync_repository
-        .clear_all_min_snapshot_created_at()
-        .await;
-
+    disconnect_cloud_session(&state)
+        .await
+        .map_err(ApiError::Internal)?;
     info!("[Connect] Sync session cleared");
     Ok(Json(()))
+}
+
+async fn disconnect_cloud_session(state: &AppState) -> Result<(), String> {
+    state
+        .token_lifecycle
+        .clear_session_with(state.secret_store.as_ref(), || async {
+            #[cfg(feature = "device-sync")]
+            device_sync_engine::clear_min_snapshot_created_at_from_store();
+            let _ = state
+                .app_sync_repository
+                .clear_all_min_snapshot_created_at()
+                .await;
+            #[cfg(feature = "device-sync")]
+            state.device_sync_runtime.ensure_background_stopped().await;
+        })
+        .await
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 async fn get_sync_session_status(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<SyncSessionStatus>> {
     ensure_cloud_sync_enabled()?;
-    let is_configured = state
-        .secret_store
-        .get_secret(CLOUD_REFRESH_TOKEN_KEY)
-        .map(|t| t.is_some())
-        .unwrap_or(false);
+    let is_configured = !state
+        .settings_service
+        .requires_cloud_reconnect()
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        && state
+            .token_lifecycle
+            .is_session_configured(state.secret_store.as_ref())
+            .map_err(map_token_lifecycle_error)?;
 
     Ok(Json(SyncSessionStatus { is_configured }))
 }
@@ -535,6 +551,15 @@ async fn restore_sync_session(
 
 pub(crate) async fn mint_access_token(state: &AppState) -> ApiResult<String> {
     ensure_cloud_sync_enabled()?;
+    if state
+        .settings_service
+        .requires_cloud_reconnect()
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    {
+        return Err(ApiError::Forbidden(
+            "Reconnect Wealthfolio Connect after restoring this backup.".into(),
+        ));
+    }
     let config = token_lifecycle_config();
     ensure_valid_access_token(
         state.secret_store.as_ref(),
@@ -562,6 +587,11 @@ async fn sync_broker_connections(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<SyncConnectionsResponse>> {
     ensure_connect_sync_enabled()?;
+    if !has_broker_sync(&state).await.map_err(ApiError::Internal)? {
+        return Err(ApiError::Forbidden(
+            "An active broker-sync subscription is required.".to_string(),
+        ));
+    }
     info!("[Connect] Syncing broker connections...");
 
     let client = create_connect_client(&state).await?;
@@ -596,6 +626,11 @@ async fn sync_broker_accounts(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<SyncAccountsResponse>> {
     ensure_connect_sync_enabled()?;
+    if !has_broker_sync(&state).await.map_err(ApiError::Internal)? {
+        return Err(ApiError::Forbidden(
+            "An active broker-sync subscription is required.".to_string(),
+        ));
+    }
     info!("[Connect] Syncing broker accounts...");
 
     let client = create_connect_client(&state).await?;
@@ -627,6 +662,11 @@ async fn sync_broker_activities(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<SyncActivitiesResponse>> {
     ensure_connect_sync_enabled()?;
+    if !has_broker_sync(&state).await.map_err(ApiError::Internal)? {
+        return Err(ApiError::Forbidden(
+            "An active broker-sync subscription is required.".to_string(),
+        ));
+    }
     info!("[Connect] Running activities-only broker sync");
     let result = perform_broker_activities_only_sync(&state)
         .await
@@ -695,6 +735,22 @@ pub async fn has_broker_sync(state: &AppState) -> Result<bool, String> {
         .await
         .map_err(|e| e.to_string())?;
     client.has_broker_sync().await.map_err(|e| e.to_string())
+}
+
+pub async fn has_device_sync(state: &AppState) -> Result<bool, String> {
+    create_connect_client(state)
+        .await
+        .map_err(|err| err.to_string())?
+        .has_device_sync()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+pub async fn ensure_device_sync_subscription(state: &AppState) -> Result<(), String> {
+    if !has_device_sync(state).await? {
+        return Err("Device sync is paused: an active subscription is required.".to_string());
+    }
+    Ok(())
 }
 
 /// Core broker sync logic - syncs connections, accounts, and activities from cloud to local DB.
@@ -1000,11 +1056,6 @@ async fn enable_device_sync(
         .await
         .map_err(|e| ApiError::Internal(e.message))?;
 
-    // Backward compatibility: keep legacy device-id key in sync.
-    state
-        .secret_store
-        .set_secret(DEVICE_ID_KEY, &result.device_id)
-        .map_err(|e| ApiError::Internal(format!("Failed to store device ID: {}", e)))?;
     device_sync_engine::clear_min_snapshot_created_at_from_store();
     let _ = state
         .app_sync_repository
@@ -1032,22 +1083,19 @@ async fn clear_device_sync_data(State(state): State<Arc<AppState>>) -> ApiResult
     ensure_device_sync_enabled()?;
     info!("[Connect] Clearing device sync data...");
 
+    device_sync_engine::ensure_background_engine_stopped(Arc::clone(&state))
+        .await
+        .map_err(ApiError::Internal)?;
     state
         .device_enroll_service
         .clear_sync_data()
         .map_err(|e| ApiError::Internal(e.message))?;
     let _ = state.app_sync_repository.reset_local_sync_session().await;
-    state
-        .secret_store
-        .delete_secret(DEVICE_ID_KEY)
-        .map_err(|e| ApiError::Internal(format!("Failed to clear device ID: {}", e)))?;
     device_sync_engine::clear_min_snapshot_created_at_from_store();
     let _ = state
         .app_sync_repository
         .clear_all_min_snapshot_created_at()
         .await;
-    let _ = device_sync_engine::ensure_background_engine_stopped(Arc::clone(&state)).await;
-
     info!("[Connect] Device sync data cleared");
     Ok(Json(()))
 }
@@ -1067,11 +1115,6 @@ async fn reinitialize_device_sync(
         .await
         .map_err(|e| ApiError::Internal(e.message))?;
 
-    // Backward compatibility: keep legacy device-id key in sync.
-    state
-        .secret_store
-        .set_secret(DEVICE_ID_KEY, &result.device_id)
-        .map_err(|e| ApiError::Internal(format!("Failed to store device ID: {}", e)))?;
     device_sync_engine::clear_min_snapshot_created_at_from_store();
     let _ = state
         .app_sync_repository

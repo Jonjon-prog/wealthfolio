@@ -16,8 +16,14 @@ import {
   updateActivity,
   createAccount,
   getAccounts,
+  getAlternativeHoldings,
   updateAccount,
   addonNetworkRequest,
+  getTransferPairForActivity,
+  findTransferMatchCandidates,
+  saveInternalTransferPair,
+  linkTransferActivities,
+  unlinkTransferActivities,
 } from "@/adapters";
 import {
   addExchangeRate,
@@ -28,6 +34,14 @@ import {
   createContributionLimit,
   getContributionLimit,
   updateContributionLimit,
+} from "@/adapters";
+import {
+  deleteCategorizationRule,
+  getSpendCategories,
+  isSpendingEnabled,
+  listCategorizationRules,
+  rerunCategorizationRules,
+  upsertCategorizationRule,
 } from "@/adapters";
 import { openCsvFileDialog, openFileSaveDialog } from "@/adapters";
 import { createGoal, getGoals, getGoalFunding, saveGoalFunding, updateGoal } from "@/adapters";
@@ -450,11 +464,19 @@ export function createAddonHostAPI(
       getHoldings: (accountId: string) => getHoldings({ type: "account", accountId }),
       getActivities,
       getAccounts,
+      getAlternativeHoldings,
 
       getExchangeRates,
       updateExchangeRate,
       addExchangeRate,
       getExchangeRatesForDates,
+
+      isSpendingEnabled,
+      getSpendCategories,
+      listCategorizationRules,
+      upsertCategorizationRule,
+      deleteCategorizationRuleById: deleteCategorizationRule,
+      rerunCategorizationRulesForAddon: rerunCategorizationRules,
 
       getContributionLimit,
       createContributionLimit,
@@ -504,6 +526,12 @@ export function createAddonHostAPI(
       createActivity,
       updateActivity,
       saveActivities,
+
+      getTransferPairForActivity,
+      findTransferMatchCandidates,
+      saveInternalTransferPair,
+      linkTransferActivities,
+      unlinkTransferActivities,
 
       openCsvFileDialog,
       openFileSaveDialog,

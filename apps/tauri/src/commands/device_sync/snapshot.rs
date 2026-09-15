@@ -5,13 +5,15 @@ use chrono::{Duration, Utc};
 use log::{debug, info};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::context::ServiceContext;
 use crate::events::{emit_portfolio_trigger_recalculate, PortfolioRequestPayload};
 use wealthfolio_core::quotes::MarketSyncMode;
-use wealthfolio_core::sync::APP_SYNC_TABLES;
+use wealthfolio_core::sync::{
+    snapshot_covers_cursor_and_schema, APP_SYNC_TABLES, SNAPSHOT_SCHEMA_VERSION,
+};
 use wealthfolio_device_sync::SyncState;
 
 use super::{
@@ -244,6 +246,10 @@ pub async fn sync_bootstrap_snapshot_if_needed(
     handle: AppHandle,
     context: &Arc<ServiceContext>,
 ) -> Result<SyncBootstrapResult, String> {
+    context
+        .connect_service()
+        .ensure_device_sync_subscription()
+        .await?;
     let identity = get_sync_identity_from_store()
         .ok_or_else(|| "No sync identity configured. Please enable sync first.".to_string())?;
     let device_id = identity
@@ -454,7 +460,7 @@ pub async fn sync_bootstrap_snapshot_if_needed(
         }
     }
 
-    const LOCAL_SCHEMA_VERSION: i32 = 1;
+    const LOCAL_SCHEMA_VERSION: i32 = SNAPSHOT_SCHEMA_VERSION;
     if latest.schema_version > LOCAL_SCHEMA_VERSION {
         return Err(format!(
             "Snapshot schema version {} is newer than local version {}. Please update the app.",
@@ -521,8 +527,17 @@ pub async fn sync_bootstrap_snapshot_if_needed(
     }
 
     let sqlite_image = decode_snapshot_sqlite_payload(blob, &identity)?;
-    let temp_snapshot_path =
-        std::env::temp_dir().join(format!("wf_snapshot_{}.db", Uuid::new_v4()));
+    // App-private storage, not the shared system temp directory: the snapshot
+    // image is a plaintext copy of synced financial rows.
+    let scratch_dir = handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))
+        .and_then(|dir| {
+            wealthfolio_storage_sqlite::db::scratch_dir(&dir.to_string_lossy())
+                .map_err(|e| format!("Failed to prepare the snapshot scratch directory: {e}"))
+        })?;
+    let temp_snapshot_path = scratch_dir.join(format!("wf_snapshot_{}.db", Uuid::new_v4()));
     std::fs::write(&temp_snapshot_path, sqlite_image)
         .map_err(|e| format!("Failed to persist snapshot image: {}", e))?;
     let snapshot_path_str = temp_snapshot_path.to_string_lossy().to_string();
@@ -579,6 +594,10 @@ pub async fn generate_snapshot_now_internal(
     context: Arc<ServiceContext>,
 ) -> Result<SyncSnapshotUploadResult, String> {
     context
+        .connect_service()
+        .ensure_device_sync_subscription()
+        .await?;
+    context
         .device_sync_runtime()
         .snapshot_upload_cancelled
         .store(false, Ordering::Relaxed);
@@ -634,7 +653,12 @@ pub async fn generate_snapshot_now_internal(
             .get_latest_snapshot_with_cursor_fallback(&token, &device_id)
             .await
         {
-            if latest_snapshot.oplog_seq >= cursor {
+            if snapshot_covers_cursor_and_schema(
+                latest_snapshot.oplog_seq,
+                latest_snapshot.schema_version,
+                cursor,
+                SNAPSHOT_SCHEMA_VERSION,
+            ) {
                 info!(
                     "[DeviceSync] Reusing latest remote snapshot id={} oplog_seq={} for cursor={}",
                     latest_snapshot.snapshot_id, latest_snapshot.oplog_seq, cursor
@@ -692,7 +716,7 @@ pub async fn generate_snapshot_now_internal(
     let checksum = sha256_checksum(&payload);
     let metadata_payload = encrypt_sync_payload(
         &serde_json::json!({
-            "schemaVersion": 1,
+            "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
             "coversTables": APP_SYNC_TABLES,
             "generatedAt": Utc::now().to_rfc3339(),
         })
@@ -708,7 +732,7 @@ pub async fn generate_snapshot_now_internal(
     );
     let upload_headers = wealthfolio_device_sync::SnapshotUploadHeaders {
         event_id: Some(Uuid::now_v7().to_string()),
-        schema_version: 1,
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         covers_tables: APP_SYNC_TABLES.iter().map(|v| v.to_string()).collect(),
         size_bytes: payload.len() as i64,
         checksum,
@@ -765,7 +789,12 @@ pub async fn generate_snapshot_now_internal(
                     Err(_) => None,
                 };
                 if let (Some(cursor), Some(snapshot)) = (local_cursor, latest) {
-                    if snapshot.oplog_seq >= cursor {
+                    if snapshot_covers_cursor_and_schema(
+                        snapshot.oplog_seq,
+                        snapshot.schema_version,
+                        cursor,
+                        SNAPSHOT_SCHEMA_VERSION,
+                    ) {
                         info!(
                             "[DeviceSync] Snapshot conflict resolved by existing remote snapshot id={} oplog_seq={} cursor={}",
                             snapshot.snapshot_id, snapshot.oplog_seq, cursor

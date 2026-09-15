@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DeviceSyncSection } from "./device-sync-section";
 
 const hookMocks = vi.hoisted(() => ({
+  backupDatabase: vi.fn(),
   useSyncStatus: vi.fn(),
   useDevices: vi.fn(),
   useSyncActions: vi.fn(),
@@ -53,8 +54,7 @@ vi.mock("@/adapters", () => ({
     debug: vi.fn(),
     trace: vi.fn(),
   },
-  backupDatabase: vi.fn(),
-  openFileSaveDialog: vi.fn(),
+  backupDatabase: hookMocks.backupDatabase,
 }));
 
 vi.mock("./pairing-flow", async () => {
@@ -143,6 +143,71 @@ describe("DeviceSyncSection", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Connect This Device").length).toBeGreaterThan(1);
     });
+  });
+
+  it("keeps ready-state overwrite actions responsive", async () => {
+    vi.useFakeTimers();
+    try {
+      const bootstrapSync = {
+        mutateAsync: vi.fn().mockResolvedValue({
+          status: "overwrite_required",
+          localRows: 12,
+          nonEmptyTables: [{ table: "accounts", rows: 1 }],
+        }),
+        isPending: false,
+        error: null,
+      };
+
+      hookMocks.useSyncStatus.mockReturnValue({
+        isLoading: false,
+        error: null,
+        syncState: "READY",
+        trustedDevices: [{ id: "trusted-1", name: "Laptop", platform: "mac", lastSeenAt: null }],
+        device: { trustState: "trusted" },
+        engineStatus: {
+          lastCycleStatus: "stale_cursor",
+          bootstrapRequired: true,
+          backgroundRunning: false,
+        },
+        engineIsFetching: false,
+        refetch: vi.fn(),
+      });
+      hookMocks.useDevices.mockReturnValue({
+        data: [],
+        isLoading: false,
+        error: null,
+      });
+      hookMocks.useSyncActions.mockReturnValue(createActions({ bootstrapSync }));
+
+      renderWithQueryClient(<DeviceSyncSection />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await flushAsyncWork();
+
+      expect(screen.getByRole("button", { name: "Back up first" }).parentElement).toHaveClass(
+        "max-sm:[&>button]:whitespace-normal",
+        "sm:flex-wrap",
+      );
+      let finishBackup!: (value: { filename: string }) => void;
+      hookMocks.backupDatabase.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishBackup = resolve;
+          }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Back up first" }));
+      expect(hookMocks.backupDatabase).toHaveBeenCalledTimes(1);
+      expect(bootstrapSync.mutateAsync).not.toHaveBeenCalledWith({ allowOverwrite: true });
+      await act(async () => {
+        finishBackup({ filename: "managed.db" });
+      });
+      await flushAsyncWork();
+      expect(bootstrapSync.mutateAsync).toHaveBeenCalledWith({ allowOverwrite: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("requires confirmation when any other non-revoked device exists", async () => {

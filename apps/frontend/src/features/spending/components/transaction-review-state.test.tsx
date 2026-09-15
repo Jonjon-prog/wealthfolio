@@ -1,6 +1,6 @@
 import { render, screen } from "@/test/render";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Table, TableBody } from "@wealthfolio/ui";
+import { Table, TableBody, TooltipProvider } from "@wealthfolio/ui";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -84,7 +84,11 @@ function withProviders({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>{children}</TooltipProvider>
+    </QueryClientProvider>
+  );
 }
 
 function renderRow(needsReview: boolean) {

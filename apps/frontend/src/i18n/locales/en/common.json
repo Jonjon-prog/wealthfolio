@@ -364,5 +364,6 @@
   "navStyle": {
     "sidebar": "Sidebar",
     "floating": "Floating Bar"
-  }
+  },
+  "allocation_other_in_category": "Other {{category}}"
 }

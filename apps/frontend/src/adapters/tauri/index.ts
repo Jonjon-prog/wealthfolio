@@ -111,11 +111,17 @@ export * from "../shared/taxonomies";
 // Alternative Assets Commands
 export * from "../shared/alternative-assets";
 
+// Asset Logo Commands
+export * from "../shared/asset-logos";
+
 // Contribution Limits Commands
 export * from "../shared/contribution-limits";
 
 // Exchange Rates Commands
 export * from "../shared/exchange-rates";
+
+// Spending Categorization Commands
+export * from "../shared/spending";
 
 // Secrets Commands
 export * from "../shared/secrets";
@@ -152,17 +158,22 @@ export {
   isAutoUpdateCheckEnabled,
   backupDatabase,
   deleteDatabaseBackup,
+  discardDatabaseBackupImport,
+  inspectDatabaseBackup,
+  inspectSavedDatabaseBackup,
+  restoreDatabaseBackupImport,
+  exportDatabaseBackup,
   getDatabaseBackupDownloadUrl,
   listDatabaseBackups,
-  backupDatabaseToPath,
-  backupDatabaseToPendingExport,
-  restoreDatabase,
+  openDatabaseBackupFolder,
+  getDatabaseEncryptionStatus,
+  setDatabaseEncryptionEnabled,
   getAppInfo,
   checkForUpdates,
   installUpdate,
   getPlatform,
 } from "./settings";
-export type { DatabaseBackup } from "./settings";
+export type { BackupImportPreview, DatabaseBackup, DatabaseEncryptionStatus } from "./settings";
 
 // Addon Commands (platform-specific)
 export {
@@ -242,6 +253,7 @@ export {
   openDatabaseFileDialog,
   openFileSaveDialog,
   saveAppDataFileViaPicker,
+  stagePickedDatabaseFileForRestore,
   openUrlInBrowser,
 } from "./files";
 

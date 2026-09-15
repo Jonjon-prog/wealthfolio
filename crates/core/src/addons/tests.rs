@@ -438,6 +438,92 @@ fn test_detect_addon_permissions_historical_exchange_rates() {
 }
 
 #[test]
+fn test_detect_addon_permissions_activities_transfer_functions() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default function enable(ctx) {
+                ctx.api.activities.getTransferPair('activity-1');
+                ctx.api.activities.findTransferMatchCandidates({ activityId: 'activity-1' });
+                ctx.api.activities.saveTransferPair({ fromAccountId: 'a', toAccountId: 'b' });
+                ctx.api.activities.linkTransfer('activity-a', 'activity-b');
+                ctx.api.activities.unlinkTransfer('activity-a', 'activity-b');
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+
+    let activities_permission = detected_permissions
+        .iter()
+        .find(|p| p.category == "activities")
+        .expect("activities permissions should be detected");
+    let activities_functions: Vec<&str> = activities_permission
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+
+    for function in [
+        "getTransferPair",
+        "findTransferMatchCandidates",
+        "saveTransferPair",
+        "linkTransfer",
+        "unlinkTransfer",
+    ] {
+        assert!(
+            activities_functions.contains(&function),
+            "{} should be detected under activities",
+            function
+        );
+    }
+}
+
+#[test]
+fn test_detect_addon_permissions_spending() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default async function enable(ctx) {
+                await ctx.api.spending.isEnabled();
+                await ctx.api.spending.getCategories();
+                await ctx.api.spending.getRules();
+                await ctx.api.spending.saveRule({});
+                await ctx.api.spending.deleteRule("rule-1");
+                await ctx.api.spending.rerunRules();
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+    let spending_permission = detected_permissions
+        .iter()
+        .find(|permission| permission.category == "spending")
+        .expect("spending permissions should be detected");
+    let detected_functions: std::collections::HashSet<&str> = spending_permission
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+
+    assert_eq!(
+        detected_functions,
+        std::collections::HashSet::from([
+            "isEnabled",
+            "getCategories",
+            "getRules",
+            "saveRule",
+            "deleteRule",
+            "rerunRules",
+        ])
+    );
+}
+
+#[test]
 fn test_addon_manifest_to_installed() {
     let manifest = AddonManifest {
         id: "test-addon".to_string(),
@@ -2092,6 +2178,7 @@ mod service_tests {
                         auth_type: "bearer".to_string(),
                         secret_key: "api-token".to_string(),
                     }),
+                    timeout_secs: None,
                     injected_authorization: Some("Bearer secret-token".to_string()),
                 },
             )
@@ -2158,6 +2245,7 @@ mod service_tests {
                         auth_type: "bearer".to_string(),
                         secret_key: "api-token".to_string(),
                     }),
+                    timeout_secs: None,
                     injected_authorization: Some("Bearer secret-token".to_string()),
                 },
             )

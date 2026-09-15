@@ -378,5 +378,6 @@
   "navStyle": {
     "sidebar": "Barre latérale",
     "floating": "Barre flottante"
-  }
+  },
+  "allocation_other_in_category": "Autres ({{category}})"
 }

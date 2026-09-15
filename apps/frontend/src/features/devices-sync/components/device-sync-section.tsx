@@ -3,17 +3,10 @@
 // State Machine: FRESH → REGISTERED → READY (+ STALE, RECOVERY)
 // ==================================================================
 
-import {
-  backupDatabase,
-  backupDatabaseToPath,
-  backupDatabaseToPendingExport,
-  isWeb,
-  openFolderDialog,
-  saveAppDataFileViaPicker,
-} from "@/adapters";
-import { getPlatform as getRuntimePlatform } from "@/hooks/use-platform";
+import { backupDatabase } from "@/adapters";
+import { PortalLink } from "@/features/wealthfolio-connect/components/portal-link";
 import { useQueryClient } from "@tanstack/react-query";
-import { Icons, Skeleton } from "@wealthfolio/ui";
+import { Icons, isKeyboardEventComposing, Skeleton } from "@wealthfolio/ui";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -266,31 +259,7 @@ export function DeviceSyncSection() {
   const handleBackupBeforeBootstrap = useCallback(async (): Promise<boolean> => {
     setIsBackingUpBeforeBootstrap(true);
     try {
-      let backupLocation: string;
-
-      if (isWeb) {
-        const { filename } = await backupDatabase();
-        backupLocation = filename;
-      } else {
-        const runtimePlatform = await getRuntimePlatform();
-        if (runtimePlatform.is_desktop) {
-          const selectedDir = await openFolderDialog();
-          if (!selectedDir) {
-            return false;
-          }
-          backupLocation = await backupDatabaseToPath(selectedDir);
-        } else {
-          if (runtimePlatform.os !== "ios") {
-            throw new Error(t("sync:errors.backupPlatformUnsupported"));
-          }
-          const { relativePath, filename } = await backupDatabaseToPendingExport();
-          const saved = await saveAppDataFileViaPicker(relativePath, filename);
-          if (!saved) {
-            return false;
-          }
-          backupLocation = filename;
-        }
-      }
+      const { filename: backupLocation } = await backupDatabase();
 
       toast.success(t("sync:backup.savedTitle"), {
         description: t("sync:backup.savedDescription", { location: backupLocation }),
@@ -760,7 +729,7 @@ export function DeviceSyncSection() {
       <Card>
         <CardContent className="p-4">
           {/* Header row - matches Broker connections / Accounts pattern */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="bg-muted flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
                 <Icons.Smartphone className="text-muted-foreground h-4 w-4" />
@@ -772,7 +741,10 @@ export function DeviceSyncSection() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="text-muted-foreground hover:text-foreground h-8 w-8 sm:hidden"
+                className="text-muted-foreground hover:text-foreground size-11 sm:hidden"
+                aria-label={t(
+                  isBackgroundRunning ? "sync:engine.pauseSync" : "sync:engine.resumeSync",
+                )}
                 onClick={handleToggleEngine}
                 disabled={isTogglingEngine}
               >
@@ -811,31 +783,14 @@ export function DeviceSyncSection() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="text-muted-foreground hover:text-foreground h-8 w-8"
+                className="text-muted-foreground hover:text-foreground size-11 sm:size-8"
+                aria-label={t("common:refresh")}
                 onClick={handleRefreshDevices}
                 disabled={isRefreshing}
               >
                 <Icons.RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
               </Button>
-              {/* Mobile: icon only */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground sm:hidden"
-                onClick={() => window.open(PORTAL_DEVICES_URL, "_blank")}
-              >
-                <Icons.ExternalLink className="h-4 w-4" />
-              </Button>
-              {/* Desktop: full text */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground hover:text-foreground hidden sm:inline-flex"
-                onClick={() => window.open(PORTAL_DEVICES_URL, "_blank")}
-              >
-                {t("sync:section.manageDevices")}
-                <Icons.ArrowRight className="ml-1 h-3.5 w-3.5" />
-              </Button>
+              <PortalLink href={PORTAL_DEVICES_URL} label={t("sync:section.manageDevices")} />
             </div>
           </div>
 
@@ -1025,7 +980,7 @@ export function DeviceSyncSection() {
               )}
             </AlertDialogHeader>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center max-sm:[&>button]:h-auto max-sm:[&>button]:min-h-11 max-sm:[&>button]:max-w-full max-sm:[&>button]:whitespace-normal">
               <Button
                 variant="ghost"
                 onClick={() => handleBootstrapOverwriteDialogOpenChange(false)}
@@ -1077,7 +1032,7 @@ export function DeviceSyncSection() {
                 {t("sync:reinit.description")}
               </AlertDialogDescription>
             </AlertDialogHeader>
-            <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center max-sm:[&>button]:h-auto max-sm:[&>button]:min-h-11 max-sm:[&>button]:max-w-full max-sm:[&>button]:whitespace-normal">
               <Button variant="ghost" onClick={() => setShowReinitConfirmDialog(false)}>
                 {t("sync:reinit.notNow")}
               </Button>
@@ -1353,7 +1308,7 @@ function PairThisDeviceItem({ onPair }: { onPair: () => void }) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="text-muted-foreground h-8 w-8 shrink-0"
+                className="text-muted-foreground size-11 shrink-0 sm:size-8"
               >
                 <Icons.MoreVertical className="h-4 w-4" />
                 <span className="sr-only">{t("sync:section.options")}</span>
@@ -1534,6 +1489,8 @@ function DeviceCard({
                 maxLength={64}
                 autoFocus
                 onKeyDown={(e) => {
+                  if (isKeyboardEventComposing(e.nativeEvent)) return;
+
                   if (e.key === "Enter") handleRename();
                   if (e.key === "Escape") handleCancelRename();
                 }}
@@ -1541,7 +1498,8 @@ function DeviceCard({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-7 w-7 shrink-0"
+                className="size-11 shrink-0 sm:size-7"
+                aria-label={t("common:save")}
                 onClick={handleRename}
                 disabled={renameDevice.isPending}
               >
@@ -1554,7 +1512,8 @@ function DeviceCard({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-7 w-7 shrink-0"
+                className="size-11 shrink-0 sm:size-7"
+                aria-label={t("common:cancel")}
                 onClick={handleCancelRename}
               >
                 <Icons.Close className="h-3.5 w-3.5" />
@@ -1616,7 +1575,7 @@ function DeviceCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-muted-foreground h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+                  className="text-muted-foreground size-11 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100 sm:size-7"
                 >
                   <Icons.MoreVertical className="h-4 w-4" />
                   <span className="sr-only">{t("sync:section.deviceActions")}</span>

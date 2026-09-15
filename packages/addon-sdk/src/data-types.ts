@@ -179,7 +179,7 @@ export interface Activity {
   assetId?: string; // NOW OPTIONAL for pure cash events
 
   // Classification
-  activityType: string; // Canonical type (closed set of 15)
+  activityType: string; // Canonical type (closed set of 14)
   activityTypeOverride?: string; // User override (never touched by sync)
   sourceType?: string; // Raw provider label (REI, DIV, etc.)
   subtype?: string; // Semantic variation (DRIP, STAKING_REWARD, etc.)
@@ -364,6 +364,59 @@ export interface ActivityBulkMutationResult {
   errors: ActivityBulkMutationError[];
 }
 
+interface InternalTransferPairRequestBase {
+  sourceGroupId?: string;
+  fromAccountId: string;
+  toAccountId: string;
+  activityDate: string | Date;
+  sourceAmount: string | number;
+  destinationAmount: string | number;
+  sourceCurrency: string;
+  destinationCurrency: string;
+  fxRate?: string | number | null;
+  notes?: string | null;
+  transferMode?: 'cash';
+}
+
+/** Create both legs of a new internal transfer pair. */
+export interface CreateInternalTransferPairRequest extends InternalTransferPairRequestBase {
+  transferOutId?: never;
+  transferInId?: never;
+}
+
+/**
+ * Update an existing internal transfer pair. Both leg ids are required: the host
+ * rejects a request that names one leg without the other.
+ */
+export interface UpdateInternalTransferPairRequest extends InternalTransferPairRequestBase {
+  transferOutId: string;
+  transferInId: string;
+}
+
+export type InternalTransferPairRequest =
+  | CreateInternalTransferPairRequest
+  | UpdateInternalTransferPairRequest;
+
+export interface InternalTransferPairResponse {
+  transferOut: Activity;
+  transferIn: Activity;
+}
+
+export interface TransferMatchCandidateRequest {
+  activityId: string;
+  windowDays?: number;
+  limit?: number;
+}
+
+export interface TransferMatchCandidate {
+  activity: Activity;
+  matchKind: 'cash' | 'security' | 'cash_fx_conversion';
+  confidence: 'high' | 'medium' | 'low';
+  score: number;
+  reasons: string[];
+  warnings: string[];
+}
+
 export interface ActivityImport {
   id?: string;
   accountId: string;
@@ -401,6 +454,12 @@ export interface ActivityImport {
   lineNumber?: number;
   isDraft: boolean;
   forceImport?: boolean;
+  /**
+   * Whether a transfer or credit crosses the tracked-account boundary.
+   * Controls flow classification; internal transfers may omit
+   * `metadata.flow.is_external` because false is the default.
+   */
+  isExternal?: boolean;
   comment?: string;
 }
 
@@ -530,6 +589,76 @@ export interface CategoryWithWeight {
   weight: number;
 }
 
+/**
+ * The three fixed activity-scope taxonomies a categorization rule can target,
+ * in Wealthfolio's own vocabulary (matches the app's quick-categorize picker).
+ */
+export type SpendCategoryKind = 'expense' | 'income' | 'saving';
+
+/**
+ * A selectable spend category, flattened from one of the three activity-scope
+ * taxonomies. Used to classify activities (e.g. WITHDRAWALs) via categorization
+ * rules, as distinct from the asset-classification taxonomies above.
+ */
+export interface SpendCategory {
+  kind: SpendCategoryKind;
+  taxonomyId: string;
+  categoryId: string;
+  /** Machine key, e.g. "groceries" */
+  key: string;
+  /** Display name, e.g. "Groceries" */
+  name: string;
+  /** Full breadcrumb path, e.g. "Food & Dining / Groceries" */
+  path: string;
+}
+
+export type CategorizationRuleMatchType = 'contains' | 'starts_with' | 'exact' | 'regex';
+
+/**
+ * A categorization rule as returned by the host. `getRules()` only ever
+ * returns rules this addon created via `saveRule`.
+ */
+export interface CategorizationRule {
+  id: string;
+  name: string;
+  pattern: string;
+  matchType: CategorizationRuleMatchType;
+  kind: SpendCategoryKind;
+  categoryId: string;
+  /** Restricted to one activity type, e.g. "WITHDRAWAL". Absent if it matches any type. */
+  activityType?: ActivityType;
+  /** Restricted to one account. Absent if it applies to all accounts. */
+  accountId?: string;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CategorizationRuleInput {
+  /**
+   * Stable key you choose and keep reusing for the same logical rule across
+   * edits/re-saves. Internally combined with your addon's id, so it can't
+   * collide with another addon's ruleKey. Calling this again with the same
+   * ruleKey updates the existing rule in place instead of creating a
+   * duplicate.
+   */
+  ruleKey: string;
+  /** Shown in Wealthfolio's own Settings → Spending → Rules UI */
+  name: string;
+  /** Text matched against the activity's notes/description */
+  pattern: string;
+  /** @default "contains" */
+  matchType?: CategorizationRuleMatchType;
+  kind: SpendCategoryKind;
+  categoryId: string;
+  /** Restrict to one activity type, e.g. "WITHDRAWAL". Omit to match any type. */
+  activityType?: ActivityType;
+  /** Restrict the rule to one account. Omit for a rule that applies everywhere. */
+  accountId?: string;
+  /** @default 0 */
+  priority?: number;
+}
+
 export interface MonetaryValue {
   local: number;
   base: number;
@@ -635,6 +764,42 @@ export interface Asset {
   // Audit
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Alternative asset holding with valuation details (property, vehicle,
+ * collectible, precious metal, liability, other). Simplified model: no
+ * account, no activities, just asset + quotes.
+ */
+export interface AlternativeAssetHolding {
+  /** Asset ID (e.g., "PROP-a1b2c3d4") */
+  id: string;
+  /** Asset kind (property, vehicle, collectible, precious, liability, other) */
+  kind: string;
+  /** Asset name */
+  name: string;
+  /** Asset symbol (display type label, e.g., "Property", "Vehicle") */
+  symbol: string;
+  /** Currency */
+  currency: string;
+  /** Current market value from latest quote */
+  marketValue: string;
+  /** Purchase price if available (from metadata) */
+  purchasePrice?: string | null;
+  /** Purchase date if available (from metadata) */
+  purchaseDate?: string | null;
+  /** Unrealized gain (market_value - purchase_price) */
+  unrealizedGain?: string | null;
+  /** Unrealized gain percentage */
+  unrealizedGainPct?: string | null;
+  /** Date of the latest valuation (ISO format) */
+  valuationDate: string;
+  /** Kind-specific metadata */
+  metadata?: Record<string, unknown> | null;
+  /** For liabilities: linked asset ID if any */
+  linkedAssetId?: string | null;
+  /** Asset notes */
+  notes?: string | null;
 }
 
 export interface Quote {
@@ -790,7 +955,8 @@ export interface AccountValuation {
     | 'ACTIVITY_DERIVED'
     | 'STORED_GROSS'
     | 'NET_CONTRIBUTION_FALLBACK'
-    | 'MIXED';
+    | 'MIXED'
+    | 'MIXED_EXACT';
   performanceEligibleValueBase: number;
   valueStatus: ValuationStatus;
   basisStatus: BasisStatus;

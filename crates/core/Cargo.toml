@@ -11,6 +11,7 @@ repository = "https://github.com/wealthfolio/wealthfolio"
 default = []
 
 [dependencies]
+wealthfolio-http = { workspace = true }
 # Workspace dependencies
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -49,6 +50,7 @@ zip = "2.2.0"
 jsonpath-rust = "0.7"
 scraper = "0.22"
 sha2 = "0.10"
+base64 = "0.22"
 hex = "0.4"
 chrono-tz = "0.10"
 url = "2"

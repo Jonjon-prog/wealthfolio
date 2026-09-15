@@ -2,6 +2,7 @@ import { memo, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Account } from "@/lib/types";
+import { TruncatedText } from "@/components/truncated-text";
 import { HOVER_SLOT } from "@/lib/hover-slot";
 import { cn } from "@/lib/utils";
 import {
@@ -123,7 +124,12 @@ function TransactionRowImpl({
       <TableCell className="text-muted-foreground hidden w-20 whitespace-nowrap px-3 py-2 text-xs tabular-nums md:table-cell">
         {time}
       </TableCell>
-      <TableCell className="px-3 py-2">
+      {/* `max-w-0` hands this column whatever width the fixed-width columns
+          leave over, instead of letting a long note stretch the table. It has
+          to be `!important`: globals.css sets `max-width: 100vw` on every
+          element at or below 1024px from outside any layer, which beats a
+          plain utility and would let the note run to the viewport edge. */}
+      <TableCell className="max-w-0! px-3 py-2">
         <div className="flex items-center gap-2">
           {/* The stripe beside the checkbox carries this too, but colour alone
               cannot be the only signal — it says nothing to a screen reader and
@@ -135,9 +141,11 @@ function TransactionRowImpl({
               <span className="sr-only">{t("spending:transactions.review")}</span>
             </span>
           )}
-          <span className="min-w-0 truncate text-sm">
-            {a.notes ?? <span className="text-muted-foreground italic">—</span>}
-          </span>
+          {a.notes != null ? (
+            <TruncatedText text={a.notes} className="text-sm" />
+          ) : (
+            <span className="text-muted-foreground text-sm italic">—</span>
+          )}
           {showAccount && (
             <span className="text-muted-foreground max-w-[8rem] shrink-0 truncate text-xs">
               {accountName}

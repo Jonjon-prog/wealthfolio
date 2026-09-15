@@ -21,6 +21,7 @@
     "category": "public.app-category.finance",
     "createUpdaterArtifacts": "v1Compatible",
     "iOS": {
+      "bundleVersion": "5",
       "developmentTeam": "DYDJ2RNL5H",
       "infoPlist": "Info.ios.plist"
     },
@@ -40,7 +41,7 @@
   },
   "productName": "Wealthfolio",
   "mainBinaryName": "Wealthfolio",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "identifier": "com.teymz.wealthfolio",
   "plugins": {
     "updater": {
@@ -52,8 +53,9 @@
     },
     "deep-link": {
       "mobile": [
-        { "host": "connect.wealthfolio.app", "pathPrefix": ["/deeplink"] },
-        { "host": "connect-staging.wealthfolio.app", "pathPrefix": ["/deeplink"] }
+        { "scheme": ["wealthfolio"], "appLink": false },
+        { "scheme": ["https"], "host": "connect.wealthfolio.app", "pathPrefix": ["/deeplink"] },
+        { "scheme": ["https"], "host": "connect-staging.wealthfolio.app", "pathPrefix": ["/deeplink"] }
       ],
       "desktop": {
         "schemes": ["wealthfolio"]

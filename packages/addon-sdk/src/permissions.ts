@@ -61,6 +61,14 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     riskLevel: 'high',
   },
   {
+    id: 'alternative-assets',
+    name: 'Alternative Assets',
+    description:
+      'Read-only access to alternative assets and liabilities (property, vehicles, collectibles, precious metals, other) tracked outside investment accounts',
+    functions: ['getAll'],
+    riskLevel: 'high',
+  },
+  {
     id: 'portfolio',
     name: 'Portfolio Data',
     description: 'Access to holdings, portfolio performance, and account valuations',
@@ -89,6 +97,11 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
       'checkImport',
       'getImportMapping',
       'saveImportMapping',
+      'getTransferPair',
+      'findTransferMatchCandidates',
+      'saveTransferPair',
+      'linkTransfer',
+      'unlinkTransfer',
     ],
     riskLevel: 'high',
   },
@@ -126,6 +139,21 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     description: 'Access to currency exchange rates and conversion data',
     functions: ['getAll', 'update', 'add', 'getRatesForDates'],
     riskLevel: 'low',
+  },
+  {
+    id: 'spending',
+    name: 'Spend Categorization',
+    description:
+      'View spend categories and manage categorization rules that auto-tag transactions',
+    functions: [
+      'isEnabled',
+      'getCategories',
+      'getRules',
+      'saveRule',
+      'deleteRule',
+      'rerunRules',
+    ],
+    riskLevel: 'medium',
   },
   {
     id: 'financial-planning',

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
+use wealthfolio_core::secrets::SYNC_IDENTITY_KEY;
+use wealthfolio_core::settings::SettingsServiceTrait;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
@@ -9,7 +11,9 @@ use uuid::Uuid;
 
 use crate::main_lib::AppState;
 use wealthfolio_core::events::DomainEvent;
-use wealthfolio_core::sync::APP_SYNC_TABLES;
+use wealthfolio_core::sync::{
+    snapshot_covers_cursor_and_schema, APP_SYNC_TABLES, SNAPSHOT_SCHEMA_VERSION,
+};
 use wealthfolio_device_sync::engine::{
     self, CredentialStore, OutboxStore, ReadyReconcileStore, ReplayEvent, ReplayStore,
     SyncIdentity, SyncTransport, TransportError,
@@ -18,6 +22,7 @@ use wealthfolio_device_sync::{
     DeviceSyncClient, ReconcileReadyStateResponse, SyncPullResponse, SyncPushRequest,
     SyncPushResponse, SyncState,
 };
+use wealthfolio_storage_sqlite::sync::{SqliteSyncEngineDbPorts, SyncTableRowCount};
 
 fn transport_err_from_sync(e: wealthfolio_device_sync::DeviceSyncError) -> TransportError {
     TransportError {
@@ -30,10 +35,7 @@ fn transport_err_from_sync(e: wealthfolio_device_sync::DeviceSyncError) -> Trans
         },
     }
 }
-use wealthfolio_storage_sqlite::sync::{SqliteSyncEngineDbPorts, SyncTableRowCount};
 
-const SYNC_IDENTITY_KEY: &str = "sync_identity";
-const DEVICE_ID_KEY: &str = "sync_device_id";
 static MIN_SNAPSHOT_CREATED_AT: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static READY_STATE_OVERWRITE_APPROVALS: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 static PAIRING_OVERWRITE_APPROVALS: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
@@ -333,7 +335,6 @@ async fn abort_pairing_flow_local_state(state: &Arc<AppState>, pairing_id: &str)
         );
     }
     let _ = state.app_sync_repository.reset_local_sync_session().await;
-    let _ = state.secret_store.delete_secret(DEVICE_ID_KEY);
     clear_min_snapshot_created_at_from_store();
     let _ = state
         .app_sync_repository
@@ -634,6 +635,25 @@ impl SyncTransport for ServerEnginePorts {
 
 #[async_trait]
 impl CredentialStore for ServerEnginePorts {
+    fn has_cloud_session(&self) -> Result<bool, String> {
+        if self
+            .state
+            .settings_service
+            .requires_cloud_reconnect()
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(false);
+        }
+        self.state
+            .token_lifecycle
+            .is_session_configured(self.state.secret_store.as_ref())
+            .map_err(|err| err.to_string())
+    }
+
+    async fn is_sync_allowed(&self) -> Result<bool, String> {
+        crate::api::connect::has_device_sync(&self.state).await
+    }
+
     fn get_sync_identity(&self) -> Option<SyncIdentity> {
         get_sync_identity_from_store(&self.state)
     }
@@ -906,6 +926,20 @@ pub async fn reconcile_ready_state(
 
 pub async fn ensure_background_engine_started(state: Arc<AppState>) -> Result<(), String> {
     ensure_device_sync_enabled()?;
+    if state
+        .settings_service
+        .requires_cloud_reconnect()
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(());
+    }
+    let has_session = state
+        .token_lifecycle
+        .is_session_configured(state.secret_store.as_ref())
+        .map_err(|err| err.to_string())?;
+    if !has_session {
+        return Ok(());
+    }
     let Some(identity) = get_sync_identity_from_store(&state) else {
         return Ok(());
     };
@@ -1034,6 +1068,7 @@ async fn snapshot_satisfies_freshness_gate(
 pub async fn sync_bootstrap_snapshot_if_needed(
     state: Arc<AppState>,
 ) -> Result<SyncBootstrapResult, String> {
+    crate::api::connect::ensure_device_sync_subscription(&state).await?;
     ensure_device_sync_enabled()?;
     let identity = get_sync_identity_from_store(&state)
         .ok_or_else(|| "No sync identity configured. Please enable sync first.".to_string())?;
@@ -1212,7 +1247,7 @@ pub async fn sync_bootstrap_snapshot_if_needed(
         }
     };
 
-    const LOCAL_SCHEMA_VERSION: i32 = 1;
+    const LOCAL_SCHEMA_VERSION: i32 = SNAPSHOT_SCHEMA_VERSION;
     if latest.schema_version > LOCAL_SCHEMA_VERSION {
         return Err(format!(
             "Snapshot schema version {} is newer than local version {}. Please update the app.",
@@ -1289,8 +1324,11 @@ pub async fn sync_bootstrap_snapshot_if_needed(
     }
 
     let sqlite_image = decode_snapshot_sqlite_payload(blob, &identity)?;
-    let temp_snapshot_path =
-        std::env::temp_dir().join(format!("wf_snapshot_server_{}.db", Uuid::new_v4()));
+    // App-private storage, not the shared system temp directory: the snapshot
+    // image is a plaintext copy of synced financial rows.
+    let scratch_dir = wealthfolio_storage_sqlite::db::scratch_dir(&state.data_root)
+        .map_err(|e| format!("Failed to prepare the snapshot scratch directory: {}", e))?;
+    let temp_snapshot_path = scratch_dir.join(format!("wf_snapshot_server_{}.db", Uuid::new_v4()));
     std::fs::write(&temp_snapshot_path, sqlite_image)
         .map_err(|e| format!("Failed to persist snapshot image: {}", e))?;
     let snapshot_path_str = temp_snapshot_path.to_string_lossy().to_string();
@@ -1344,6 +1382,7 @@ pub async fn sync_bootstrap_snapshot_if_needed(
 pub async fn generate_snapshot_now(
     state: Arc<AppState>,
 ) -> Result<SyncSnapshotUploadResult, String> {
+    crate::api::connect::ensure_device_sync_subscription(&state).await?;
     ensure_device_sync_enabled()?;
     state
         .device_sync_runtime
@@ -1397,7 +1436,12 @@ pub async fn generate_snapshot_now(
             .get_latest_snapshot_with_cursor_fallback(&token, &device_id)
             .await
         {
-            if latest_snapshot.oplog_seq >= cursor {
+            if snapshot_covers_cursor_and_schema(
+                latest_snapshot.oplog_seq,
+                latest_snapshot.schema_version,
+                cursor,
+                SNAPSHOT_SCHEMA_VERSION,
+            ) {
                 return Ok(SyncSnapshotUploadResult {
                     status: "uploaded".to_string(),
                     snapshot_id: Some(latest_snapshot.snapshot_id),
@@ -1440,7 +1484,7 @@ pub async fn generate_snapshot_now(
     let checksum = sha256_checksum(&payload);
     let metadata_payload = encrypt_sync_payload(
         &serde_json::json!({
-            "schemaVersion": 1,
+            "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
             "coversTables": APP_SYNC_TABLES,
             "generatedAt": Utc::now().to_rfc3339(),
         })
@@ -1458,7 +1502,7 @@ pub async fn generate_snapshot_now(
     );
     let upload_headers = wealthfolio_device_sync::SnapshotUploadHeaders {
         event_id: Some(Uuid::now_v7().to_string()),
-        schema_version: 1,
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         covers_tables: APP_SYNC_TABLES.iter().map(|v| v.to_string()).collect(),
         size_bytes: payload.len() as i64,
         checksum,
@@ -1492,7 +1536,12 @@ pub async fn generate_snapshot_now(
                     .ok()
                     .flatten();
                 if let (Some(cursor), Some(snapshot)) = (local_cursor, latest) {
-                    if snapshot.oplog_seq >= cursor {
+                    if snapshot_covers_cursor_and_schema(
+                        snapshot.oplog_seq,
+                        snapshot.schema_version,
+                        cursor,
+                        SNAPSHOT_SCHEMA_VERSION,
+                    ) {
                         tracing::info!(
                             "[DeviceSync] Snapshot conflict resolved by existing remote snapshot id={} oplog_seq={} cursor={}",
                             snapshot.snapshot_id,
@@ -1863,14 +1912,14 @@ pub async fn begin_pairing_confirm(
                     .collect(),
             },
         };
-        let flow_id = runtime.create_flow(pairing_id, phase.clone());
+        let flow_id = runtime.create_flow(pairing_id, phase.clone())?;
         return Ok(PairingFlowResponse { flow_id, phase });
     }
 
     // 5. Bootstrap snapshot
     let bootstrap = sync_bootstrap_snapshot_if_needed(Arc::clone(&state)).await?;
     if let Some(phase) = pairing_bootstrap_phase(&bootstrap)? {
-        let flow_id = runtime.create_flow(pairing_id, phase.clone());
+        let flow_id = runtime.create_flow(pairing_id, phase.clone())?;
         return Ok(PairingFlowResponse { flow_id, phase });
     }
 
@@ -1897,7 +1946,7 @@ pub async fn get_pairing_flow_state_handler(
     let runtime = &state.device_sync_runtime;
 
     let phase = runtime
-        .get_flow_phase(&flow_id)
+        .get_flow_phase(&flow_id)?
         .ok_or_else(|| "Flow not found".to_string())?;
 
     // If syncing, re-check bootstrap
@@ -1906,7 +1955,7 @@ pub async fn get_pairing_flow_state_handler(
             match sync_bootstrap_snapshot_if_needed(Arc::clone(&state)).await {
                 Ok(bootstrap) => match pairing_bootstrap_phase(&bootstrap) {
                     Ok(Some(phase)) => {
-                        runtime.set_flow_phase(&flow_id, phase.clone());
+                        runtime.set_flow_phase(&flow_id, phase.clone())?;
                         return Ok(PairingFlowResponse { flow_id, phase });
                     }
                     Ok(None) => {
@@ -1920,20 +1969,20 @@ pub async fn get_pairing_flow_state_handler(
                                 );
                             }
                         });
-                        if let Some(pid) = runtime.get_flow_pairing_id(&flow_id) {
+                        if let Some(pid) = runtime.get_flow_pairing_id(&flow_id)? {
                             clear_pairing_overwrite_approval(&pid);
                         }
-                        runtime.remove_flow(&flow_id);
+                        runtime.remove_flow(&flow_id)?;
                         return Ok(PairingFlowResponse {
                             flow_id,
                             phase: PairingFlowPhase::Success,
                         });
                     }
                     Err(e) => {
-                        if let Some(pid) = runtime.get_flow_pairing_id(&flow_id) {
+                        if let Some(pid) = runtime.get_flow_pairing_id(&flow_id)? {
                             clear_pairing_overwrite_approval(&pid);
                         }
-                        runtime.remove_flow(&flow_id);
+                        runtime.remove_flow(&flow_id)?;
                         return Ok(PairingFlowResponse {
                             flow_id,
                             phase: PairingFlowPhase::Error { message: e },
@@ -1941,10 +1990,10 @@ pub async fn get_pairing_flow_state_handler(
                     }
                 },
                 Err(e) => {
-                    if let Some(pid) = runtime.get_flow_pairing_id(&flow_id) {
+                    if let Some(pid) = runtime.get_flow_pairing_id(&flow_id)? {
                         clear_pairing_overwrite_approval(&pid);
                     }
-                    runtime.remove_flow(&flow_id);
+                    runtime.remove_flow(&flow_id)?;
                     return Ok(PairingFlowResponse {
                         flow_id,
                         phase: PairingFlowPhase::Error { message: e },
@@ -1965,14 +2014,14 @@ pub async fn approve_pairing_overwrite_handler(
     let runtime = &state.device_sync_runtime;
 
     let phase = runtime
-        .get_flow_phase(&flow_id)
+        .get_flow_phase(&flow_id)?
         .ok_or_else(|| "Flow not found".to_string())?;
     if !matches!(phase, PairingFlowPhase::OverwriteRequired { .. }) {
         return Err("Flow is not in overwrite_required phase".to_string());
     }
 
     let pairing_id = runtime
-        .get_flow_pairing_id(&flow_id)
+        .get_flow_pairing_id(&flow_id)?
         .ok_or_else(|| "Flow not found".to_string())?;
 
     set_pairing_overwrite_approval(&pairing_id);
@@ -1982,7 +2031,7 @@ pub async fn approve_pairing_overwrite_handler(
         PairingFlowPhase::Syncing {
             detail: "bootstrapping".to_string(),
         },
-    );
+    )?;
 
     match sync_bootstrap_snapshot_if_needed(Arc::clone(&state)).await {
         Ok(bootstrap) => {
@@ -1990,14 +2039,14 @@ pub async fn approve_pairing_overwrite_handler(
                 Ok(phase) => phase,
                 Err(e) => {
                     clear_pairing_overwrite_approval(&pairing_id);
-                    runtime.remove_flow(&flow_id);
+                    runtime.remove_flow(&flow_id)?;
                     return Ok(PairingFlowResponse {
                         flow_id,
                         phase: PairingFlowPhase::Error { message: e },
                     });
                 }
             } {
-                runtime.set_flow_phase(&flow_id, phase.clone());
+                runtime.set_flow_phase(&flow_id, phase.clone())?;
                 return Ok(PairingFlowResponse { flow_id, phase });
             }
 
@@ -2009,7 +2058,7 @@ pub async fn approve_pairing_overwrite_handler(
                 }
             });
             clear_pairing_overwrite_approval(&pairing_id);
-            runtime.remove_flow(&flow_id);
+            runtime.remove_flow(&flow_id)?;
             Ok(PairingFlowResponse {
                 flow_id,
                 phase: PairingFlowPhase::Success,
@@ -2017,7 +2066,7 @@ pub async fn approve_pairing_overwrite_handler(
         }
         Err(e) => {
             clear_pairing_overwrite_approval(&pairing_id);
-            runtime.remove_flow(&flow_id);
+            runtime.remove_flow(&flow_id)?;
             Ok(PairingFlowResponse {
                 flow_id,
                 phase: PairingFlowPhase::Error { message: e },
@@ -2032,11 +2081,11 @@ pub async fn cancel_pairing_flow_handler(
 ) -> Result<PairingFlowResponse, String> {
     let runtime = &state.device_sync_runtime;
 
-    if let Some(pairing_id) = runtime.get_flow_pairing_id(&flow_id) {
+    if let Some(pairing_id) = runtime.get_flow_pairing_id(&flow_id)? {
         abort_pairing_flow_local_state(&state, &pairing_id).await;
     }
 
-    runtime.remove_flow(&flow_id);
+    runtime.remove_flow(&flow_id)?;
 
     Ok(PairingFlowResponse {
         flow_id,

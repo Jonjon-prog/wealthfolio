@@ -9,7 +9,7 @@ use wealthfolio_connect::{
     ensure_valid_access_token, ConnectApiClient, TokenLifecycleConfig, TokenLifecycleState,
     DEFAULT_CLOUD_API_URL,
 };
-use wealthfolio_core::secrets::SecretStore;
+use wealthfolio_core::{secrets::SecretStore, settings::SettingsServiceTrait};
 
 /// Returns true when broker/connect sync was compiled in.
 pub fn is_connect_sync_enabled() -> bool {
@@ -62,14 +62,19 @@ fn token_lifecycle_config() -> Option<TokenLifecycleConfig> {
 /// convenient methods for common cloud API operations.
 pub struct ConnectService {
     secret_store: Arc<dyn SecretStore>,
+    settings: Arc<dyn SettingsServiceTrait>,
     token_lifecycle: Arc<TokenLifecycleState>,
 }
 
 impl ConnectService {
     /// Create a new ConnectService instance.
-    pub fn new(secret_store: Arc<dyn SecretStore>) -> Self {
+    pub fn new(
+        secret_store: Arc<dyn SecretStore>,
+        settings: Arc<dyn SettingsServiceTrait>,
+    ) -> Self {
         Self {
             secret_store,
+            settings,
             token_lifecycle: Arc::new(TokenLifecycleState::new()),
         }
     }
@@ -80,6 +85,13 @@ impl ConnectService {
             return Err("Cloud sync feature is disabled in this build.".to_string());
         }
 
+        if self
+            .settings
+            .requires_cloud_reconnect()
+            .map_err(|e| e.to_string())?
+        {
+            return Err("Reconnect Wealthfolio Connect after restoring this backup.".into());
+        }
         let config = token_lifecycle_config();
         ensure_valid_access_token(
             self.secret_store.as_ref(),
@@ -90,8 +102,35 @@ impl ConnectService {
         .map_err(|err| err.to_string())
     }
 
-    pub async fn clear_cached_token(&self) {
-        self.token_lifecycle.clear_cache().await;
+    pub fn is_session_configured(&self) -> Result<bool, String> {
+        if self
+            .settings
+            .requires_cloud_reconnect()
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(false);
+        }
+        self.token_lifecycle
+            .is_session_configured(self.secret_store.as_ref())
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn store_session(&self, token: &str) -> Result<(), String> {
+        self.token_lifecycle
+            .store_session_after_restore(self.secret_store.as_ref(), self.settings.as_ref(), token)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn clear_session_with<F, Fut>(&self, after_clear: F) -> Result<bool, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        self.token_lifecycle
+            .clear_session_with(self.secret_store.as_ref(), after_clear)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     /// Get an authenticated API client using the stored access token.
@@ -112,6 +151,23 @@ impl ConnectService {
         let access_token = self.get_valid_access_token().await?;
 
         ConnectApiClient::new(&cloud_api_base_url, &access_token).map_err(|e| e.to_string())
+    }
+
+    pub async fn has_device_sync(&self) -> Result<bool, String> {
+        let token = self.get_valid_access_token().await?;
+        let url = cloud_api_base_url().ok_or("Cloud sync is disabled")?;
+        ConnectApiClient::new(&url, &token)
+            .map_err(|err| err.to_string())?
+            .has_device_sync()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn ensure_device_sync_subscription(&self) -> Result<(), String> {
+        if !self.has_device_sync().await? {
+            return Err("Device sync is paused: an active subscription is required.".to_string());
+        }
+        Ok(())
     }
 
     /// Check if the current user's plan includes broker sync.

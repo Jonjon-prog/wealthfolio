@@ -1,7 +1,8 @@
 import { getExchanges, resolveSymbolQuote } from "@/adapters";
 import { MultiSelectTaxonomy } from "@/components/classification/multi-select-taxonomy";
 import { SingleSelectTaxonomy } from "@/components/classification/single-select-taxonomy";
-import { TickerAvatar } from "@/components/ticker-avatar";
+import { AssetLogoDialog } from "@/components/asset-logo/asset-logo-dialog";
+import { EditableTickerAvatar } from "@/components/asset-logo/editable-ticker-avatar";
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useMarketDataProviders } from "@/hooks/use-market-data-providers";
 import { useTaxonomies } from "@/hooks/use-taxonomies";
@@ -472,6 +473,7 @@ export function AssetEditSheet({
     [t],
   );
   const [activeTab, setActiveTab] = useState<EditTab>(defaultTab);
+  const [logoDialogOpen, setLogoDialogOpen] = useState(false);
   const [symbolValidations, setSymbolValidations] = useState<
     Record<string, SymbolValidationStatus>
   >({});
@@ -709,7 +711,23 @@ export function AssetEditSheet({
       <SheetContent side="right" className="pb-safe flex h-full w-full flex-col sm:max-w-2xl">
         <SheetHeader className="shrink-0 pb-4">
           <div className="flex items-center gap-3">
-            <TickerAvatar symbol={asset.displayCode ?? ""} className="size-10" />
+            <EditableTickerAvatar
+              symbol={asset.displayCode ?? ""}
+              exchangeMic={asset.instrumentExchangeMic}
+              instrumentType={asset.instrumentType}
+              assetId={asset.id}
+              className="size-10"
+              onEdit={() => setLogoDialogOpen(true)}
+            />
+            <AssetLogoDialog
+              open={logoDialogOpen}
+              onOpenChange={setLogoDialogOpen}
+              assetId={asset.id}
+              symbol={asset.displayCode ?? asset.name ?? ""}
+              exchangeMic={asset.instrumentExchangeMic}
+              instrumentType={asset.instrumentType}
+              name={asset.name}
+            />
             <div className="min-w-0 flex-1">
               <SheetTitle className="truncate text-lg">
                 {asset.displayCode ?? asset.name ?? t("asset:editSheet.unknown")}

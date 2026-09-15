@@ -1687,6 +1687,8 @@ mod tests {
             source_account_ids: vec![],
             symbol: asset_id.to_ascii_uppercase(),
             name: asset_id.to_string(),
+            exchange_mic: None,
+            instrument_type: None,
             holding_type: HoldingType::Security,
             quantity: Decimal::ONE,
             category_id: category_id.to_string(),

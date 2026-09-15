@@ -25,8 +25,8 @@ use yahoo_finance_api as yahoo;
 
 use crate::errors::MarketDataError;
 use crate::models::{
-    AssetProfile, Coverage, DividendEvent, InstrumentKind, ProviderInstrument, Quote, QuoteContext,
-    SearchResult, SplitEvent,
+    to_iso_alpha2, AssetProfile, Coverage, DividendEvent, InstrumentKind, ProviderInstrument,
+    Quote, QuoteContext, SearchResult, SplitEvent,
 };
 use crate::provider::{MarketDataProvider, ProviderCapabilities, RateLimit};
 use crate::resolver::{yahoo_equity_search_queries, yahoo_exchange_to_mic, ResolverChain};
@@ -87,11 +87,21 @@ pub struct YahooProvider {
 impl YahooProvider {
     /// Create a new Yahoo Finance provider.
     pub async fn new() -> Result<Self, MarketDataError> {
-        let connector =
-            yahoo::YahooConnector::new().map_err(|e| MarketDataError::ProviderError {
+        let client = wealthfolio_http::client_builder()
+            .https_only(true)
+            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| MarketDataError::ProviderError {
+                provider: "YAHOO".to_string(),
+                message: format!("Failed to initialize Yahoo HTTP client: {}", e),
+            })?;
+        let connector = yahoo::YahooConnectorBuilder::build_with_client(client).map_err(|e| {
+            MarketDataError::ProviderError {
                 provider: "YAHOO".to_string(),
                 message: format!("Failed to initialize Yahoo connector: {}", e),
-            })?;
+            }
+        })?;
         Ok(Self { connector })
     }
 
@@ -166,7 +176,7 @@ impl YahooProvider {
 
     /// Fetch a new Yahoo authentication crumb.
     async fn fetch_crumb(&self) -> Result<CrumbData, MarketDataError> {
-        let client = reqwest::Client::new();
+        let client = wealthfolio_http::client();
 
         // Step 1: Get cookie from fc.yahoo.com
         let response = client
@@ -248,7 +258,7 @@ impl YahooProvider {
             urlencoding::encode(&crumb_data.crumb)
         );
 
-        let client = reqwest::Client::new();
+        let client = wealthfolio_http::client();
         let resp = client
             .get(&url)
             .header(header::ACCEPT, "application/json")
@@ -477,7 +487,7 @@ impl YahooProvider {
             encoded_query
         );
 
-        let payload = reqwest::Client::new()
+        let payload = wealthfolio_http::client()
             .get(&url)
             .header(
                 header::USER_AGENT,
@@ -540,7 +550,7 @@ impl YahooProvider {
             encode(&crumb.crumb)
         );
 
-        let client = reqwest::Client::new();
+        let client = wealthfolio_http::client();
         let response = client
             .get(&url)
             .header(
@@ -644,7 +654,7 @@ impl YahooProvider {
             encode(&crumb.crumb)
         );
 
-        let client = reqwest::Client::new();
+        let client = wealthfolio_http::client();
         let response = client
             .get(&url)
             .header(
@@ -819,7 +829,14 @@ impl YahooProvider {
             website: summary.and_then(|s| s.website.clone()),
             description: summary
                 .and_then(|s| s.long_business_summary.clone().or(s.description.clone())),
-            country: summary.and_then(|s| s.country.clone()),
+            // Yahoo sends a display name ("United States"), the field documents
+            // an ISO 3166-1 alpha-2 code. Keep the raw name when it resolves to
+            // nothing rather than drop a country we simply cannot spell.
+            country: summary.and_then(|s| s.country.as_deref()).map(|c| {
+                to_iso_alpha2(c)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| c.to_string())
+            }),
             employees: summary.and_then(|s| s.full_time_employees),
             // Financial metrics from summaryDetail (extract .raw from YahooPriceDetail)
             market_cap: detail.and_then(|d| d.market_cap.as_ref().and_then(|v| v.raw)),
@@ -1256,6 +1273,29 @@ mod tests {
     use super::*;
     use std::borrow::Cow;
     use std::sync::Arc;
+
+    /// `summaryProfile.country` is a display name, and `AssetProfile::country`
+    /// documents an ISO 3166-1 alpha-2 code. The mapping is what makes that true.
+    #[tokio::test]
+    async fn profile_country_is_normalised_to_an_iso_code() {
+        let provider = YahooProvider::new().await.unwrap();
+
+        let mapped = |country: &str| {
+            let json = format!(r#"{{"summaryProfile": {{"country": "{country}"}}}}"#);
+            let result: YahooQuoteSummaryResult = serde_json::from_str(&json).unwrap();
+            provider
+                .map_quote_summary_to_profile("TEST", &result)
+                .unwrap()
+                .country
+        };
+
+        assert_eq!(mapped("United States").as_deref(), Some("US"));
+        assert_eq!(mapped("Germany").as_deref(), Some("DE"));
+        // A taxonomy spelling Yahoo does not use.
+        assert_eq!(mapped("Russia").as_deref(), Some("RU"));
+        // Unresolvable, so the raw value survives for the classifier to try.
+        assert_eq!(mapped("Ivory Coast").as_deref(), Some("Ivory Coast"));
+    }
 
     #[test]
     fn test_format_name() {

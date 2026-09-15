@@ -15,6 +15,9 @@ pub struct Settings {
     pub auto_update_check_enabled: bool,
     pub menu_bar_visible: bool,
     pub sync_enabled: bool,
+    /// Read-only restore state; clearing UI feedback must not authorize sync.
+    #[serde(default)]
+    pub restore_reconnect_required: bool,
     pub default_return_metric: String,
 }
 
@@ -31,6 +34,7 @@ impl Default for Settings {
             auto_update_check_enabled: true,
             menu_bar_visible: true,
             sync_enabled: true,
+            restore_reconnect_required: false,
             default_return_metric: "twr".to_string(),
         }
     }

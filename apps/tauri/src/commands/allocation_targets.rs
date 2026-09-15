@@ -1,3 +1,4 @@
+use crate::database::DatabaseRuntime;
 use std::sync::Arc;
 
 use tauri::State;
@@ -47,9 +48,10 @@ fn account_scope_for_target(target: &AllocationTarget) -> Result<AccountScope, S
 
 #[tauri::command]
 pub async fn list_allocation_targets(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
 ) -> Result<Vec<AllocationTarget>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .list_targets()
         .map_err(|e| e.to_string())
@@ -57,10 +59,11 @@ pub async fn list_allocation_targets(
 
 #[tauri::command]
 pub async fn get_allocation_target(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     id: String,
 ) -> Result<Option<AllocationTarget>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .get_target(&id)
         .map_err(|e| e.to_string())
@@ -68,10 +71,11 @@ pub async fn get_allocation_target(
 
 #[tauri::command]
 pub async fn create_allocation_target(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     input: NewAllocationTarget,
 ) -> Result<AllocationTarget, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .create_target(input)
         .await
@@ -80,11 +84,12 @@ pub async fn create_allocation_target(
 
 #[tauri::command]
 pub async fn update_allocation_target(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     id: String,
     input: NewAllocationTarget,
 ) -> Result<AllocationTarget, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .update_target(&id, input)
         .await
@@ -93,10 +98,11 @@ pub async fn update_allocation_target(
 
 #[tauri::command]
 pub async fn archive_allocation_target(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     id: String,
 ) -> Result<AllocationTarget, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .archive_target(&id)
         .await
@@ -105,10 +111,11 @@ pub async fn archive_allocation_target(
 
 #[tauri::command]
 pub async fn delete_allocation_target(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     id: String,
 ) -> Result<(), String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .delete_target(&id)
         .await
@@ -119,10 +126,11 @@ pub async fn delete_allocation_target(
 
 #[tauri::command]
 pub async fn list_allocation_target_weights(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
 ) -> Result<Vec<AllocationTargetWeight>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .list_weights_for_target(&target_id)
         .map_err(|e| e.to_string())
@@ -130,11 +138,12 @@ pub async fn list_allocation_target_weights(
 
 #[tauri::command]
 pub async fn save_allocation_target_weights(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
     weights: Vec<NewAllocationTargetWeight>,
 ) -> Result<Vec<AllocationTargetWeight>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .save_weights(&target_id, weights)
         .await
@@ -143,12 +152,13 @@ pub async fn save_allocation_target_weights(
 
 #[tauri::command]
 pub async fn save_allocation_target_with_weights(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     id: Option<String>,
     input: NewAllocationTarget,
     weights: Vec<NewAllocationTargetWeight>,
 ) -> Result<SaveAllocationTargetResult, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .save_target_with_weights(id, input, weights)
         .await
@@ -159,10 +169,11 @@ pub async fn save_allocation_target_with_weights(
 
 #[tauri::command]
 pub async fn list_target_constraints(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
 ) -> Result<Vec<AllocationTargetConstraint>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .list_target_constraints(&target_id)
         .map_err(|e| e.to_string())
@@ -170,11 +181,12 @@ pub async fn list_target_constraints(
 
 #[tauri::command]
 pub async fn save_target_constraints(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
     constraints: Vec<AllocationTargetConstraint>,
 ) -> Result<Vec<AllocationTargetConstraint>, String> {
-    state
+    let context = state.context()?;
+    context
         .allocation_target_service()
         .save_target_constraints(&target_id, constraints)
         .await
@@ -185,14 +197,15 @@ pub async fn save_target_constraints(
 
 #[tauri::command]
 pub async fn get_allocation_target_drift(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
     filter: AccountScopeInput,
     include_holdings: Option<bool>,
 ) -> Result<DriftReport, String> {
+    let context = state.context()?;
     let _ = filter;
-    let base_currency = state.get_base_currency();
-    let target = state
+    let base_currency = context.get_base_currency();
+    let target = context
         .allocation_target_service()
         .get_target(&target_id)
         .map_err(|e| e.to_string())?
@@ -201,7 +214,7 @@ pub async fn get_allocation_target_drift(
 
     let resolved =
         wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope_for_purpose(
-            state.portfolio_service.as_ref(),
+            context.portfolio_service.as_ref(),
             &filter,
             &base_currency,
             AccountPurpose::Holdings,
@@ -209,7 +222,7 @@ pub async fn get_allocation_target_drift(
         .map_err(|e| e.to_string())?;
 
     if include_holdings.unwrap_or(false) {
-        state
+        context
             .drift_service()
             .get_drift_report_with_holdings_for_target(
                 &target_id,
@@ -220,7 +233,7 @@ pub async fn get_allocation_target_drift(
             .await
             .map_err(|e| e.to_string())
     } else {
-        state
+        context
             .drift_service()
             .get_drift_report_for_target(
                 &target_id,
@@ -292,7 +305,7 @@ fn resolve_worksheet_scope(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_calculated_adjustments(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
     mode: WorksheetMode,
     rule: AllocationRule,
@@ -300,8 +313,9 @@ pub async fn generate_calculated_adjustments(
     eligible_asset_ids: Option<Vec<String>>,
     filter: AccountScopeInput,
 ) -> Result<CalculatedAdjustments, String> {
-    let scope = resolve_worksheet_scope(&state, &target_id, filter)?;
-    state
+    let context = state.context()?;
+    let scope = resolve_worksheet_scope(&context, &target_id, filter)?;
+    context
         .allocation_worksheet_service()
         .generate_adjustments(GenerateCalculatedAdjustmentsInput {
             target_id,
@@ -319,14 +333,15 @@ pub async fn generate_calculated_adjustments(
 
 #[tauri::command]
 pub async fn calculate_allocation_worksheet(
-    state: State<'_, Arc<ServiceContext>>,
+    state: State<'_, DatabaseRuntime>,
     target_id: String,
     cash: WorksheetCashInput,
     lines: Vec<AllocationWorksheetLineInput>,
     filter: AccountScopeInput,
 ) -> Result<AllocationWorksheetResult, String> {
-    let scope = resolve_worksheet_scope(&state, &target_id, filter)?;
-    state
+    let context = state.context()?;
+    let scope = resolve_worksheet_scope(&context, &target_id, filter)?;
+    context
         .allocation_worksheet_service()
         .calculate_worksheet(CalculateAllocationWorksheetInput {
             target_id,

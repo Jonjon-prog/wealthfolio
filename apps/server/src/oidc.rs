@@ -9,7 +9,8 @@
 //! a short-lived **encrypted** cookie rather than server memory, so the flow is
 //! stateless and survives restarts.
 
-use std::sync::Arc;
+use reqwest_oidc as reqwest;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use axum::{
@@ -27,13 +28,13 @@ use chacha20poly1305::{
 };
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata},
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce as OidcNonce,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClaimsVerificationError, ClientId, ClientSecret, CsrfToken, IssuerUrl,
+    Nonce as OidcNonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::main_lib::AppState;
+use crate::auth::AuthState;
 
 const TX_COOKIE_NAME: &str = "wf_oidc_tx";
 const TX_COOKIE_PATH: &str = "/api/v1/auth/oidc";
@@ -77,20 +78,20 @@ pub struct OidcConfig {
 
 impl OidcConfig {
     /// Reads `WF_OIDC_*` from the environment. Returns `None` when OIDC is not
-    /// configured. Panics on a partial configuration so misconfig fails loudly.
-    pub fn from_env() -> Option<Self> {
+    /// configured. Returns an error for incomplete or unsafe configuration.
+    pub fn from_env() -> anyhow::Result<Option<Self>> {
         let issuer_url = env_nonempty("WF_OIDC_ISSUER_URL");
         let client_id = env_nonempty("WF_OIDC_CLIENT_ID");
 
         match (issuer_url, client_id) {
-            (None, None) => None,
+            (None, None) => Ok(None),
             (Some(issuer_url), Some(client_id)) => {
-                let redirect_url = env_nonempty("WF_OIDC_REDIRECT_URL").unwrap_or_else(|| {
-                    panic!(
+                let redirect_url = env_nonempty("WF_OIDC_REDIRECT_URL").ok_or_else(|| {
+                    anyhow::anyhow!(
                         "WF_OIDC_REDIRECT_URL must be set when OIDC is enabled, \
                          e.g. https://your.host/api/v1/auth/oidc/callback"
                     )
-                });
+                })?;
                 let scopes = env_nonempty("WF_OIDC_SCOPES")
                     .map(|s| s.split_whitespace().map(str::to_string).collect::<Vec<_>>())
                     .filter(|v| !v.is_empty())
@@ -102,13 +103,11 @@ impl OidcConfig {
                 // authenticates full access to this instance, which is dangerous
                 // on a shared / multi-tenant / self-signup IdP. Require an explicit
                 // opt-in so a missing allowlist can never silently mean "open".
-                // Panicking here matches the other partial-config failures above
-                // and prints to stderr regardless of tracing being initialized.
                 let allow_any = env_nonempty("WF_OIDC_ALLOW_ANY")
                     .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes"))
                     .unwrap_or(false);
                 if allowed_emails.is_empty() && allowed_subs.is_empty() && !allow_any {
-                    panic!(
+                    anyhow::bail!(
                         "OIDC is enabled without an allowlist. Set WF_OIDC_ALLOWED_EMAILS \
                          and/or WF_OIDC_ALLOWED_SUBS to restrict who may sign in. To \
                          intentionally allow ANY user your IdP authenticates (only safe on \
@@ -125,7 +124,7 @@ impl OidcConfig {
                     .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no"))
                     .unwrap_or(true);
 
-                Some(Self {
+                Ok(Some(Self {
                     issuer_url,
                     client_id,
                     client_secret: env_nonempty("WF_OIDC_CLIENT_SECRET"),
@@ -135,9 +134,9 @@ impl OidcConfig {
                     allowed_subs,
                     post_logout_redirect_url: env_nonempty("WF_OIDC_POST_LOGOUT_REDIRECT_URL"),
                     rp_logout,
-                })
+                }))
             }
-            _ => panic!(
+            _ => anyhow::bail!(
                 "OIDC is partially configured: set BOTH WF_OIDC_ISSUER_URL and \
                  WF_OIDC_CLIENT_ID, or neither."
             ),
@@ -149,7 +148,12 @@ impl OidcConfig {
 /// `CoreClient` per request (rebuilding is cheap and avoids storing the client's
 /// verbose typestate generics in a struct field).
 pub struct OidcManager {
-    provider_metadata: CoreProviderMetadata,
+    /// Discovered provider metadata, JWKS included. Behind a lock so it can be
+    /// re-fetched when the IdP rotates its signing keys (see
+    /// [`Self::refresh_provider_metadata`]).
+    provider_metadata: RwLock<CoreProviderMetadata>,
+    /// Kept for re-discovery.
+    issuer_url: IssuerUrl,
     client_id: ClientId,
     /// Raw client id string, used for the `client_id` logout parameter.
     client_id_str: String,
@@ -181,7 +185,7 @@ impl OidcManager {
 
         let issuer = IssuerUrl::new(config.issuer_url.clone())
             .map_err(|e| anyhow::anyhow!("Invalid WF_OIDC_ISSUER_URL: {e}"))?;
-        let provider_metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
+        let provider_metadata = CoreProviderMetadata::discover_async(issuer.clone(), &http_client)
             .await
             .map_err(|e| anyhow::anyhow!("OIDC discovery failed: {e}"))?;
         let redirect_url = RedirectUrl::new(config.redirect_url.clone())
@@ -208,7 +212,8 @@ impl OidcManager {
         };
 
         Ok(Self {
-            provider_metadata,
+            provider_metadata: RwLock::new(provider_metadata),
+            issuer_url: issuer,
             client_id: ClientId::new(config.client_id.clone()),
             client_id_str: config.client_id.clone(),
             client_secret: config.client_secret.clone().map(ClientSecret::new),
@@ -238,12 +243,33 @@ impl OidcManager {
         openidconnect::EndpointMaybeSet,
         openidconnect::EndpointMaybeSet,
     > {
+        let provider_metadata = self
+            .provider_metadata
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         CoreClient::from_provider_metadata(
-            self.provider_metadata.clone(),
+            provider_metadata,
             self.client_id.clone(),
             self.client_secret.clone(),
         )
         .set_redirect_uri(self.redirect_url.clone())
+    }
+
+    /// Re-runs discovery so the next [`Self::client`] verifies against the
+    /// IdP's current JWKS. Called when ID-token signature verification fails:
+    /// the metadata cached at startup goes stale when the IdP rotates its
+    /// signing keys, which would otherwise fail every login until a restart.
+    async fn refresh_provider_metadata(&self) -> anyhow::Result<()> {
+        let fresh =
+            CoreProviderMetadata::discover_async(self.issuer_url.clone(), &self.http_client)
+                .await
+                .map_err(|e| anyhow::anyhow!("OIDC re-discovery failed: {e}"))?;
+        *self
+            .provider_metadata
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = fresh;
+        Ok(())
     }
 
     /// Whether the authenticated subject/email is permitted. Extracts the claim
@@ -307,7 +333,7 @@ struct OidcTx {
 
 /// `GET /api/v1/auth/oidc/login` — start the flow: build the authorize URL and
 /// stash PKCE/nonce/CSRF in an encrypted cookie, then redirect to the IdP.
-pub async fn oidc_login(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn oidc_login(State(state): State<AuthState>, headers: HeaderMap) -> Response {
     let Some(oidc) = state.oidc.clone() else {
         return error_redirect("oidc_not_configured");
     };
@@ -358,7 +384,7 @@ pub struct CallbackQuery {
 /// `GET /api/v1/auth/oidc/callback` — finish the flow: verify state, exchange the
 /// code, validate the ID token, enforce the allowlist, then mint `wf_session`.
 pub async fn oidc_callback(
-    State(state): State<Arc<AppState>>,
+    State(state): State<AuthState>,
     headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
@@ -416,6 +442,29 @@ pub async fn oidc_callback(
     let nonce = OidcNonce::new(tx.nonce);
     let claims = match id_token.claims(&verifier, &nonce) {
         Ok(claims) => claims,
+        Err(ClaimsVerificationError::SignatureVerification(e)) => {
+            // The JWKS cached at startup goes stale when the IdP rotates its
+            // signing keys; re-discover and retry once. Only reachable after a
+            // successful PKCE-verified code exchange, so unauthenticated
+            // traffic cannot drive re-discovery load against the IdP.
+            tracing::warn!(
+                "OIDC ID token signature verification failed ({e}); refreshing \
+                 provider metadata and retrying"
+            );
+            if let Err(e) = oidc.refresh_provider_metadata().await {
+                tracing::warn!("{e}");
+                return error_redirect("oidc_invalid_token");
+            }
+            let refreshed_client = oidc.client();
+            let refreshed_verifier = refreshed_client.id_token_verifier();
+            match id_token.claims(&refreshed_verifier, &nonce) {
+                Ok(claims) => claims,
+                Err(e) => {
+                    tracing::warn!("OIDC ID token verification failed after JWKS refresh: {e}");
+                    return error_redirect("oidc_invalid_token");
+                }
+            }
+        }
         Err(e) => {
             tracing::warn!("OIDC ID token verification failed: {e}");
             return error_redirect("oidc_invalid_token");
@@ -477,7 +526,7 @@ pub async fn oidc_callback(
 /// session (the encrypted ID-token cookie), redirects to the provider for
 /// RP-Initiated Logout. Otherwise redirects locally to `/`. Password sessions
 /// (no ID-token cookie) therefore only get a local logout.
-pub async fn oidc_logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn oidc_logout(State(state): State<AuthState>, headers: HeaderMap) -> Response {
     let secure = cookie_secure(&state, &headers);
 
     let target = state
@@ -642,7 +691,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-fn cookie_secure(state: &AppState, headers: &HeaderMap) -> bool {
+fn cookie_secure(state: &AuthState, headers: &HeaderMap) -> bool {
     state
         .auth
         .as_ref()

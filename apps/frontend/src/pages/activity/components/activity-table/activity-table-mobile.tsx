@@ -19,11 +19,12 @@ import { useSettingsContext } from "@/lib/settings-provider";
 import { ActivityDetails } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 import {
+  AmountDisplay,
   Button,
   EmptyPlaceholder,
   Icons,
+  PriceDisplay,
   Separator,
-  useAmountFormatting,
   useNumberFormatting,
   useDateFormatting,
 } from "@wealthfolio/ui";
@@ -32,6 +33,7 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { InfiniteScrollTrigger } from "@/components/infinite-scroll-trigger";
+import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useVirtualScrollContainer } from "@/hooks/use-virtual-scroll-container";
 import { ActivityOperations } from "../activity-operations";
 import { ActivityTypeBadge } from "../activity-type-badge";
@@ -85,9 +87,9 @@ export const ActivityTableMobile = ({
   isFetchingNextPage = false,
   hasLoadMoreError = false,
 }: ActivityTableMobileProps) => {
-  const formatting = useAmountFormatting();
   const numberFormatting = useNumberFormatting();
   const dateFormatting = useDateFormatting();
+  const { isBalanceHidden } = useBalancePrivacy();
   const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const appTimezone = settings?.timezone?.trim() || undefined;
@@ -192,14 +194,23 @@ export const ActivityTableMobile = ({
             {(() => {
               const inner = (
                 <>
-                  <TickerAvatar symbol={avatarSymbol} className="h-10 w-10 flex-shrink-0" />
+                  <TickerAvatar
+                    symbol={avatarSymbol}
+                    exchangeMic={activity.exchangeMic}
+                    instrumentType={activity.instrumentType}
+                    assetId={activity.assetId}
+                    className="h-10 w-10 flex-shrink-0"
+                  />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="truncate font-semibold">{displaySymbol}</p>
                       {activity.activityType !== "SPLIT" && (
-                        <span className="shrink-0 text-sm font-semibold">
-                          {formatting.formatAmount(displayValue, activity.currency)}
-                        </span>
+                        <AmountDisplay
+                          value={displayValue}
+                          currency={activity.currency}
+                          isHidden={isBalanceHidden}
+                          className="shrink-0 text-sm font-semibold"
+                        />
                       )}
                     </div>
                     <p className="text-muted-foreground text-xs">
@@ -217,7 +228,7 @@ export const ActivityTableMobile = ({
                           <>
                             <span>•</span>
                             <span>
-                              {activity.quantity}{" "}
+                              {isBalanceHidden ? "••••" : activity.quantity}{" "}
                               {isOptionActivity
                                 ? t("activity:date_list.contracts")
                                 : t("activity:date_list.shares")}
@@ -262,7 +273,13 @@ export const ActivityTableMobile = ({
             {(() => {
               const inner = (
                 <>
-                  <TickerAvatar symbol={avatarSymbol} className="h-10 w-10" />
+                  <TickerAvatar
+                    symbol={avatarSymbol}
+                    exchangeMic={activity.exchangeMic}
+                    instrumentType={activity.instrumentType}
+                    assetId={activity.assetId}
+                    className="h-10 w-10"
+                  />
                   <div>
                     <p className="font-semibold">{displaySymbol}</p>
                     <p className="text-muted-foreground text-xs">
@@ -325,7 +342,9 @@ export const ActivityTableMobile = ({
                   <span className="text-muted-foreground">
                     {isOptionActivity ? t("activity:detail.contracts") : t("activity:field_shares")}
                   </span>
-                  <span className="font-medium">{activity.quantity}</span>
+                  <span className="font-medium">
+                    {isBalanceHidden ? "••••" : activity.quantity}
+                  </span>
                 </div>
               )}
 
@@ -345,17 +364,27 @@ export const ActivityTableMobile = ({
                       : t("activity:field_price")}
               </span>
               <span className="font-medium">
-                {activity.activityType === "FEE"
-                  ? "-"
-                  : activity.activityType === "SPLIT"
-                    ? formatSplitRatio(Number(activity.amount))
-                    : (isCashActivity(activity.activityType) &&
-                          !isAssetBackedIncome &&
-                          !isSecuritiesTransfer(activity.activityType, symbol, activity.assetId)) ||
-                        isCashTransfer(activity.activityType, symbol, activity.assetId) ||
-                        (isIncomeActivity(activity.activityType) && !isAssetBackedIncome)
-                      ? formatting.formatAmount(Number(activity.amount), activity.currency)
-                      : formatting.formatPrice(Number(activity.unitPrice), activity.currency)}
+                {activity.activityType === "FEE" ? (
+                  "-"
+                ) : activity.activityType === "SPLIT" ? (
+                  formatSplitRatio(Number(activity.amount))
+                ) : (isCashActivity(activity.activityType) &&
+                    !isAssetBackedIncome &&
+                    !isSecuritiesTransfer(activity.activityType, symbol, activity.assetId)) ||
+                  isCashTransfer(activity.activityType, symbol, activity.assetId) ||
+                  (isIncomeActivity(activity.activityType) && !isAssetBackedIncome) ? (
+                  <AmountDisplay
+                    value={Number(activity.amount)}
+                    currency={activity.currency}
+                    isHidden={isBalanceHidden}
+                  />
+                ) : (
+                  <PriceDisplay
+                    value={Number(activity.unitPrice)}
+                    currency={activity.currency}
+                    isHidden={isBalanceHidden}
+                  />
+                )}
               </span>
             </div>
 
@@ -363,17 +392,23 @@ export const ActivityTableMobile = ({
             {Number(activity.fee) > 0 && activity.activityType !== "SPLIT" && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">{t("activity:table_fee")}</span>
-                <span className="font-medium">
-                  {formatting.formatAmount(Number(activity.fee), activity.currency)}
-                </span>
+                <AmountDisplay
+                  value={Number(activity.fee)}
+                  currency={activity.currency}
+                  isHidden={isBalanceHidden}
+                  className="font-medium"
+                />
               </div>
             )}
             {Number(activity.tax) > 0 && activity.activityType !== "SPLIT" && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">{t("activity:table.tax")}</span>
-                <span className="font-medium">
-                  {formatting.formatAmount(Number(activity.tax), activity.currency)}
-                </span>
+                <AmountDisplay
+                  value={Number(activity.tax)}
+                  currency={activity.currency}
+                  isHidden={isBalanceHidden}
+                  className="font-medium"
+                />
               </div>
             )}
 
@@ -383,9 +418,12 @@ export const ActivityTableMobile = ({
                 <span className="text-muted-foreground font-medium">
                   {t("activity:table.total_value")}
                 </span>
-                <span className="font-semibold">
-                  {formatting.formatAmount(displayValue, activity.currency)}
-                </span>
+                <AmountDisplay
+                  value={displayValue}
+                  currency={activity.currency}
+                  isHidden={isBalanceHidden}
+                  className="font-semibold"
+                />
               </div>
             )}
 

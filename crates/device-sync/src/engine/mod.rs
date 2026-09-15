@@ -38,6 +38,10 @@ pub const DEVICE_SYNC_OUTBOX_PRUNE_INTERVAL_SECS: u64 = 24 * 60 * 60;
 pub const DEVICE_SYNC_SENT_OUTBOX_RETENTION_DAYS: i64 = 7;
 pub const DEVICE_SYNC_DEAD_OUTBOX_RETENTION_DAYS: i64 = 30;
 const MAX_REMOTE_ENTITY_ID_LEN: usize = 256;
+/// Upper bound on the summed encrypted payload chars in one push request.
+/// The relay rejects batches over 8,000,000 chars with a 400 that dead-letters
+/// the whole batch; large rows (asset logos) can reach that within 500 events.
+const MAX_PUSH_BATCH_CHARS: usize = 7_000_000;
 
 /// Exponential backoff in seconds with cap.
 pub fn backoff_seconds(consecutive_failures: i32) -> i64 {
@@ -96,6 +100,7 @@ fn sync_entity_name(entity: &SyncEntity) -> &'static str {
         SyncEntity::BudgetTarget => "budget_target",
         SyncEntity::BudgetRolloverSetting => "budget_rollover_setting",
         SyncEntity::AddonStorage => "addon_storage",
+        SyncEntity::AssetLogo => "asset_logo",
     }
 }
 
@@ -218,6 +223,28 @@ where
         pulled_count: 0,
     };
 
+    match ports.is_sync_allowed().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return ctx
+                .fail(
+                    "subscription_required",
+                    "Device sync is paused: an active subscription is required.".to_string(),
+                    Some(300),
+                )
+                .await
+        }
+        Err(err) => {
+            return ctx
+                .fail(
+                    "subscription_check_error",
+                    format!("Could not verify sync subscription: {}", err),
+                    Some(60),
+                )
+                .await
+        }
+    }
+
     let identity = match ports.get_sync_identity() {
         Some(value) => value,
         None => {
@@ -304,6 +331,11 @@ where
     let reconcile = match ports.get_reconcile_ready_state(&token, &device_id).await {
         Ok(response) => response,
         Err(err) => {
+            if err.is_subscription_blocked() {
+                return ctx
+                    .fail("subscription_required", err.to_string(), Some(300))
+                    .await;
+            }
             return ctx
                 .fail(
                     "reconcile_error",
@@ -450,6 +482,7 @@ where
     let current_key_version = identity.key_version.unwrap_or(1).max(1);
     let mut stale_key_version_event_ids = Vec::new();
     let mut future_key_version_event_ids = Vec::new();
+    let mut push_batch_chars = 0usize;
 
     for event in pending {
         if !remote_entity_id_is_valid(&event.entity, &event.entity_id) {
@@ -462,19 +495,7 @@ where
             invalid_entity_id_event_ids.push(event.event_id.clone());
             continue;
         }
-        max_retry_count = max_retry_count.max(event.retry_count);
-        let event_type = format!(
-            "{}.{}.v1",
-            sync_entity_name(&event.entity),
-            sync_operation_name(&event.op)
-        );
-        push_event_ids.push(event.event_id.clone());
         let payload_key_version = event.payload_key_version.max(1);
-        if payload_key_version < current_key_version {
-            stale_key_version_event_ids.push(event.event_id.clone());
-        } else if payload_key_version > current_key_version {
-            future_key_version_event_ids.push(event.event_id.clone());
-        }
         let encrypted_payload =
             match ports.encrypt_sync_payload(&event.payload, &identity, payload_key_version) {
                 Ok(payload) => payload,
@@ -488,6 +509,32 @@ where
                         .await;
                 }
             };
+        // Byte-aware batching: stop before the relay batch cap; the remaining
+        // events stay pending for the next cycle. A single oversized event
+        // still goes alone so it can be rejected individually, not as a batch.
+        if push_batch_chars + encrypted_payload.len() > MAX_PUSH_BATCH_CHARS
+            && !push_events.is_empty()
+        {
+            debug!(
+                "[DeviceSync] Push batch reached {} chars after {} events; deferring the rest",
+                push_batch_chars,
+                push_events.len()
+            );
+            break;
+        }
+        push_batch_chars += encrypted_payload.len();
+        max_retry_count = max_retry_count.max(event.retry_count);
+        let event_type = format!(
+            "{}.{}.v1",
+            sync_entity_name(&event.entity),
+            sync_operation_name(&event.op)
+        );
+        push_event_ids.push(event.event_id.clone());
+        if payload_key_version < current_key_version {
+            stale_key_version_event_ids.push(event.event_id.clone());
+        } else if payload_key_version > current_key_version {
+            future_key_version_event_ids.push(event.event_id.clone());
+        }
         push_events.push(SyncPushEventRequest {
             event_id: event.event_id,
             device_id: device_id.clone(),
@@ -547,6 +594,11 @@ where
                 server_cursor = push_response.server_cursor;
             }
             Err(err) => {
+                if err.is_subscription_blocked() {
+                    return ctx
+                        .fail("subscription_required", err.to_string(), Some(300))
+                        .await;
+                }
                 let err_str = err.to_string();
 
                 if err_str.contains("KEY_VERSION_MISMATCH") {
@@ -701,6 +753,11 @@ where
             {
                 Ok(value) => value,
                 Err(err) => {
+                    if err.is_subscription_blocked() {
+                        return ctx
+                            .fail("subscription_required", err.to_string(), Some(300))
+                            .await;
+                    }
                     if err.retry_class == ApiRetryClass::ReauthRequired {
                         warn!("[DeviceSync] Auth error during pull — token may need refresh");
                         return ctx
@@ -1133,8 +1190,13 @@ where
     P: OutboxStore + ReplayStore + Send + Sync,
 {
     let mut delay_ms = DEVICE_SYNC_PERIODIC_INTERVAL_SECS.saturating_mul(1000) + jitter_ms;
+    let mut subscription_paused = false;
 
     if let Ok(engine_status) = ports.get_engine_status().await {
+        subscription_paused = matches!(
+            engine_status.last_cycle_status.as_deref(),
+            Some("subscription_required" | "subscription_check_error")
+        );
         if let Some(next_retry_at) = engine_status.next_retry_at.as_deref() {
             if let Some(wait_ms) = millis_until_rfc3339(next_retry_at) {
                 delay_ms = wait_ms.saturating_add(jitter_ms).max(1_000);
@@ -1142,7 +1204,7 @@ where
         }
     }
 
-    if ports.has_pending_outbox().await.unwrap_or(false) {
+    if !subscription_paused && ports.has_pending_outbox().await.unwrap_or(false) {
         delay_ms = delay_ms.min(2_000 + (jitter_ms % 500));
     }
 
@@ -1225,6 +1287,20 @@ where
     let mut next_prune_at =
         tokio::time::Instant::now() + Duration::from_secs(DEVICE_SYNC_OUTBOX_PRUNE_INTERVAL_SECS);
     loop {
+        // A wake can race logout's startup check. Never keep a worker alive
+        // without a session, even if it was spawned just after shutdown.
+        match ports.has_cloud_session() {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(err) => {
+                warn!(
+                    "[DeviceSync] Could not read cloud session; retrying: {}",
+                    err
+                );
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                continue;
+            }
+        }
         let identity = ports.get_sync_identity();
         if !sync_identity_can_run_background(identity.clone()) {
             if sync_identity_is_revoked(identity) {
@@ -1296,6 +1372,9 @@ mod tests {
 
     #[derive(Clone)]
     struct TestPorts {
+        has_cloud_session: bool,
+        session_read_results: Arc<std::sync::Mutex<VecDeque<Result<bool, String>>>>,
+        sync_allowed: Result<bool, String>,
         cursor: i64,
         identity: Option<SyncIdentity>,
         sync_state: Result<SyncState, String>,
@@ -1306,6 +1385,7 @@ mod tests {
         set_cursor_calls: Arc<Mutex<Vec<i64>>>,
         applied_events: Arc<Mutex<Vec<ReplayEvent>>>,
         push_error: Option<TransportError>,
+        push_batches: Arc<Mutex<Vec<Vec<String>>>>,
         reconcile_response: crate::ReconcileReadyStateResponse,
         persisted_trust_states: Arc<Mutex<Vec<String>>>,
         cycle_outcomes: Arc<Mutex<Vec<String>>>,
@@ -1319,6 +1399,9 @@ mod tests {
     impl TestPorts {
         fn new(identity: Option<SyncIdentity>, sync_state: Result<SyncState, String>) -> Self {
             Self {
+                has_cloud_session: true,
+                session_read_results: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+                sync_allowed: Ok(true),
                 cursor: 0,
                 identity,
                 sync_state,
@@ -1329,6 +1412,7 @@ mod tests {
                 set_cursor_calls: Arc::new(Mutex::new(Vec::new())),
                 applied_events: Arc::new(Mutex::new(Vec::new())),
                 push_error: None,
+                push_batches: Arc::new(Mutex::new(Vec::new())),
                 reconcile_response: crate::ReconcileReadyStateResponse {
                     action: "NOOP".to_string(),
                     cursor: Some(0),
@@ -1476,7 +1560,7 @@ mod tests {
                 last_error: None,
                 consecutive_failures: 0,
                 next_retry_at: None,
-                last_cycle_status: None,
+                last_cycle_status: self.cycle_outcomes.lock().await.last().cloned(),
                 last_cycle_duration_ms: None,
             })
         }
@@ -1496,8 +1580,15 @@ mod tests {
             &self,
             _token: &str,
             _device_id: &str,
-            _request: SyncPushRequest,
+            request: SyncPushRequest,
         ) -> Result<crate::SyncPushResponse, TransportError> {
+            self.push_batches.lock().await.push(
+                request
+                    .events
+                    .iter()
+                    .map(|event| event.event_id.clone())
+                    .collect(),
+            );
             if let Some(err) = &self.push_error {
                 return Err(err.clone());
             }
@@ -1556,6 +1647,18 @@ mod tests {
 
     #[async_trait]
     impl CredentialStore for TestPorts {
+        fn has_cloud_session(&self) -> Result<bool, String> {
+            self.session_read_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(self.has_cloud_session))
+        }
+
+        async fn is_sync_allowed(&self) -> Result<bool, String> {
+            self.sync_allowed.clone()
+        }
+
         fn get_sync_identity(&self) -> Option<SyncIdentity> {
             self.identity.clone()
         }
@@ -1650,6 +1753,120 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn inactive_subscription_preserves_pending_changes_and_resumes() {
+        let mut ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        ports.sync_allowed = Ok(false);
+        ports.pending_outbox.lock().await.push(outbox_event(
+            "event-1",
+            "019cb093-06a8-7534-8677-546317b17957",
+            1,
+        ));
+        let paused = run_sync_cycle(&ports, false).await.unwrap();
+        assert_eq!(paused.status, "subscription_required");
+        assert_eq!(ports.pending_outbox.lock().await.len(), 1);
+        assert!(ports.persisted_trust_states.lock().await.is_empty());
+        assert_eq!(ports.max_active_reconcile_count.load(Ordering::SeqCst), 0);
+        assert!(compute_cycle_delay_ms(&ports, 0).await >= 300_000);
+        ports.sync_allowed = Ok(true);
+        let resumed = run_sync_cycle(&ports, false).await.unwrap();
+        assert_eq!(resumed.status, "ok");
+        assert_eq!(ports.push_batches.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn subscription_denied_during_push_preserves_pending_changes() {
+        let mut ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        ports.push_error = Some(TransportError {
+            message: "Subscription required".to_string(),
+            retry_class: ApiRetryClass::Permanent,
+            error_code: Some("SUBSCRIPTION_REQUIRED".to_string()),
+            details: None,
+        });
+        ports.pending_outbox.lock().await.push(outbox_event(
+            "event-1",
+            "019cb093-06a8-7534-8677-546317b17957",
+            1,
+        ));
+        assert_eq!(
+            run_sync_cycle(&ports, false).await.unwrap().status,
+            "subscription_required"
+        );
+        assert_eq!(ports.pending_outbox.lock().await.len(), 1);
+        assert!(ports.dead_outbox_batches.lock().await.is_empty());
+        ports.push_error = None;
+        assert_eq!(run_sync_cycle(&ports, false).await.unwrap().status, "ok");
+        assert_eq!(
+            *ports.push_batches.lock().await,
+            vec![vec!["event-1".to_string()], vec!["event-1".to_string()]]
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_lookup_failure_cannot_push_or_pull() {
+        let mut ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        ports.sync_allowed = Err("service unavailable".to_string());
+        assert_eq!(
+            run_sync_cycle(&ports, false).await.unwrap().status,
+            "subscription_check_error"
+        );
+        assert!(ports.push_batches.lock().await.is_empty());
+        assert!(ports.applied_events.lock().await.is_empty());
+        assert!(ports.persisted_trust_states.lock().await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn background_recovers_from_session_read_error_without_a_wake() {
+        let ports = Arc::new(TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready)));
+        ports
+            .session_read_results
+            .lock()
+            .unwrap()
+            .push_back(Err("storage unavailable".into()));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        tokio::task::yield_now().await;
+        assert!(runtime.is_background_running().await);
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+        tokio::time::advance(Duration::from_secs(59)).await;
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        wait_for_cycle_outcomes(&ports, 1, 1_000).await;
+        assert_eq!(ports.cycle_outcomes.lock().await[0], "ok");
+        runtime.ensure_background_stopped().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn background_stops_if_session_is_missing_after_read_error() {
+        let ports = Arc::new(TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready)));
+        ports
+            .session_read_results
+            .lock()
+            .unwrap()
+            .extend([Err("storage unavailable".into()), Ok(false)]);
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(60)).await;
+        wait_for_background_stopped(&runtime, 1_000).await;
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn background_wake_without_session_exits_without_cloud_requests() {
+        let mut ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        ports.has_cloud_session = false;
+        let ports = Arc::new(ports);
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+        for _ in 0..2 {
+            runtime.ensure_background_started(Arc::clone(&ports)).await;
+            runtime.notify_sync_work_available();
+            wait_for_background_stopped(&runtime, 1_000).await;
+        }
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+        assert_eq!(ports.max_active_reconcile_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -2018,6 +2235,150 @@ mod tests {
             root_key: Some("root-key".to_string()),
             key_version: Some(1),
         }
+    }
+
+    /// Outbox event whose (identity-encrypted) payload is `payload_len` chars.
+    fn sized_outbox_event(
+        event_id: &str,
+        payload_len: usize,
+    ) -> wealthfolio_core::sync::SyncOutboxEvent {
+        let mut event = outbox_event(event_id, "019cb093-06a8-7534-8677-546317b17957", 1);
+        event.entity = SyncEntity::AssetLogo;
+        event.payload = "x".repeat(payload_len);
+        event
+    }
+
+    /// Removes already-pushed events from the fake outbox (the real store does
+    /// this through `mark_outbox_sent`).
+    async fn drop_pushed_from_pending(ports: &TestPorts, pushed: &[String]) {
+        let mut pending = ports.pending_outbox.lock().await;
+        pending.retain(|event| !pushed.contains(&event.event_id));
+    }
+
+    /// A max-size logo row (~205 KB base64) encrypts to exactly this many
+    /// base64 chars; pinned by `max_size_logo_event_fits_relay_per_event_cap`.
+    const MAX_LOGO_EVENT_CHARS: usize = 273_504;
+
+    /// Worst-case `asset_logos` outbox row, serialized as the outbox does
+    /// (`AssetLogoDB`: snake_case column names, no renames), encrypted with
+    /// the real DEK path, must fit the relay per-event payload cap of 350,000
+    /// base64 chars (wealthfolio-cloud apps/api/src/schemas/sync.ts,
+    /// `payload: z.string().max(350000)`).
+    #[test]
+    fn max_size_logo_event_fits_relay_per_event_cap() {
+        const RELAY_MAX_EVENT_PAYLOAD_CHARS: usize = 350_000;
+        // MAX_ASSET_LOGO_BYTES (150 KiB) canonical-base64 encodes to exactly 204,800 chars.
+        let data = "A".repeat(wealthfolio_core::assets::MAX_ASSET_LOGO_BYTES / 3 * 4);
+        assert_eq!(data.len(), 204_800);
+        let row = serde_json::json!({
+            "asset_id": "019cb093-06a8-7534-8677-546317b17957",
+            "mime_type": "image/png",
+            "data": data,
+            "sha256": "0".repeat(64),
+            "width": 256,
+            "height": 256,
+            "created_at": "2026-09-02T21:56:26.440073123+00:00",
+            "updated_at": "2026-09-02T21:56:26.440073123+00:00",
+        });
+        let plaintext = serde_json::to_string(&row).expect("serialize row");
+        let dek = crate::crypto::derive_dek(&crate::crypto::generate_root_key(), 1).expect("dek");
+        let encrypted = crate::crypto::encrypt(&dek, &plaintext).expect("encrypt");
+
+        assert_eq!(encrypted.len(), MAX_LOGO_EVENT_CHARS);
+        assert!(encrypted.len() <= RELAY_MAX_EVENT_PAYLOAD_CHARS);
+    }
+
+    #[tokio::test]
+    async fn push_splits_max_size_logo_events_across_cycles() {
+        let ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        {
+            let mut pending = ports.pending_outbox.lock().await;
+            for i in 0..30 {
+                pending.push(sized_outbox_event(
+                    &format!("evt-logo-{i:02}"),
+                    MAX_LOGO_EVENT_CHARS,
+                ));
+            }
+        }
+
+        let first = run_sync_cycle(&ports, false).await.expect("first cycle");
+        assert_eq!(first.status, "ok");
+        let batches = ports.push_batches.lock().await.clone();
+        assert_eq!(batches.len(), 1);
+        let expected_first = MAX_PUSH_BATCH_CHARS / MAX_LOGO_EVENT_CHARS;
+        assert_eq!(batches[0].len(), expected_first);
+        assert!(batches[0].len() * MAX_LOGO_EVENT_CHARS <= MAX_PUSH_BATCH_CHARS);
+        assert_eq!(batches[0][0], "evt-logo-00");
+        assert!(ports.dead_outbox_batches.lock().await.is_empty());
+
+        drop_pushed_from_pending(&ports, &batches[0]).await;
+        let second = run_sync_cycle(&ports, false).await.expect("second cycle");
+        assert_eq!(second.status, "ok");
+        let batches = ports.push_batches.lock().await.clone();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[1].len(), 30 - expected_first);
+        assert_eq!(batches[1][0], format!("evt-logo-{expected_first:02}"));
+        assert!(ports.dead_outbox_batches.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_mixed_batch_defers_events_after_budget_in_outbox_order() {
+        let ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        let big_count = MAX_PUSH_BATCH_CHARS / MAX_LOGO_EVENT_CHARS + 1;
+        {
+            let mut pending = ports.pending_outbox.lock().await;
+            for i in 0..big_count {
+                pending.push(sized_outbox_event(
+                    &format!("evt-logo-{i:02}"),
+                    MAX_LOGO_EVENT_CHARS,
+                ));
+            }
+            for i in 0..50 {
+                pending.push(outbox_event(
+                    &format!("evt-small-{i:02}"),
+                    "019cb093-06a8-7534-8677-546317b17957",
+                    1,
+                ));
+            }
+        }
+
+        let first = run_sync_cycle(&ports, false).await.expect("first cycle");
+        assert_eq!(first.status, "ok");
+        let batches = ports.push_batches.lock().await.clone();
+        assert_eq!(batches.len(), 1);
+        // Everything up to the budget goes; the last logo and every small
+        // event behind it wait (outbox order is preserved, never reordered).
+        assert_eq!(batches[0].len(), big_count - 1);
+        assert!(batches[0].iter().all(|id| id.starts_with("evt-logo-")));
+
+        drop_pushed_from_pending(&ports, &batches[0]).await;
+        let second = run_sync_cycle(&ports, false).await.expect("second cycle");
+        assert_eq!(second.status, "ok");
+        let batches = ports.push_batches.lock().await.clone();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[1].len(), 1 + 50);
+        assert_eq!(batches[1][0], format!("evt-logo-{:02}", big_count - 1));
+        assert!(batches[1][1..]
+            .iter()
+            .all(|id| id.starts_with("evt-small-")));
+        assert!(ports.dead_outbox_batches.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_single_event_over_batch_budget_still_pushes_alone() {
+        let ports = TestPorts::new(Some(ready_identity()), Ok(SyncState::Ready));
+        {
+            let mut pending = ports.pending_outbox.lock().await;
+            pending.push(sized_outbox_event("evt-huge", MAX_PUSH_BATCH_CHARS + 1));
+            pending.push(sized_outbox_event("evt-next", 10));
+        }
+
+        let result = run_sync_cycle(&ports, false).await.expect("cycle");
+        assert_eq!(result.status, "ok");
+        let batches = ports.push_batches.lock().await.clone();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0], vec!["evt-huge".to_string()]);
+        assert!(ports.dead_outbox_batches.lock().await.is_empty());
     }
 
     fn pull_event(

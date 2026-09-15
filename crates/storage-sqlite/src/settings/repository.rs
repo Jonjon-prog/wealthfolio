@@ -54,6 +54,9 @@ impl SettingsRepositoryTrait for SettingsRepository {
                 "sync_enabled" => {
                     settings.sync_enabled = value.parse().unwrap_or(true);
                 }
+                "restore_reconnect_required" => {
+                    settings.restore_reconnect_required = value == "true";
+                }
                 "default_return_metric" => settings.default_return_metric = value,
                 _ => {} // Ignore unknown settings
             }

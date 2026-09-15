@@ -2,7 +2,9 @@
 
 import { vi, describe, it, expect } from "vitest";
 import { createPermissionGuard, createSDKHostAPIBridge, type InternalHostAPI } from "./type-bridge";
+import { deriveRuleId } from "./spending-rule-key";
 import { getPermissionCategory, isBaselineCategory } from "@wealthfolio/addon-sdk";
+import type { InternalTransferPairRequest } from "@wealthfolio/addon-sdk";
 
 describe("Addon Type Bridge", () => {
   describe("createSDKHostAPIBridge", () => {
@@ -276,13 +278,332 @@ describe("Addon Type Bridge", () => {
 
       await authAPI.network.request({
         url: "https://api.example.com/v1",
+        timeoutSecs: 30,
         auth: { type: "bearer", secretKey: "api-token" },
       });
 
       expect(mockAddonNetworkRequest).toHaveBeenCalledWith({
         url: "https://api.example.com/v1",
+        timeoutSecs: 30,
         auth: { type: "bearer", secretKey: "api-token" },
       });
+    });
+
+    it("wires activities.* transfer methods to their internal implementations", () => {
+      const mockGetTransferPair = vi.fn().mockResolvedValue({ transferOut: {}, transferIn: {} });
+      const mockFindCandidates = vi.fn().mockResolvedValue([]);
+      const mockSaveTransferPair = vi.fn().mockResolvedValue({ transferOut: {}, transferIn: {} });
+      const mockLinkTransfer = vi.fn().mockResolvedValue([{}, {}]);
+      const mockUnlinkTransfer = vi.fn().mockResolvedValue([{}, {}]);
+
+      const guard = createPermissionGuard("test-addon", [
+        {
+          category: "activities",
+          purpose: "Transfer matching",
+          functions: [
+            { name: "getTransferPair", isDeclared: true, isDetected: false },
+            { name: "findTransferMatchCandidates", isDeclared: true, isDetected: false },
+            { name: "saveTransferPair", isDeclared: true, isDetected: false },
+            { name: "linkTransfer", isDeclared: true, isDetected: false },
+            { name: "unlinkTransfer", isDeclared: true, isDetected: false },
+          ],
+        },
+      ]);
+
+      const sdkAPI = createSDKHostAPIBridge(
+        {
+          getTransferPairForActivity: mockGetTransferPair,
+          findTransferMatchCandidates: mockFindCandidates,
+          saveInternalTransferPair: mockSaveTransferPair,
+          linkTransferActivities: mockLinkTransfer,
+          unlinkTransferActivities: mockUnlinkTransfer,
+          logError: vi.fn(),
+          logInfo: vi.fn(),
+          logWarn: vi.fn(),
+          logTrace: vi.fn(),
+          logDebug: vi.fn(),
+        } as unknown as InternalHostAPI,
+        "test-addon",
+        guard,
+      );
+
+      sdkAPI.activities.getTransferPair("activity-1");
+      expect(mockGetTransferPair).toHaveBeenCalledWith("activity-1");
+
+      sdkAPI.activities.findTransferMatchCandidates({ activityId: "activity-1" });
+      expect(mockFindCandidates).toHaveBeenCalledWith({ activityId: "activity-1" });
+
+      const request = {
+        fromAccountId: "acct-a",
+        toAccountId: "acct-b",
+        activityDate: "2026-01-01",
+        sourceAmount: 100,
+        destinationAmount: 100,
+        sourceCurrency: "USD",
+        destinationCurrency: "USD",
+      };
+      sdkAPI.activities.saveTransferPair(request);
+      expect(mockSaveTransferPair).toHaveBeenCalledWith(request);
+
+      sdkAPI.activities.linkTransfer("activity-a", "activity-b");
+      expect(mockLinkTransfer).toHaveBeenCalledWith("activity-a", "activity-b");
+
+      sdkAPI.activities.unlinkTransfer("activity-a", "activity-b");
+      expect(mockUnlinkTransfer).toHaveBeenCalledWith("activity-a", "activity-b");
+    });
+
+    it("passes a null transfer pair through to the addon unchanged", async () => {
+      const mockGetTransferPair = vi.fn().mockResolvedValue(null);
+
+      const guard = createPermissionGuard("test-addon", [
+        {
+          category: "activities",
+          purpose: "Transfer matching",
+          functions: [{ name: "getTransferPair", isDeclared: true, isDetected: false }],
+        },
+      ]);
+
+      const sdkAPI = createSDKHostAPIBridge(
+        {
+          getTransferPairForActivity: mockGetTransferPair,
+          logError: vi.fn(),
+          logInfo: vi.fn(),
+          logWarn: vi.fn(),
+          logTrace: vi.fn(),
+          logDebug: vi.fn(),
+        } as unknown as InternalHostAPI,
+        "test-addon",
+        guard,
+      );
+
+      await expect(sdkAPI.activities.getTransferPair("activity-1")).resolves.toBeNull();
+    });
+
+    it("rejects a half-specified transfer pair update at compile time", () => {
+      const legs = {
+        fromAccountId: "acct-a",
+        toAccountId: "acct-b",
+        activityDate: "2026-01-01",
+        sourceAmount: 100,
+        destinationAmount: 100,
+        sourceCurrency: "USD",
+        destinationCurrency: "USD",
+      };
+
+      const create: InternalTransferPairRequest = legs;
+      const update: InternalTransferPairRequest = {
+        ...legs,
+        transferOutId: "activity-out",
+        transferInId: "activity-in",
+      };
+
+      // @ts-expect-error naming one leg without the other matches neither variant
+      const partial: InternalTransferPairRequest = { ...legs, transferOutId: "activity-out" };
+
+      expect([create, update, partial]).toHaveLength(3);
+    });
+
+    it("denies activities.* transfer methods without the activities permission", () => {
+      const guard = createPermissionGuard("test-addon", []);
+
+      const sdkAPI = createSDKHostAPIBridge(
+        {
+          getTransferPairForActivity: vi.fn(),
+          findTransferMatchCandidates: vi.fn(),
+          saveInternalTransferPair: vi.fn(),
+          linkTransferActivities: vi.fn(),
+          unlinkTransferActivities: vi.fn(),
+          logError: vi.fn(),
+          logInfo: vi.fn(),
+          logWarn: vi.fn(),
+          logTrace: vi.fn(),
+          logDebug: vi.fn(),
+        } as unknown as InternalHostAPI,
+        "test-addon",
+        guard,
+      );
+
+      expect(() => sdkAPI.activities.getTransferPair("activity-1")).toThrow(
+        "Addon 'test-addon' is not allowed to call activities.getTransferPair",
+      );
+      expect(() => sdkAPI.activities.linkTransfer("activity-a", "activity-b")).toThrow(
+        "Addon 'test-addon' is not allowed to call activities.linkTransfer",
+      );
+    });
+  });
+
+  describe("spending namespace", () => {
+    const spendingGuard = (functionName: string) =>
+      createPermissionGuard("test-addon", [
+        {
+          category: "spending",
+          purpose: "Categorize transactions",
+          functions: [{ name: functionName, isDeclared: true, isDetected: false }],
+        },
+      ]);
+    const loggerMocks = {
+      logError: vi.fn(),
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logTrace: vi.fn(),
+      logDebug: vi.fn(),
+    };
+    const savedRule = {
+      id: "will-be-overwritten",
+      name: "Groceries",
+      pattern: "SUPERMARKET",
+      matchType: "contains",
+      taxonomyId: "spending_categories",
+      categoryId: "cat_groceries",
+      activityType: "WITHDRAWAL",
+      accountId: "account-1",
+      priority: 0,
+      isGlobal: false,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    it("saveRule calls the atomic upsert with a stable, addon-scoped id and kind mapped to a taxonomyId", async () => {
+      const expectedId = await deriveRuleId("test-addon", "pattern-1");
+      const mockUpsert = vi.fn().mockResolvedValue({ ...savedRule, id: expectedId });
+
+      const sdkAPI = createSDKHostAPIBridge(
+        { upsertCategorizationRule: mockUpsert, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingGuard("saveRule"),
+      );
+
+      const result = await sdkAPI.spending.saveRule({
+        ruleKey: "pattern-1",
+        name: "Groceries",
+        pattern: "SUPERMARKET",
+        kind: "expense",
+        categoryId: "cat_groceries",
+        activityType: "WITHDRAWAL",
+        accountId: "account-1",
+      });
+
+      expect(mockUpsert).toHaveBeenCalledWith({
+        id: expectedId,
+        name: "Groceries",
+        pattern: "SUPERMARKET",
+        matchType: "contains",
+        taxonomyId: "spending_categories",
+        categoryId: "cat_groceries",
+        activityType: "WITHDRAWAL",
+        isGlobal: false,
+        accountId: "account-1",
+        priority: 0,
+      });
+      expect(result).toEqual(
+        expect.objectContaining({ id: expectedId, kind: "expense", categoryId: "cat_groceries" }),
+      );
+    });
+
+    it("rejects an unsupported category kind before saving a rule", async () => {
+      const mockUpsert = vi.fn();
+      const sdkAPI = createSDKHostAPIBridge(
+        { upsertCategorizationRule: mockUpsert, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingGuard("saveRule"),
+      );
+
+      await expect(
+        sdkAPI.spending.saveRule({
+          ruleKey: "pattern-1",
+          name: "Groceries",
+          pattern: "SUPERMARKET",
+          kind: "unsupported" as never,
+          categoryId: "cat_groceries",
+        }),
+      ).rejects.toThrow("Unsupported spend category kind 'unsupported'");
+      expect(mockUpsert).not.toHaveBeenCalled();
+    });
+
+    it("scopes different addons to different rule ids for the same ruleKey", async () => {
+      const idA = await deriveRuleId("addon-a", "pattern-1");
+      const idB = await deriveRuleId("addon-b", "pattern-1");
+      expect(idA).not.toBe(idB);
+    });
+
+    it("deleteRule calls through directly without probing via list first", async () => {
+      const expectedId = await deriveRuleId("test-addon", "pattern-1");
+      const mockDelete = vi.fn().mockResolvedValue(undefined);
+
+      const sdkAPI = createSDKHostAPIBridge(
+        { deleteCategorizationRuleById: mockDelete, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingGuard("deleteRule"),
+      );
+
+      await sdkAPI.spending.deleteRule("pattern-1");
+
+      expect(mockDelete).toHaveBeenCalledWith(expectedId);
+    });
+
+    it("getRules returns only this addon's rules, converted to kind + categoryId", async () => {
+      const ownId = await deriveRuleId("test-addon", "pattern-1");
+      const otherAddonId = await deriveRuleId("other-addon", "pattern-1");
+      const mockList = vi.fn().mockResolvedValue([
+        { ...savedRule, id: ownId },
+        { ...savedRule, id: otherAddonId },
+        // A non-addon rule (e.g. from Wealthfolio's own rules UI) — excluded by prefix.
+        { ...savedRule, id: "manual-rule" },
+      ]);
+
+      const sdkAPI = createSDKHostAPIBridge(
+        { listCategorizationRules: mockList, ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingGuard("getRules"),
+      );
+
+      const rules = await sdkAPI.spending.getRules();
+
+      expect(rules).toEqual([expect.objectContaining({ id: ownId, kind: "expense" })]);
+    });
+
+    it("rerunRules defaults to true (only-uncategorized) when called with no argument", async () => {
+      const mockRerun = vi.fn().mockResolvedValue(3);
+      const sdkAPI = createSDKHostAPIBridge(
+        {
+          rerunCategorizationRulesForAddon: mockRerun,
+          ...loggerMocks,
+        } as unknown as InternalHostAPI,
+        "test-addon",
+        spendingGuard("rerunRules"),
+      );
+
+      await sdkAPI.spending.rerunRules();
+
+      expect(mockRerun).toHaveBeenCalledWith(true);
+    });
+
+    it("enforces the spending permission category", () => {
+      const guard = createPermissionGuard("test-addon", []);
+      const sdkAPI = createSDKHostAPIBridge(
+        { getSpendCategories: vi.fn(), ...loggerMocks } as unknown as InternalHostAPI,
+        "test-addon",
+        guard,
+      );
+
+      expect(() => sdkAPI.spending.getCategories()).toThrow(
+        "Addon 'test-addon' is not allowed to call spending.getCategories",
+      );
+    });
+
+    it("registers the spending permission category with a medium risk level", () => {
+      const category = getPermissionCategory("spending");
+      expect(category?.riskLevel).toBe("medium");
+      expect(category?.functions).toEqual(
+        expect.arrayContaining([
+          "isEnabled",
+          "getCategories",
+          "getRules",
+          "saveRule",
+          "deleteRule",
+          "rerunRules",
+        ]),
+      );
     });
   });
 });
