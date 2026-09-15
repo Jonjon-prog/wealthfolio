@@ -2571,7 +2571,6 @@ export interface SaveUpProjectionPointDTO extends SaveUpTrajectoryPointDTO {
 export type TargetScopeType = "all" | "portfolio" | "account";
 export type TriggerType = "manual" | "threshold";
 export type RebalanceGoal = "nearest_band" | "exact_target";
-export type ScenarioMode = "cash_flow_only" | "sell_to_rebalance" | "hybrid";
 export type DriftStatus = "in_band" | "underweight" | "overweight" | "not_targeted";
 export type RebalanceTo = "nearest_band" | "exact_target";
 
@@ -2872,46 +2871,4 @@ export interface AllocationWorksheetResult {
   categories: WorksheetCategoryResult[];
   warnings: WorksheetWarning[];
   sourceRecords: WorksheetSourceRecord[];
-}
-
-export type RebalanceWarningKind =
-  | "missing_quote"
-  | "no_buy_candidate"
-  | "tagged_cash"
-  | "unclassified_asset"
-  | "partial_classification"
-  | "constraint_skipped_sell"
-  | "turnover_cap_reached";
-
-export interface RebalanceWarning {
-  kind: RebalanceWarningKind;
-  categoryId: string;
-  message: string;
-}
-
-export interface SuggestedManualTrade {
-  action: string;
-  categoryId: string;
-  categoryName: string;
-  assetId?: string | null;
-  accountId?: string | null;
-  holdingId?: string | null;
-  symbol?: string | null;
-  name?: string | null;
-  quantity?: number | null;
-  estimatedPrice?: number | null;
-  estimatedAmount: number;
-  reason: string;
-}
-
-export interface RebalancePlan {
-  targetId: string;
-  availableCash: number;
-  cashUsed: number;
-  cashRemaining: number;
-  maxDriftBpsBefore: number;
-  maxDriftBpsAfter: number;
-  trades: SuggestedManualTrade[];
-  warnings: RebalanceWarning[];
-  afterBpsByCategory: Record<string, number>;
 }

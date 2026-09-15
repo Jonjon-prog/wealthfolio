@@ -60,7 +60,6 @@ pub struct ServiceContext {
     pub allocation_target_service:
         Arc<dyn portfolio::allocation_targets::AllocationTargetServiceTrait>,
     pub drift_service: Arc<dyn portfolio::allocation_targets::DriftServiceTrait>,
-    pub rebalance_service: Arc<dyn portfolio::allocation_targets::RebalanceServiceTrait>,
     pub allocation_worksheet_service:
         Arc<dyn portfolio::allocation_targets::AllocationWorksheetServiceTrait>,
     pub valuation_service: Arc<dyn portfolio::valuation::ValuationServiceTrait>,
@@ -203,12 +202,6 @@ impl ServiceContext {
 
     pub fn drift_service(&self) -> Arc<dyn portfolio::allocation_targets::DriftServiceTrait> {
         Arc::clone(&self.drift_service)
-    }
-
-    pub fn rebalance_service(
-        &self,
-    ) -> Arc<dyn portfolio::allocation_targets::RebalanceServiceTrait> {
-        Arc::clone(&self.rebalance_service)
     }
 
     pub fn allocation_worksheet_service(

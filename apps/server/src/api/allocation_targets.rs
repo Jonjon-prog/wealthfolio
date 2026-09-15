@@ -6,17 +6,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use rust_decimal::Decimal;
 use serde::Deserialize;
 use wealthfolio_core::{
     accounts::AccountPurpose,
     portfolio::allocation_targets::{
         AllocationRule, AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
         AllocationWorksheetLineInput, AllocationWorksheetResult, CalculateAllocationWorksheetInput,
-        CalculateRebalancePlanInput, CalculatedAdjustments, DriftReport,
-        GenerateCalculatedAdjustmentsInput, NewAllocationTarget, NewAllocationTargetWeight,
-        RebalancePlan, SaveAllocationTargetResult, ScenarioMode, ScopeType, WorksheetCashInput,
-        WorksheetMode,
+        CalculatedAdjustments, DriftReport, GenerateCalculatedAdjustmentsInput,
+        NewAllocationTarget, NewAllocationTargetWeight, SaveAllocationTargetResult, ScopeType,
+        WorksheetCashInput, WorksheetMode,
     },
     portfolios::AccountScope,
 };
@@ -201,60 +199,6 @@ async fn get_drift_for_target(
     Ok(Json(report))
 }
 
-// ── Rebalance ─────────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CalculatePlanBody {
-    target_id: String,
-    available_cash: Decimal,
-    #[serde(default)]
-    scenario_mode: ScenarioMode,
-    filter: AccountScope,
-    #[serde(default)]
-    eligible_asset_ids: Option<Vec<String>>,
-}
-
-fn resolve_rebalance_input(
-    state: &Arc<AppState>,
-    target_id: String,
-    available_cash: Decimal,
-    scenario_mode: ScenarioMode,
-    filter: &AccountScope,
-    eligible_asset_ids: Option<Vec<String>>,
-) -> ApiResult<CalculateRebalancePlanInput> {
-    let base_currency = state.base_currency.read().unwrap().clone();
-    let resolved = state
-        .portfolio_service
-        .resolve_account_scope_for_purpose(filter, &base_currency, AccountPurpose::Holdings)
-        .map_err(crate::error::ApiError::from)?;
-    Ok(CalculateRebalancePlanInput {
-        target_id,
-        available_cash,
-        account_ids: resolved.account_ids,
-        base_currency,
-        aggregated_account_id: resolved.scope_id,
-        scenario_mode,
-        eligible_asset_ids,
-    })
-}
-
-async fn calculate_plan(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<CalculatePlanBody>,
-) -> ApiResult<Json<RebalancePlan>> {
-    let input = resolve_rebalance_input(
-        &state,
-        body.target_id,
-        body.available_cash,
-        body.scenario_mode,
-        &body.filter,
-        body.eligible_asset_ids,
-    )?;
-    let plan = state.rebalance_service.calculate_plan(input).await?;
-    Ok(Json(plan))
-}
-
 // ── Allocation worksheet ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -415,10 +359,6 @@ pub fn router() -> Router<Arc<AppState>> {
             get(list_target_constraints_handler).post(save_target_constraints_handler),
         )
         .route("/allocation-targets/{id}/drift", post(get_drift_for_target))
-        .route(
-            "/allocation-targets/rebalance/calculate",
-            post(calculate_plan),
-        )
         .route(
             "/allocation-targets/worksheet/generate",
             post(generate_adjustments),

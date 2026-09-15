@@ -1,11 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { HoldingType } from "@/lib/constants";
 import type { Holding } from "@/lib/types";
-import { PlannerInput } from "./rebalance-tab";
 import { EligibleHoldingsSelector } from "./eligible-holdings-selector";
 import { getEligibleHoldings, groupEligibleHoldings } from "./eligible-holdings";
 
@@ -183,40 +182,14 @@ describe("EligibleHoldingsSelector", () => {
       "0 of 3 selected",
     );
     expect(
-      screen.getByText("Select at least one holding to calculate a plan."),
+      screen.getByText(
+        "No security selected. Increases that cannot be placed will show as unresolved amounts.",
+      ),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Select all" }));
     expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
       "All holdings selected",
     );
-  });
-
-  it("disables Calculate and Enter when no holding is eligible", () => {
-    const onCalculate = vi.fn();
-    render(
-      <PlannerInput
-        description=""
-        cashValue="100"
-        availableCash={100}
-        currency="USD"
-        onCashChange={vi.fn()}
-        onCalculate={onCalculate}
-        hasPlan={false}
-        isCalculating={false}
-        isSourceLoading={false}
-        hasEligibleHoldings={false}
-        eligibleHoldingsSelector={<p>Select at least one holding to calculate a plan.</p>}
-      />,
-    );
-
-    const calculate = screen.getByRole("button", { name: "Calculate plan" });
-    expect(calculate).toBeDisabled();
-    expect(
-      screen.getByText("Select at least one holding to calculate a plan."),
-    ).toBeInTheDocument();
-
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    expect(onCalculate).not.toHaveBeenCalled();
   });
 });

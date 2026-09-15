@@ -3,10 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  calculateRebalancePlan as calculateTauriRebalancePlan,
-  generateCalculatedAdjustments as generateTauriCalculatedAdjustments,
-} from "./tauri";
+import { generateCalculatedAdjustments as generateTauriCalculatedAdjustments } from "./tauri";
 import { COMMANDS, invoke } from "./web/core";
 
 const { platformInvokeMock } = vi.hoisted(() => ({
@@ -116,38 +113,6 @@ function collectNamedReexports(
 
   return { hasStar, names };
 }
-
-describe("rebalance eligibility transport", () => {
-  it("canonicalizes the Tauri shared request before web transport", async () => {
-    const mock = stubFetch({});
-    platformInvokeMock
-      .mockReset()
-      .mockImplementation((command, payload) => invoke(command, payload));
-
-    await calculateTauriRebalancePlan("target-1", 100, { type: "all" }, "cash_flow_only", [
-      "asset-z",
-      "asset-a",
-      "asset-z",
-    ]);
-
-    const { body } = lastCall(mock);
-    const parsed = JSON.parse(body as string) as { eligibleAssetIds?: unknown };
-    expect(parsed.eligibleAssetIds).toEqual(["asset-a", "asset-z"]);
-  });
-
-  it("omits the allowlist when no restriction is supplied", async () => {
-    const mock = stubFetch({});
-    await invoke("calculate_rebalance_plan", {
-      targetId: "target-1",
-      availableCash: 100,
-      filter: { type: "all" },
-      scenarioMode: "cash_flow_only",
-    });
-
-    const { body } = lastCall(mock);
-    expect(JSON.parse(body as string)).not.toHaveProperty("eligibleAssetIds");
-  });
-});
 
 describe("calculated worksheet transport", () => {
   it("keeps an empty eligible selection instead of dropping it", async () => {

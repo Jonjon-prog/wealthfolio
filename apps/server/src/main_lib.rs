@@ -134,9 +134,6 @@ pub struct AppState {
     >,
     pub drift_service:
         Arc<dyn wealthfolio_core::portfolio::allocation_targets::DriftServiceTrait + Send + Sync>,
-    pub rebalance_service: Arc<
-        dyn wealthfolio_core::portfolio::allocation_targets::RebalanceServiceTrait + Send + Sync,
-    >,
     pub allocation_worksheet_service: Arc<
         dyn wealthfolio_core::portfolio::allocation_targets::AllocationWorksheetServiceTrait
             + Send
@@ -505,16 +502,6 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         )
         .with_holdings_service(holdings_service.clone())
         .with_taxonomy_service(taxonomy_service.clone()),
-    );
-    let rebalance_service: Arc<
-        dyn wealthfolio_core::portfolio::allocation_targets::RebalanceServiceTrait + Send + Sync,
-    > = Arc::new(
-        wealthfolio_core::portfolio::allocation_targets::RebalanceService::new(
-            allocation_target_service.clone(),
-            drift_service.clone(),
-            allocation_service.clone(),
-            holdings_service.clone(),
-        ),
     );
     let allocation_worksheet_service: Arc<
         dyn wealthfolio_core::portfolio::allocation_targets::AllocationWorksheetServiceTrait
@@ -943,7 +930,6 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         spending_insight_service,
         allocation_target_service,
         drift_service,
-        rebalance_service,
         allocation_worksheet_service,
         pat_repository,
         mcp_audit_repository,

@@ -542,7 +542,6 @@ function CalculationControl({
         onToggle={onToggleAsset}
         onSelectAll={onSelectAllAssets}
         onClear={onClearAssets}
-        allowEmpty
       />
 
       <div className="space-y-3">

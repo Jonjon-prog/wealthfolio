@@ -62,15 +62,6 @@ impl TryFrom<&str> for TriggerType {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ScenarioMode {
-    #[default]
-    CashFlowOnly,
-    SellToRebalance,
-    Hybrid,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum BandType {
     #[default]
     Absolute,
@@ -396,83 +387,6 @@ pub struct AllocationTargetConstraint {
     pub updated_at: String,
 }
 
-// ── Rebalance types ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CalculateRebalancePlanInput {
-    pub target_id: String,
-    pub available_cash: Decimal,
-    pub account_ids: Vec<String>,
-    pub base_currency: String,
-    pub aggregated_account_id: String,
-    #[serde(default)]
-    pub scenario_mode: ScenarioMode,
-    /// Optional instrument-level allowlist for buy candidates in CashFlowOnly mode.
-    /// `None` preserves the legacy behavior; an empty list is invalid in that mode.
-    #[serde(default)]
-    pub eligible_asset_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RebalanceWarningKind {
-    MissingQuote,
-    NoBuyCandidate,
-    TaggedCash,
-    /// Asset has no taxonomy assignments for the active taxonomy — skipped as buy candidate.
-    UnclassifiedAsset,
-    /// Asset has partial taxonomy weights (<100%) — known exposure used, remainder ignored.
-    PartialClassification,
-    /// A sell candidate was skipped due to a do-not-sell or avoid-selling constraint.
-    ConstraintSkippedSell,
-    /// The sell phase stopped because the turnover cap was reached.
-    TurnoverCapReached,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RebalanceWarning {
-    pub kind: RebalanceWarningKind,
-    pub category_id: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SuggestedManualTrade {
-    pub action: String,
-    pub category_id: String,
-    pub category_name: String,
-    pub asset_id: Option<String>,
-    pub account_id: Option<String>,
-    pub holding_id: Option<String>,
-    pub symbol: Option<String>,
-    pub name: Option<String>,
-    pub quantity: Option<Decimal>,
-    pub estimated_price: Option<Decimal>,
-    pub estimated_amount: Decimal,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RebalancePlan {
-    pub target_id: String,
-    pub available_cash: Decimal,
-    pub cash_used: Decimal,
-    pub cash_remaining: Decimal,
-    pub max_drift_bps_before: i32,
-    pub max_drift_bps_after: i32,
-    pub trades: Vec<SuggestedManualTrade>,
-    pub warnings: Vec<RebalanceWarning>,
-    /// After-trade allocation in bps per category_id.
-    /// Accounts for multi-category ETF exposure; use this for BeforeAfterStack
-    /// instead of re-deriving from trades (which only carry the primary category).
-    #[serde(default)]
-    pub after_bps_by_category: std::collections::HashMap<String, i32>,
-}
-
 // ── Calculated worksheet types ───────────────────────────────────────────────
 //
 // Shapes for the calculated rebalancing worksheet described in
@@ -481,9 +395,9 @@ pub struct RebalancePlan {
 
 /// Which directions the calculation is allowed to produce (design §4).
 ///
-/// Replaces the three-way `ScenarioMode`: cash-flow-only and sell-to-rebalance
-/// were the two ends of the same cash-first sequence, and hybrid was that
-/// sequence with both inputs present.
+/// Replaces the former three-way scenario mode: cash-flow-only and
+/// sell-to-rebalance were the two ends of the same cash-first sequence, and
+/// hybrid was that sequence with both inputs present.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorksheetMode {

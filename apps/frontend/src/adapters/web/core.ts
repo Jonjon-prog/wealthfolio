@@ -400,7 +400,6 @@ export const COMMANDS: CommandMap = {
   get_allocation_target_drift: { method: "POST", path: "/allocation-targets" },
   list_target_constraints: { method: "GET", path: "/allocation-targets" },
   save_target_constraints: { method: "POST", path: "/allocation-targets" },
-  calculate_rebalance_plan: { method: "POST", path: "/allocation-targets/rebalance/calculate" },
   generate_calculated_adjustments: {
     method: "POST",
     path: "/allocation-targets/worksheet/generate",
@@ -2010,23 +2009,6 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       };
       url += `/${encodeURIComponent(targetId)}/constraints`;
       body = JSON.stringify(constraints);
-      break;
-    }
-    case "calculate_rebalance_plan": {
-      const { targetId, availableCash, filter, scenarioMode, eligibleAssetIds } = payload as {
-        targetId: string;
-        availableCash: number;
-        filter: unknown;
-        scenarioMode: string;
-        eligibleAssetIds?: string[];
-      };
-      body = JSON.stringify({
-        targetId,
-        availableCash,
-        filter,
-        scenarioMode,
-        ...(eligibleAssetIds === undefined ? {} : { eligibleAssetIds }),
-      });
       break;
     }
     case "generate_calculated_adjustments": {

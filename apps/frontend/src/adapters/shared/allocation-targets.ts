@@ -6,9 +6,7 @@ import type {
   AllocationTargetWeight,
   AllocationTarget,
   SaveAllocationTargetResult,
-  RebalancePlan,
   AllocationTargetConstraint,
-  ScenarioMode,
   AllocationRule,
   AllocationWorksheetLineInput,
   AllocationWorksheetResult,
@@ -109,7 +107,7 @@ export const saveTargetConstraints = async (
   });
 };
 
-// ── Rebalance ─────────────────────────────────────────────────────────────────
+// ── Calculated worksheet ──────────────────────────────────────────────────────
 
 export function canonicalizeEligibleAssetIds(
   eligibleAssetIds?: readonly string[],
@@ -117,32 +115,6 @@ export function canonicalizeEligibleAssetIds(
   if (eligibleAssetIds === undefined) return undefined;
   return [...new Set(eligibleAssetIds)].sort();
 }
-
-export const calculateRebalancePlan = async (
-  targetId: string,
-  availableCash: number,
-  filter: AccountScope,
-  scenarioMode: ScenarioMode = "cash_flow_only",
-  eligibleAssetIds?: readonly string[],
-): Promise<RebalancePlan> => {
-  const payload: {
-    targetId: string;
-    availableCash: number;
-    filter: AccountScope;
-    scenarioMode: ScenarioMode;
-    eligibleAssetIds?: string[];
-  } = {
-    targetId,
-    availableCash,
-    filter,
-    scenarioMode,
-  };
-  const canonicalIds = canonicalizeEligibleAssetIds(eligibleAssetIds);
-  if (canonicalIds !== undefined) payload.eligibleAssetIds = canonicalIds;
-  return invoke<RebalancePlan>("calculate_rebalance_plan", payload);
-};
-
-// ── Calculated worksheet ──────────────────────────────────────────────────────
 
 /**
  * Prefills the worksheet from the target. `eligibleAssetIds` omitted means every
