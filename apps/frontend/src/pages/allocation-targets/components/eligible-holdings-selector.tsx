@@ -48,6 +48,8 @@ export interface EligibleHoldingsSelectorProps {
   onToggle: (assetId: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
+  /** An empty selection is a valid state rather than something to correct. */
+  allowEmpty?: boolean;
 }
 
 export function EligibleHoldingsSelector({
@@ -56,6 +58,7 @@ export function EligibleHoldingsSelector({
   onToggle,
   onSelectAll,
   onClear,
+  allowEmpty = false,
 }: EligibleHoldingsSelectorProps) {
   const { t } = useTranslation();
   const eligibleHoldings = useMemo(() => getEligibleHoldings(holdings), [holdings]);
@@ -177,11 +180,16 @@ export function EligibleHoldingsSelector({
           </Command>
         </PopoverContent>
       </Popover>
-      {selectedCount === 0 && (
-        <p className="text-destructive mt-2 font-mono text-xs">
-          {t("allocation:eligibleHoldings.emptyGuidance")}
-        </p>
-      )}
+      {selectedCount === 0 &&
+        (allowEmpty ? (
+          <p className="text-muted-foreground mt-2 font-mono text-xs">
+            {t("allocation:eligibleHoldings.emptyAllowed")}
+          </p>
+        ) : (
+          <p className="text-destructive mt-2 font-mono text-xs">
+            {t("allocation:eligibleHoldings.emptyGuidance")}
+          </p>
+        ))}
     </div>
   );
 }
