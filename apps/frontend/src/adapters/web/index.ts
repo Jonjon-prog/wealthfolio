@@ -355,10 +355,12 @@ export {
 // Allocation Target Commands
 export {
   archiveAllocationTarget,
+  calculateAllocationWorksheet,
   calculateRebalancePlan,
   canonicalizeEligibleAssetIds,
   createAllocationTarget,
   deleteAllocationTarget,
+  generateCalculatedAdjustments,
   getAllocationTargetDrift,
   getAllocationTarget,
   listAllocationTargetWeights,

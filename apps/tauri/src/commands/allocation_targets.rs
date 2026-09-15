@@ -6,9 +6,12 @@ use rust_decimal::Decimal;
 use wealthfolio_core::{
     accounts::AccountPurpose,
     portfolio::allocation_targets::{
-        AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
-        CalculateRebalancePlanInput, DriftReport, NewAllocationTarget, NewAllocationTargetWeight,
-        RebalancePlan, SaveAllocationTargetResult, ScenarioMode, ScopeType,
+        AllocationRule, AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
+        AllocationWorksheetLineInput, AllocationWorksheetResult, CalculateAllocationWorksheetInput,
+        CalculateRebalancePlanInput, CalculatedAdjustments, DriftReport,
+        GenerateCalculatedAdjustmentsInput, NewAllocationTarget, NewAllocationTargetWeight,
+        RebalancePlan, SaveAllocationTargetResult, ScenarioMode, ScopeType, WorksheetCashInput,
+        WorksheetMode,
     },
     portfolios::AccountScope,
 };
@@ -283,6 +286,113 @@ pub async fn calculate_rebalance_plan(
     state
         .rebalance_service()
         .calculate_plan(input)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── Allocation worksheet ──────────────────────────────────────────────────────
+
+/// The accounts a worksheet runs on, resolved from the target itself.
+struct WorksheetScope {
+    account_ids: Vec<String>,
+    base_currency: String,
+    aggregated_account_id: String,
+}
+
+/// A worksheet is built against the page's accounts and calculated against the
+/// target's. The two must agree, or the adjustments on screen would be
+/// validated against accounts the user never saw.
+fn resolve_worksheet_scope(
+    state: &Arc<ServiceContext>,
+    target_id: &str,
+    filter: AccountScopeInput,
+) -> Result<WorksheetScope, String> {
+    let filter = filter.into_account_filter()?;
+    let base_currency = state.get_base_currency();
+    let requested =
+        wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope_for_purpose(
+            state.portfolio_service.as_ref(),
+            &filter,
+            &base_currency,
+            AccountPurpose::Holdings,
+        )
+        .map_err(|e| e.to_string())?;
+    let target = state
+        .allocation_target_service()
+        .get_target(target_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("AllocationTarget {target_id} not found"))?;
+    let resolved =
+        wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope_for_purpose(
+            state.portfolio_service.as_ref(),
+            &account_scope_for_target(&target)?,
+            &base_currency,
+            AccountPurpose::Holdings,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut requested_ids = requested.account_ids;
+    let mut target_ids = resolved.account_ids.clone();
+    requested_ids.sort();
+    target_ids.sort();
+    if requested_ids != target_ids {
+        return Err("Worksheet page scope does not match the selected target scope".to_string());
+    }
+
+    Ok(WorksheetScope {
+        account_ids: resolved.account_ids,
+        base_currency,
+        aggregated_account_id: resolved.scope_id,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_calculated_adjustments(
+    state: State<'_, Arc<ServiceContext>>,
+    target_id: String,
+    mode: WorksheetMode,
+    rule: AllocationRule,
+    cash: WorksheetCashInput,
+    eligible_asset_ids: Option<Vec<String>>,
+    filter: AccountScopeInput,
+) -> Result<CalculatedAdjustments, String> {
+    let scope = resolve_worksheet_scope(&state, &target_id, filter)?;
+    state
+        .allocation_worksheet_service()
+        .generate_adjustments(GenerateCalculatedAdjustmentsInput {
+            target_id,
+            account_ids: scope.account_ids,
+            base_currency: scope.base_currency,
+            aggregated_account_id: scope.aggregated_account_id,
+            mode,
+            rule,
+            cash,
+            eligible_asset_ids,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn calculate_allocation_worksheet(
+    state: State<'_, Arc<ServiceContext>>,
+    target_id: String,
+    cash: WorksheetCashInput,
+    lines: Vec<AllocationWorksheetLineInput>,
+    filter: AccountScopeInput,
+) -> Result<AllocationWorksheetResult, String> {
+    let scope = resolve_worksheet_scope(&state, &target_id, filter)?;
+    state
+        .allocation_worksheet_service()
+        .calculate_worksheet(CalculateAllocationWorksheetInput {
+            target_id,
+            cash,
+            lines,
+            account_ids: scope.account_ids,
+            base_currency: scope.base_currency,
+            aggregated_account_id: scope.aggregated_account_id,
+        })
         .await
         .map_err(|e| e.to_string())
 }

@@ -2710,6 +2710,170 @@ export interface DriftHoldingsReport {
   rows: DriftHoldingRow[];
 }
 
+// ── Calculated rebalancing worksheet ─────────────────────────────────────────
+
+export type WorksheetMode = "invest_cash" | "rebalance";
+export type AllocationRule = "current_holding_proportions";
+export type WorksheetDirection = "increase" | "reduce";
+export type WorksheetInputMode = "amount" | "quantity";
+export type UnresolvedReason = "no_recorded_security" | "no_eligible_security" | "no_usable_price";
+
+export interface UnresolvedCategoryAmount {
+  categoryId: string;
+  categoryName: string;
+  amount: number;
+  reason: UnresolvedReason;
+}
+
+export interface AdjustmentScaling {
+  reductionFactor?: number | null;
+  increaseFactor?: number | null;
+}
+
+export interface CalculatedAdjustment {
+  lineId: string;
+  direction: WorksheetDirection;
+  assetId: string;
+  symbol: string;
+  /** Null when several accounts could receive the increase and the user places it. */
+  accountId?: string | null;
+  /** Signed, in base currency. Negative for a reduction. */
+  amount: number;
+  quantity: number;
+  unitPrice: number;
+  isBelowMinimum: boolean;
+}
+
+export interface AccountFundingShortfall {
+  accountId: string;
+  required: number;
+  available: number;
+}
+
+export interface CalculatedAdjustments {
+  mode: WorksheetMode;
+  rule: AllocationRule;
+  adjustments: CalculatedAdjustment[];
+  unresolved: UnresolvedCategoryAmount[];
+  scaling: AdjustmentScaling;
+  remainingCash: number;
+  fundingShortfalls: AccountFundingShortfall[];
+}
+
+export interface WorksheetCashInput {
+  trackedCashToUse: number;
+  /** Hypothetical cash not recorded anywhere, keyed by the account it would arrive in. */
+  externalContribution: Record<string, number>;
+}
+
+export interface AllocationWorksheetLineInput {
+  lineId: string;
+  direction: WorksheetDirection;
+  assetId: string;
+  accountId: string;
+  inputMode: WorksheetInputMode;
+  value: number;
+}
+
+export type WorksheetWarningKind =
+  | "stale_quote"
+  | "stale_fx"
+  | "partial_classification"
+  | "unclassified_asset"
+  | "external_contribution"
+  | "below_minimum_line"
+  | "turnover_exceeded"
+  | "avoid_constraint"
+  | "insufficient_funding"
+  | "account_funding";
+
+export interface WorksheetWarning {
+  id: string;
+  kind: WorksheetWarningKind;
+  lineId?: string | null;
+  message: string;
+  acknowledgementRequired: boolean;
+}
+
+export interface WorksheetPricingSource {
+  id: string;
+  sourceType: string;
+  value: number;
+  fromCurrency: string;
+  toCurrency: string;
+  timestamp: string;
+  isStale: boolean;
+}
+
+export interface WorksheetCategoryExposure {
+  categoryId: string;
+  categoryName: string;
+  weightBps: number;
+  valueDelta: number;
+  isUnclassified: boolean;
+}
+
+export interface AllocationWorksheetLineResult {
+  lineId: string;
+  direction: WorksheetDirection;
+  assetId: string;
+  accountId: string;
+  symbol: string;
+  name: string;
+  inputMode: WorksheetInputMode;
+  inputValue: number;
+  quantity: number;
+  unitPrice: number;
+  estimatedAmount: number;
+  contractMultiplier: number;
+  quoteSource: WorksheetPricingSource;
+  fxSource?: WorksheetPricingSource | null;
+  categoryExposures: WorksheetCategoryExposure[];
+}
+
+export interface WorksheetCategoryResult {
+  categoryId: string;
+  categoryName: string;
+  color: string;
+  targetBps: number;
+  currentValue: number;
+  projectedValue: number;
+  currentBps: number;
+  projectedBps: number;
+  currentDifferenceBps: number;
+  projectedDifferenceBps: number;
+  isCash: boolean;
+  isUnclassified: boolean;
+}
+
+export interface WorksheetSourceRecord {
+  sourceType: string;
+  id: string;
+  version: string;
+  details: string;
+}
+
+export interface AllocationWorksheetResult {
+  targetId: string;
+  targetName: string;
+  baseCurrency: string;
+  calculatedAt: string;
+  sourceFingerprint: string;
+  resolvedAccountIds: string[];
+  observedTrackedCash: number;
+  trackedCashToUse: number;
+  externalContribution: number;
+  increaseTotal: number;
+  reductionTotal: number;
+  cashRemaining: number;
+  maxDifferenceBpsBefore: number;
+  maxDifferenceBpsAfter: number;
+  lines: AllocationWorksheetLineResult[];
+  categories: WorksheetCategoryResult[];
+  warnings: WorksheetWarning[];
+  sourceRecords: WorksheetSourceRecord[];
+}
+
 export type RebalanceWarningKind =
   | "missing_quote"
   | "no_buy_candidate"

@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { calculateRebalancePlan as calculateTauriRebalancePlan } from "./tauri";
+import {
+  calculateRebalancePlan as calculateTauriRebalancePlan,
+  generateCalculatedAdjustments as generateTauriCalculatedAdjustments,
+} from "./tauri";
 import { COMMANDS, invoke } from "./web/core";
 
 const { platformInvokeMock } = vi.hoisted(() => ({
@@ -143,6 +146,59 @@ describe("rebalance eligibility transport", () => {
 
     const { body } = lastCall(mock);
     expect(JSON.parse(body as string)).not.toHaveProperty("eligibleAssetIds");
+  });
+});
+
+describe("calculated worksheet transport", () => {
+  it("keeps an empty eligible selection instead of dropping it", async () => {
+    // §4.1: selecting no eligible security is a valid state. Dropping the empty
+    // list would silently turn it into "every recorded security".
+    const mock = stubFetch({});
+    platformInvokeMock
+      .mockReset()
+      .mockImplementation((command: string, payload?: Record<string, unknown>) =>
+        invoke(command, payload),
+      );
+
+    await generateTauriCalculatedAdjustments(
+      "target-1",
+      "rebalance",
+      "current_holding_proportions",
+      { trackedCashToUse: 0, externalContribution: {} },
+      { type: "all" },
+      [],
+    );
+
+    const { body } = lastCall(mock);
+    const parsed = JSON.parse(body as string) as { eligibleAssetIds?: unknown };
+    expect(parsed.eligibleAssetIds).toEqual([]);
+  });
+
+  it("sends external cash keyed by the account it would arrive in", async () => {
+    const mock = stubFetch({});
+    platformInvokeMock
+      .mockReset()
+      .mockImplementation((command: string, payload?: Record<string, unknown>) =>
+        invoke(command, payload),
+      );
+
+    await generateTauriCalculatedAdjustments(
+      "target-1",
+      "invest_cash",
+      "current_holding_proportions",
+      { trackedCashToUse: 250, externalContribution: { "acc-1": 1000, "acc-2": 500 } },
+      { type: "all" },
+    );
+
+    const parsed = JSON.parse(lastCall(mock).body as string) as {
+      cash: unknown;
+      eligibleAssetIds?: unknown;
+    };
+    expect(parsed.cash).toEqual({
+      trackedCashToUse: 250,
+      externalContribution: { "acc-1": 1000, "acc-2": 500 },
+    });
+    expect(parsed).not.toHaveProperty("eligibleAssetIds");
   });
 });
 
