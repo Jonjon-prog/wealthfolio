@@ -130,6 +130,7 @@ describe("calculated worksheet transport", () => {
       "rebalance",
       "current_holding_proportions",
       { trackedCashToUse: 0, externalContribution: {} },
+      ["acc-1"],
       { type: "all" },
       [],
     );
@@ -152,17 +153,20 @@ describe("calculated worksheet transport", () => {
       "invest_cash",
       "current_holding_proportions",
       { trackedCashToUse: 250, externalContribution: { "acc-1": 1000, "acc-2": 500 } },
+      ["acc-1", "acc-2"],
       { type: "all" },
     );
 
     const parsed = JSON.parse(lastCall(mock).body as string) as {
       cash: unknown;
+      selectedAccountIds?: unknown;
       eligibleAssetIds?: unknown;
     };
     expect(parsed.cash).toEqual({
       trackedCashToUse: 250,
       externalContribution: { "acc-1": 1000, "acc-2": 500 },
     });
+    expect(parsed.selectedAccountIds).toEqual(["acc-1", "acc-2"]);
     expect(parsed).not.toHaveProperty("eligibleAssetIds");
   });
 });

@@ -8,6 +8,8 @@ export interface CalculatedAdjustmentsRequest {
   mode: WorksheetMode;
   rule: AllocationRule;
   cash: WorksheetCashInput;
+  /** Accounts the worksheet may change. */
+  selectedAccountIds: readonly string[];
   /** Omitted means every recorded security. An empty list is a valid selection. */
   eligibleAssetIds?: readonly string[];
 }
@@ -26,8 +28,17 @@ export function useCalculatedAdjustments() {
       mode,
       rule,
       cash,
+      selectedAccountIds,
       eligibleAssetIds,
     }: CalculatedAdjustmentsRequest) =>
-      generateCalculatedAdjustments(targetId, mode, rule, cash, filter, eligibleAssetIds),
+      generateCalculatedAdjustments(
+        targetId,
+        mode,
+        rule,
+        cash,
+        selectedAccountIds,
+        filter,
+        eligibleAssetIds,
+      ),
   });
 }

@@ -577,6 +577,7 @@ async fn build_context(
         drift_service.clone(),
         allocation_service.clone(),
         holdings_service.clone(),
+        account_service.clone(),
         asset_service.clone(),
         taxonomy_service.clone(),
         quote_service.clone(),

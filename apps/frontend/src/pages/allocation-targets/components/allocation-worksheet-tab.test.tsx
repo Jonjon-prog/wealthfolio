@@ -185,6 +185,7 @@ const previewResult: AllocationWorksheetResult = {
   maxDifferenceBpsAfter: 0,
   lines: [],
   categories: [],
+  accountFunding: [],
   warnings: [],
   sourceRecords: [],
 };
@@ -247,6 +248,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
       mode: "invest_cash",
       rule: "current_holding_proportions",
       cash: { trackedCashToUse: 0, externalContribution: {} },
+      selectedAccountIds: ["acc-1"],
       eligibleAssetIds: undefined,
     });
   });

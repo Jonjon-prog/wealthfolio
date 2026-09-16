@@ -37,7 +37,7 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { usePortfolios } from "@/hooks/use-portfolios";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
-import { AccountPurpose, HoldingType } from "@/lib/constants";
+import { AccountPurpose, AccountType, HoldingType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
 import type {
   Account,
@@ -1528,9 +1528,15 @@ export function AllocationWorksheetTab({
   const exchangeRates = useExchangeRates();
   const { assets, isLoading: assetsLoading } = useAssets();
   const taxonomy = useTaxonomy(profile?.taxonomyId ?? null);
-  const { accounts, isLoading: accountsLoading } = useAccounts({
+  const { accounts: holdingAccounts, isLoading: accountsLoading } = useAccounts({
     accountPurpose: AccountPurpose.HOLDINGS,
   });
+  // Cash accounts track cash rather than investments: they can neither receive
+  // a security nor, with no transfer assumed, fund one elsewhere.
+  const accounts = useMemo(
+    () => holdingAccounts.filter((account) => account.accountType !== AccountType.CASH),
+    [holdingAccounts],
+  );
   const { data: portfolios = [] } = usePortfolios();
 
   const [view, setView] = useState<WorksheetView>("position");
@@ -2118,6 +2124,7 @@ export function AllocationWorksheetTab({
         mode: generationInputs.mode,
         rule: generationInputs.rule,
         cash: { trackedCashToUse, externalContribution },
+        selectedAccountIds: scopedAccountIds,
         eligibleAssetIds: generationInputs.eligibleAssetIds,
       });
       setGenerated({ calculated, inputsKey: generationInputsKey(generationInputs) });
@@ -2164,6 +2171,7 @@ export function AllocationWorksheetTab({
         filter: accountScope,
         cash: { trackedCashToUse, externalContribution },
         lines: prepared.lines,
+        selectedAccountIds: scopedAccountIds,
       });
       if (calculationVersion !== calculationVersionRef.current) return;
       setResult(data);

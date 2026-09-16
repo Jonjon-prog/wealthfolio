@@ -16,7 +16,7 @@ use rust_decimal::Decimal;
 
 use super::model::{
     AccountFundingShortfall, AdjustmentScaling, UnresolvedCategoryAmount, UnresolvedReason,
-    WorksheetDirection, WorksheetMode,
+    WorksheetAccountFunding, WorksheetDirection, WorksheetMode,
 };
 
 /// A target category as the calculation sees it, taken from the drift report.
@@ -882,41 +882,77 @@ pub fn account_funding_shortfalls(
     cash_by_account: &HashMap<String, Decimal>,
     external_cash: &HashMap<String, Decimal>,
 ) -> Vec<AccountFundingShortfall> {
-    let mut required: HashMap<String, Decimal> = HashMap::new();
-    let mut raised: HashMap<String, Decimal> = HashMap::new();
+    let mut shortfalls: Vec<AccountFundingShortfall> =
+        account_funding(lines, &[], cash_by_account, external_cash)
+            .into_iter()
+            .filter(|funding| funding.remaining < Decimal::ZERO)
+            .map(|funding| AccountFundingShortfall {
+                available: funding.increases + funding.remaining,
+                required: funding.increases,
+                account_id: funding.account_id,
+            })
+            .collect();
+    shortfalls.sort_by(|left, right| left.account_id.cmp(&right.account_id));
+    shortfalls
+}
 
-    for line in lines {
-        let Some(account_id) = line.account_id.as_ref() else {
-            continue;
-        };
-        if line.amount > Decimal::ZERO {
-            *required.entry(account_id.clone()).or_default() += line.amount;
-        } else {
-            *raised.entry(account_id.clone()).or_default() += -line.amount;
+/// Where each account stands once the lines placed in it are applied (§6).
+///
+/// The one ledger both the prefill and the preview read, so they cannot
+/// disagree about whether an account is funded. An account spends its own cash,
+/// the cash not yet recorded that the user put there, and what its own
+/// reductions raise.
+///
+/// `account_ids` fixes which accounts are reported and in what order, so an
+/// account with nothing placed in it still shows what it could fund. An account
+/// that appears only in the lines is reported after them. Unallocated lines
+/// belong to no account yet and are left out.
+pub fn account_funding(
+    lines: &[AssignedLine],
+    account_ids: &[String],
+    cash_by_account: &HashMap<String, Decimal>,
+    external_cash: &HashMap<String, Decimal>,
+) -> Vec<WorksheetAccountFunding> {
+    let mut order: Vec<String> = account_ids.to_vec();
+    for account_id in lines.iter().filter_map(|line| line.account_id.as_ref()) {
+        if !order.contains(account_id) {
+            order.push(account_id.clone());
         }
     }
 
-    let mut shortfalls: Vec<AccountFundingShortfall> = required
+    order
         .into_iter()
-        .filter_map(|(account_id, needed)| {
-            let available = cash_by_account
+        .map(|account_id| {
+            let mut increases = Decimal::ZERO;
+            let mut reduction_proceeds = Decimal::ZERO;
+            for line in lines
+                .iter()
+                .filter(|line| line.account_id.as_deref() == Some(account_id.as_str()))
+            {
+                if line.amount > Decimal::ZERO {
+                    increases += line.amount;
+                } else {
+                    reduction_proceeds -= line.amount;
+                }
+            }
+            let available_cash = cash_by_account
                 .get(&account_id)
                 .copied()
-                .unwrap_or(Decimal::ZERO)
-                + raised.get(&account_id).copied().unwrap_or(Decimal::ZERO)
-                + external_cash
-                    .get(&account_id)
-                    .copied()
-                    .unwrap_or(Decimal::ZERO);
-            (needed > available).then_some(AccountFundingShortfall {
+                .unwrap_or(Decimal::ZERO);
+            let external = external_cash
+                .get(&account_id)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            WorksheetAccountFunding {
+                remaining: available_cash + external + reduction_proceeds - increases,
                 account_id,
-                required: needed,
-                available,
-            })
+                available_cash,
+                external_cash: external,
+                reduction_proceeds,
+                increases,
+            }
         })
-        .collect();
-    shortfalls.sort_by(|left, right| left.account_id.cmp(&right.account_id));
-    shortfalls
+        .collect()
 }
 
 #[cfg(test)]
@@ -2002,5 +2038,35 @@ mod tests {
         let shortfalls = account_funding_shortfalls(&lines, &HashMap::new(), no_external_cash());
 
         assert!(shortfalls.is_empty());
+    }
+
+    #[test]
+    fn every_account_in_scope_is_reported_even_with_nothing_placed_in_it() {
+        let lines = vec![AssignedLine {
+            asset_id: "vti".to_string(),
+            account_id: Some("acc-2".to_string()),
+            amount: dec!(700),
+            quantity: dec!(7),
+            unit_price: dec!(100),
+            is_below_minimum: false,
+        }];
+        let cash = HashMap::from([
+            ("acc-1".to_string(), dec!(1000)),
+            ("acc-2".to_string(), dec!(500)),
+        ]);
+        let external = HashMap::from([("acc-2".to_string(), dec!(100))]);
+
+        let funding = account_funding(
+            &lines,
+            &["acc-1".to_string(), "acc-2".to_string()],
+            &cash,
+            &external,
+        );
+
+        assert_eq!(funding.len(), 2);
+        assert_eq!(funding[0].account_id, "acc-1");
+        assert_eq!(funding[0].remaining, dec!(1000));
+        assert_eq!(funding[1].increases, dec!(700));
+        assert_eq!(funding[1].remaining, dec!(-100));
     }
 }

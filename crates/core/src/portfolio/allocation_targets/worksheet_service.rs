@@ -1,10 +1,15 @@
 //! Orchestration behind the calculated rebalancing worksheet.
 //!
 //! Implements §4 to §6 of
-//! `docs/features/allocations/self-directed-rebalancing-design.md`. The
-//! arithmetic lives in [`super::worksheet_calculator`] and stays pure: this
-//! file resolves the drift report, the taxonomy contributions, prices, FX and
-//! constraints, and hands them over as plain structs.
+//! `docs/features/allocations/self-directed-rebalancing-design.md`.
+//!
+//! Split in two on purpose. The service methods only load: the target, the
+//! drift report, what each selected account holds, prices, FX and constraints.
+//! Every number is decided in [`AllocationWorksheetService::generate`] and
+//! [`AllocationWorksheetService::preview`], which take those sources as plain
+//! structs. That keeps the whole generation-to-preview flow testable without a
+//! repository, while the arithmetic itself stays in
+//! [`super::worksheet_calculator`].
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -15,32 +20,38 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::accounts::{account_types, Account, AccountServiceTrait};
 use crate::assets::{Asset, AssetServiceTrait};
 use crate::errors::{DatabaseError, Error as CoreError, Result as CoreResult, ValidationError};
 use crate::fx::currency::currency_minor_unit;
 use crate::fx::{
     denormalization_multiplier, normalize_currency_code, ExchangeRate, FxServiceTrait,
 };
-use crate::portfolio::allocation::{AllocationServiceTrait, HoldingAllocationContribution};
+use crate::portfolio::allocation::{
+    AllocationServiceTrait, HoldingAllocationContribution, TaxonomyHoldingContributions,
+};
 use crate::portfolio::holdings::{Holding, HoldingType, HoldingsServiceTrait};
 use crate::quotes::{LatestQuoteSnapshot, QuoteServiceTrait};
-use crate::taxonomies::{AssetTaxonomyAssignment, TaxonomyServiceTrait};
+use crate::taxonomies::{AssetTaxonomyAssignment, TaxonomyServiceTrait, TaxonomyWithCategories};
 
-use super::cash::{has_deployable_cash_categories, tracked_cash};
+use super::cash::{
+    deployable_cash_from_contributions, has_deployable_cash_categories, tracked_cash,
+};
 use super::drift_service::DriftServiceTrait;
 use super::model::{
-    AllocationTargetConstraint, AllocationWorksheetLineInput, AllocationWorksheetLineResult,
-    AllocationWorksheetResult, CalculateAllocationWorksheetInput, CalculatedAdjustment,
-    CalculatedAdjustments, ConstraintAction, ConstraintEffect, ConstraintSubjectType,
-    GenerateCalculatedAdjustmentsInput, WorksheetCategoryExposure, WorksheetCategoryResult,
-    WorksheetDirection, WorksheetInputMode, WorksheetMode, WorksheetPricingSource,
-    WorksheetSourceRecord, WorksheetWarning, WorksheetWarningKind,
+    AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
+    AllocationWorksheetLineInput, AllocationWorksheetLineResult, AllocationWorksheetResult,
+    CalculateAllocationWorksheetInput, CalculatedAdjustment, CalculatedAdjustments,
+    ConstraintAction, ConstraintEffect, ConstraintSubjectType, DriftReport,
+    GenerateCalculatedAdjustmentsInput, WorksheetCashInput, WorksheetCategoryExposure,
+    WorksheetCategoryResult, WorksheetDirection, WorksheetInputMode, WorksheetMode,
+    WorksheetPricingSource, WorksheetSourceRecord, WorksheetWarning, WorksheetWarningKind,
 };
 use super::target_service::AllocationTargetServiceTrait;
 use super::worksheet_calculator::{
-    account_funding_shortfalls, apply_limits, assign_accounts, remaining_cash, run_sequence,
-    turnover_cap_value, AssignedLine, CategoryTarget, LimitsInput, PositionInput, SecurityInput,
-    SequenceInput,
+    account_funding, account_funding_shortfalls, apply_limits, assign_accounts, remaining_cash,
+    run_sequence, turnover_cap_value, AssignedLine, CategoryTarget, LimitsInput, PositionInput,
+    SecurityInput, SequenceInput,
 };
 
 const UNKNOWN_CATEGORY_ID: &str = "__UNKNOWN__";
@@ -67,11 +78,53 @@ pub trait AllocationWorksheetServiceTrait: Send + Sync {
     ) -> CoreResult<AllocationWorksheetResult>;
 }
 
+/// One account the worksheet may change, as the repositories report it.
+#[derive(Debug, Clone)]
+struct AccountSource {
+    account: Account,
+    /// The account's own contributions, so its cash is classified exactly as
+    /// the drift report classifies it.
+    contributions: TaxonomyHoldingContributions,
+    holdings: Vec<Holding>,
+}
+
+/// Everything a generation reads before any arithmetic happens.
+#[derive(Debug, Clone)]
+struct GenerationSources {
+    target: AllocationTarget,
+    drift: DriftReport,
+    accounts: Vec<AccountSource>,
+    constraints: Vec<AllocationTargetConstraint>,
+    assets_by_id: HashMap<String, Asset>,
+    quote_snapshots: HashMap<String, LatestQuoteSnapshot>,
+    fx_rates: Vec<ExchangeRate>,
+}
+
+/// Everything a preview reads before any arithmetic happens.
+///
+/// Assets, quotes and classifications cover both the worksheet lines and every
+/// security the selected accounts hold, so the source records describe the
+/// whole picture the preview was computed from.
+#[derive(Debug, Clone)]
+struct PreviewSources {
+    target: AllocationTarget,
+    drift: DriftReport,
+    weights: Vec<AllocationTargetWeight>,
+    taxonomy: TaxonomyWithCategories,
+    accounts: Vec<AccountSource>,
+    constraints: Vec<AllocationTargetConstraint>,
+    assets_by_id: HashMap<String, Asset>,
+    quote_snapshots: HashMap<String, LatestQuoteSnapshot>,
+    assignments: Vec<AssetTaxonomyAssignment>,
+    fx_rates: Vec<ExchangeRate>,
+}
+
 pub struct AllocationWorksheetService {
     allocation_target_service: Arc<dyn AllocationTargetServiceTrait>,
     drift_service: Arc<dyn DriftServiceTrait>,
     allocation_service: Arc<dyn AllocationServiceTrait>,
     holdings_service: Arc<dyn HoldingsServiceTrait>,
+    account_service: Arc<dyn AccountServiceTrait>,
     asset_service: Arc<dyn AssetServiceTrait>,
     taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
     quote_service: Arc<dyn QuoteServiceTrait>,
@@ -85,6 +138,7 @@ impl AllocationWorksheetService {
         drift_service: Arc<dyn DriftServiceTrait>,
         allocation_service: Arc<dyn AllocationServiceTrait>,
         holdings_service: Arc<dyn HoldingsServiceTrait>,
+        account_service: Arc<dyn AccountServiceTrait>,
         asset_service: Arc<dyn AssetServiceTrait>,
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         quote_service: Arc<dyn QuoteServiceTrait>,
@@ -95,6 +149,7 @@ impl AllocationWorksheetService {
             drift_service,
             allocation_service,
             holdings_service,
+            account_service,
             asset_service,
             taxonomy_service,
             quote_service,
@@ -174,6 +229,12 @@ impl AllocationWorksheetService {
             .unwrap_or_else(|| asset.id.clone())
     }
 
+    fn min_line_amount(target: &AllocationTarget) -> Decimal {
+        Decimal::from_str(&target.min_trade_amount)
+            .unwrap_or(Decimal::ZERO)
+            .max(Decimal::ZERO)
+    }
+
     /// The basis every target weight is sized against.
     ///
     /// §4.2 uses `planning_total` without defining it. Cash the worksheet
@@ -198,6 +259,118 @@ impl AllocationWorksheetService {
         } else {
             total_value + tracked_cash_to_use + external_cash
         }
+    }
+
+    // ── Accounts and cash (§6) ───────────────────────────────────────────────
+
+    /// Whether an account can hold the securities a worksheet changes.
+    ///
+    /// Cash accounts track activity and cash rather than investments, so they
+    /// can neither receive a security nor, with no transfer assumed, fund one
+    /// elsewhere.
+    fn can_hold_securities(account: &Account) -> bool {
+        matches!(
+            account.account_type.as_str(),
+            account_types::SECURITIES | account_types::CRYPTOCURRENCY
+        )
+    }
+
+    /// The accounts the user chose to change, validated against the target's
+    /// scope, in the order they were chosen.
+    fn selected_accounts(
+        scope_account_ids: &[String],
+        selected_account_ids: &[String],
+        accounts: &[Account],
+    ) -> CoreResult<Vec<Account>> {
+        if selected_account_ids.is_empty() {
+            return Err(Self::invalid(
+                "Select at least one account the worksheet may change",
+            ));
+        }
+
+        let mut seen = HashSet::new();
+        let mut selected = Vec::new();
+        for account_id in selected_account_ids {
+            if !seen.insert(account_id.as_str()) {
+                continue;
+            }
+            if !scope_account_ids.contains(account_id) {
+                return Err(Self::invalid(format!(
+                    "Account {account_id} is outside the resolved scope"
+                )));
+            }
+            let account = accounts
+                .iter()
+                .find(|account| &account.id == account_id)
+                .ok_or_else(|| Self::invalid(format!("Account {account_id} no longer exists")))?;
+            if !Self::can_hold_securities(account) {
+                return Err(Self::invalid(format!(
+                    "{} holds cash rather than investments and cannot take part in the worksheet",
+                    account.name
+                )));
+            }
+            selected.push(account.clone());
+        }
+        Ok(selected)
+    }
+
+    /// The cash an account can deploy.
+    ///
+    /// One rule for each account and for the global total, so cash left out of
+    /// one is left out of the other. With a cash sleeve, only cash classified
+    /// into it counts: cash tagged into another sleeve stays where the user put
+    /// it. Without one, every cash balance the account records counts.
+    fn available_cash(taxonomy_id: &str, source: &AccountSource) -> Decimal {
+        deployable_cash_from_contributions(taxonomy_id, &source.contributions)
+            .unwrap_or_else(|| tracked_cash(&source.holdings))
+    }
+
+    fn available_cash_by_account(
+        taxonomy_id: &str,
+        accounts: &[AccountSource],
+    ) -> HashMap<String, Decimal> {
+        accounts
+            .iter()
+            .map(|source| {
+                (
+                    source.account.id.clone(),
+                    Self::available_cash(taxonomy_id, source),
+                )
+            })
+            .collect()
+    }
+
+    fn account_ids(accounts: &[AccountSource]) -> Vec<String> {
+        accounts
+            .iter()
+            .map(|source| source.account.id.clone())
+            .collect()
+    }
+
+    fn holdings_by_account(accounts: &[AccountSource]) -> HashMap<String, Vec<Holding>> {
+        accounts
+            .iter()
+            .map(|source| (source.account.id.clone(), source.holdings.clone()))
+            .collect()
+    }
+
+    fn validate_cash(cash: &WorksheetCashInput, account_ids: &[String]) -> CoreResult<()> {
+        if cash.tracked_cash_to_use < Decimal::ZERO
+            || cash
+                .external_contribution
+                .values()
+                .any(|amount| *amount < Decimal::ZERO)
+        {
+            return Err(Self::invalid("Worksheet cash values must be non-negative"));
+        }
+        for account_id in cash.external_contribution.keys() {
+            if !account_ids.contains(account_id) {
+                return Err(Self::invalid(format!(
+                    "External contribution for account {account_id} is outside the selected accounts"
+                )));
+            }
+        }
+        Ok(())
     }
 
     // ── Constraints (#1177) ──────────────────────────────────────────────────
@@ -534,53 +707,15 @@ impl AllocationWorksheetService {
 
     // ── Calculator inputs ────────────────────────────────────────────────────
 
-    /// Every recorded security the calculation can act on, with what it is
-    /// worth in each category, what a unit costs and where its units sit.
-    async fn build_securities(
-        &self,
-        contributions: &[HoldingAllocationContribution],
-        holdings_by_account: &HashMap<String, Vec<Holding>>,
-        constraints: &[AllocationTargetConstraint],
-        eligible_asset_ids: Option<&HashSet<String>>,
-        base_currency: &str,
-    ) -> CoreResult<Vec<SecurityInput>> {
-        let mut asset_ids: Vec<String> = contributions
-            .iter()
-            .filter(|contribution| contribution.holding_type != HoldingType::Cash)
-            .map(|contribution| contribution.asset_id.clone())
-            .collect();
-        asset_ids.sort();
-        asset_ids.dedup();
-
-        let assets_by_id = self
-            .asset_service
-            .get_assets_by_asset_ids(&asset_ids)
-            .await?
-            .into_iter()
-            .map(|asset| (asset.id.clone(), asset))
-            .collect::<HashMap<_, _>>();
-
-        Ok(Self::securities_from(
-            contributions,
-            &assets_by_id,
-            &self.quote_service.get_latest_quotes_snapshot(&asset_ids)?,
-            &self.fx_service.get_latest_exchange_rates()?,
-            holdings_by_account,
-            constraints,
-            eligible_asset_ids,
-            base_currency,
-        ))
-    }
-
-    /// [`build_securities`](Self::build_securities) once every repository has
-    /// answered.
+    /// Every security the selected accounts hold, with what it is worth in each
+    /// category, what a unit costs and where its units sit.
     ///
     /// The classification keeps the unclassified residual, so the projection
     /// spreads an amount exactly as the preview's exposures do. Constraints
     /// only ever look at the classified part of it.
     #[allow(clippy::too_many_arguments)]
     fn securities_from(
-        contributions: &[HoldingAllocationContribution],
+        contributions: &[&HoldingAllocationContribution],
         assets_by_id: &HashMap<String, Asset>,
         snapshots: &HashMap<String, LatestQuoteSnapshot>,
         fx_rates: &[ExchangeRate],
@@ -682,7 +817,7 @@ impl AllocationWorksheetService {
         securities
     }
 
-    /// The accounts each security may be increased in (§6): in scope, and not
+    /// The accounts each security may be increased in (§6): selected, and not
     /// blocked from receiving it. Account type, tax wrapper and contribution
     /// room are never inputs.
     fn eligible_accounts(
@@ -716,85 +851,30 @@ impl AllocationWorksheetService {
             })
             .collect()
     }
-}
 
-#[async_trait]
-impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
-    async fn generate_adjustments(
-        &self,
-        input: GenerateCalculatedAdjustmentsInput,
+    // ── Generation (§4) ──────────────────────────────────────────────────────
+
+    /// The calculated adjustments, from sources already loaded.
+    fn generate(
+        input: &GenerateCalculatedAdjustmentsInput,
+        sources: &GenerationSources,
     ) -> CoreResult<CalculatedAdjustments> {
-        if input.cash.tracked_cash_to_use < Decimal::ZERO
-            || input
-                .cash
-                .external_contribution
-                .values()
-                .any(|amount| *amount < Decimal::ZERO)
-        {
-            return Err(Self::invalid("Worksheet cash values must be non-negative"));
-        }
-        for account_id in input.cash.external_contribution.keys() {
-            if !input.account_ids.contains(account_id) {
-                return Err(Self::invalid(format!(
-                    "External contribution for account {account_id} is outside the resolved scope"
-                )));
-            }
-        }
-
-        let target = self
-            .allocation_target_service
-            .get_target(&input.target_id)?
-            .ok_or_else(|| {
-                CoreError::Database(DatabaseError::NotFound(format!(
-                    "AllocationTarget {} not found",
-                    input.target_id
-                )))
-            })?;
+        let target = &sources.target;
         if input.mode == WorksheetMode::Rebalance && !target.allow_sells {
             return Err(Self::invalid(
                 "This target disables reductions; enable them before rebalancing",
             ));
         }
 
-        let drift = self
-            .drift_service
-            .get_drift_report_for_target(
-                &input.target_id,
-                &input.account_ids,
-                &input.base_currency,
-                &input.aggregated_account_id,
-            )
-            .await?;
-
+        let account_ids = Self::account_ids(&sources.accounts);
+        Self::validate_cash(&input.cash, &account_ids)?;
+        let cash_by_account =
+            Self::available_cash_by_account(&target.taxonomy_id, &sources.accounts);
         let tracked_cash_to_use = Self::tracked_cash_to_use(
             input.cash.tracked_cash_to_use,
-            drift.deployable_cash,
+            cash_by_account.values().copied().sum::<Decimal>(),
             &input.base_currency,
         )?;
-
-        let contributions = self
-            .allocation_service
-            .get_holding_contributions_for_taxonomy_for_accounts(
-                &input.account_ids,
-                &input.base_currency,
-                &target.taxonomy_id,
-                &input.aggregated_account_id,
-            )
-            .await?;
-
-        let mut holdings_by_account = HashMap::<String, Vec<Holding>>::new();
-        for account_id in &input.account_ids {
-            holdings_by_account.insert(
-                account_id.clone(),
-                self.holdings_service
-                    .get_holdings(account_id, &input.base_currency)
-                    .await?,
-            );
-        }
-
-        let constraints = self
-            .allocation_target_service
-            .list_target_constraints(&input.target_id)?;
 
         // An empty allowlist is a valid state, not an error (§4.1): every
         // increase it leaves unplaced becomes an unresolved category amount.
@@ -802,17 +882,24 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             .eligible_asset_ids
             .as_ref()
             .map(|ids| ids.iter().cloned().collect::<HashSet<_>>());
-        let securities = self
-            .build_securities(
-                &contributions.contributions,
-                &holdings_by_account,
-                &constraints,
-                eligible_asset_ids.as_ref(),
-                &input.base_currency,
-            )
-            .await?;
+        let contributions: Vec<&HoldingAllocationContribution> = sources
+            .accounts
+            .iter()
+            .flat_map(|source| source.contributions.contributions.iter())
+            .collect();
+        let securities = Self::securities_from(
+            &contributions,
+            &sources.assets_by_id,
+            &sources.quote_snapshots,
+            &sources.fx_rates,
+            &Self::holdings_by_account(&sources.accounts),
+            &sources.constraints,
+            eligible_asset_ids.as_ref(),
+            &input.base_currency,
+        );
 
-        let categories: Vec<CategoryTarget> = drift
+        let categories: Vec<CategoryTarget> = sources
+            .drift
             .rows
             .iter()
             .map(|row| CategoryTarget {
@@ -826,7 +913,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
 
         let external_total = input.cash.external_total();
         let planning_total = Self::planning_total(
-            drift.total_value,
+            sources.drift.total_value,
             tracked_cash_to_use,
             external_total,
             has_deployable_cash_categories(&target.taxonomy_id),
@@ -839,16 +926,15 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             planning_total,
             cash: tracked_cash_to_use,
             external_cash: &input.cash.external_contribution,
-            cash_category_id: drift
+            cash_category_id: sources
+                .drift
                 .rows
                 .iter()
                 .find(|row| row.is_cash)
                 .map(|row| row.category_id.clone()),
         });
 
-        let min_line_amount = Decimal::from_str(&target.min_trade_amount)
-            .unwrap_or(Decimal::ZERO)
-            .max(Decimal::ZERO);
+        let min_line_amount = Self::min_line_amount(target);
         let limited = apply_limits(
             sequence.increases,
             sequence.reductions,
@@ -865,18 +951,11 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         let assigned = assign_accounts(
             &limited.lines,
             &securities,
-            &Self::eligible_accounts(&securities, &input.account_ids, &constraints),
+            &Self::eligible_accounts(&securities, &account_ids, &sources.constraints),
             target.whole_shares_only,
             min_line_amount,
         );
 
-        // Recorded cash, per account. What the user selected caps the total the
-        // limits will spend; this check only answers whether the cash is in the
-        // account the increase was placed in (§6).
-        let cash_by_account: HashMap<String, Decimal> = holdings_by_account
-            .iter()
-            .map(|(account_id, holdings)| (account_id.clone(), tracked_cash(holdings)))
-            .collect();
         let funding_shortfalls = account_funding_shortfalls(
             &assigned,
             &cash_by_account,
@@ -890,8 +969,8 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             .collect();
 
         Ok(CalculatedAdjustments {
-            mode: input.mode,
-            rule: input.rule,
+            mode: input.mode.clone(),
+            rule: input.rule.clone(),
             adjustments: assigned
                 .into_iter()
                 .map(|line| CalculatedAdjustment {
@@ -924,24 +1003,20 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         })
     }
 
-    async fn calculate_worksheet(
-        &self,
-        input: CalculateAllocationWorksheetInput,
+    // ── Preview (§5) ─────────────────────────────────────────────────────────
+
+    /// The validated worksheet and its projection, from sources already
+    /// loaded. A worksheet with no lines is valid and projects the current
+    /// allocation.
+    fn preview(
+        input: &CalculateAllocationWorksheetInput,
+        sources: &PreviewSources,
     ) -> CoreResult<AllocationWorksheetResult> {
-        if input.lines.is_empty() || input.lines.len() > 50 {
-            return Err(Self::invalid(
-                "Worksheet must contain between 1 and 50 lines",
-            ));
-        }
-        if input.cash.tracked_cash_to_use < Decimal::ZERO
-            || input
-                .cash
-                .external_contribution
-                .values()
-                .any(|amount| *amount < Decimal::ZERO)
-        {
-            return Err(Self::invalid("Worksheet cash values must be non-negative"));
-        }
+        let target = &sources.target;
+        let drift = &sources.drift;
+        let account_ids = Self::account_ids(&sources.accounts);
+        Self::validate_cash(&input.cash, &account_ids)?;
+
         let mut line_ids = HashSet::new();
         for line in &input.lines {
             if line.line_id.trim().is_empty() || !line_ids.insert(line.line_id.as_str()) {
@@ -949,30 +1024,13 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                     "Every worksheet line must have a unique lineId",
                 ));
             }
-            if !input.account_ids.contains(&line.account_id) {
+            if !account_ids.contains(&line.account_id) {
                 return Err(Self::line_invalid(
                     &line.line_id,
-                    "selected account is outside the resolved scope",
+                    "the account is not one this worksheet may change",
                 ));
             }
         }
-        for account_id in input.cash.external_contribution.keys() {
-            if !input.account_ids.contains(account_id) {
-                return Err(Self::invalid(format!(
-                    "External contribution for account {account_id} is outside the resolved scope"
-                )));
-            }
-        }
-
-        let target = self
-            .allocation_target_service
-            .get_target(&input.target_id)?
-            .ok_or_else(|| {
-                CoreError::Database(DatabaseError::NotFound(format!(
-                    "AllocationTarget {} not found",
-                    input.target_id
-                )))
-            })?;
         if !target.allow_sells
             && input
                 .lines
@@ -984,41 +1042,18 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             ));
         }
 
-        let drift = self
-            .drift_service
-            .get_drift_report_for_target(
-                &input.target_id,
-                &input.account_ids,
-                &input.base_currency,
-                &input.aggregated_account_id,
-            )
-            .await?;
+        let cash_by_account =
+            Self::available_cash_by_account(&target.taxonomy_id, &sources.accounts);
+        let observed_tracked_cash = cash_by_account.values().copied().sum::<Decimal>();
         let tracked_cash_to_use = Self::tracked_cash_to_use(
             input.cash.tracked_cash_to_use,
-            drift.deployable_cash,
+            observed_tracked_cash,
             &input.base_currency,
         )?;
 
-        let asset_ids = input
-            .lines
-            .iter()
-            .map(|line| line.asset_id.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let assets = self
-            .asset_service
-            .get_assets_by_asset_ids(&asset_ids)
-            .await?;
-        let assets_by_id = assets
-            .into_iter()
-            .map(|asset| (asset.id.clone(), asset))
-            .collect::<HashMap<_, _>>();
-        let quote_snapshots = self.quote_service.get_latest_quotes_snapshot(&asset_ids)?;
-        let assignments = self
-            .taxonomy_service
-            .get_asset_assignments_for_assets(&asset_ids)?;
-        let assignments_by_asset = assignments
+        let holdings_by_account = Self::holdings_by_account(&sources.accounts);
+        let assignments_by_asset = sources
+            .assignments
             .iter()
             .filter(|assignment| assignment.taxonomy_id == target.taxonomy_id)
             .cloned()
@@ -1028,31 +1063,14 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                     .push(assignment);
                 map
             });
-        let taxonomy = self
-            .taxonomy_service
-            .get_taxonomy(&target.taxonomy_id)?
-            .ok_or_else(|| Self::invalid("Target taxonomy no longer exists"))?;
-        let category_names = taxonomy
+        let category_names = sources
+            .taxonomy
             .categories
             .iter()
             .map(|category| (category.id.clone(), category.name.clone()))
             .collect::<HashMap<_, _>>();
-        let mut category_order = taxonomy.categories.clone();
+        let mut category_order = sources.taxonomy.categories.clone();
         category_order.sort_by_key(|category| category.sort_order);
-        let fx_rates = self.fx_service.get_latest_exchange_rates()?;
-        let constraints = self
-            .allocation_target_service
-            .list_target_constraints(&input.target_id)?;
-
-        let mut holdings_by_account = HashMap::<String, Vec<Holding>>::new();
-        for account_id in &input.account_ids {
-            holdings_by_account.insert(
-                account_id.to_string(),
-                self.holdings_service
-                    .get_holdings(account_id, &input.base_currency)
-                    .await?,
-            );
-        }
 
         let external_total = input.cash.external_total();
         let mut warnings = Vec::new();
@@ -1065,15 +1083,13 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             ));
         }
 
-        let min_line_amount = Decimal::from_str(&target.min_trade_amount)
-            .unwrap_or(Decimal::ZERO)
-            .max(Decimal::ZERO);
+        let min_line_amount = Self::min_line_amount(target);
         let mut results = Vec::with_capacity(input.lines.len());
         let mut reduction_qty_by_position = HashMap::<(String, String), Decimal>::new();
         let mut used_fx_rates = HashMap::<String, ExchangeRate>::new();
 
         for line in &input.lines {
-            let asset: &Asset = assets_by_id.get(&line.asset_id).ok_or_else(|| {
+            let asset: &Asset = sources.assets_by_id.get(&line.asset_id).ok_or_else(|| {
                 Self::line_invalid(&line.line_id, "selected tracked security no longer exists")
             })?;
             if !asset.is_active || !asset.kind.is_investment() {
@@ -1082,11 +1098,11 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                     "selected asset is not an active tracked investment security",
                 ));
             }
-            let (snapshot, quote) = Self::quote_for_line(line, &quote_snapshots)?;
+            let (snapshot, quote) = Self::quote_for_line(line, &sources.quote_snapshots)?;
             let (fx_rate, fx_source, line_fx_rates) = Self::resolve_fx_source(
                 quote.currency.as_str(),
                 input.base_currency.as_str(),
-                &fx_rates,
+                &sources.fx_rates,
             )?;
             for rate in line_fx_rates {
                 used_fx_rates.insert(rate.id.clone(), rate);
@@ -1130,7 +1146,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 .iter()
                 .map(|exposure| exposure.category_id.clone())
                 .collect::<Vec<_>>();
-            for constraint in constraints.iter().filter(|constraint| {
+            for constraint in sources.constraints.iter().filter(|constraint| {
                 Self::constraint_matches(
                     constraint,
                     &line.direction,
@@ -1278,7 +1294,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         }
 
         // §6 — and separately, cash recorded in one account cannot fund an
-        // increase in another. Same check the prefill runs.
+        // increase in another. The same ledger the prefill reads.
         let assigned = results
             .iter()
             .map(|line| AssignedLine {
@@ -1294,22 +1310,24 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                     && line.estimated_amount < min_line_amount,
             })
             .collect::<Vec<_>>();
-        let cash_by_account = holdings_by_account
-            .iter()
-            .map(|(account_id, holdings)| (account_id.clone(), tracked_cash(holdings)))
-            .collect::<HashMap<_, _>>();
-        for shortfall in account_funding_shortfalls(
+        let account_funding = account_funding(
             &assigned,
+            &account_ids,
             &cash_by_account,
             &input.cash.external_contribution,
-        ) {
+        );
+        for shortfall in account_funding
+            .iter()
+            .filter(|funding| funding.remaining < Decimal::ZERO)
+        {
             warnings.push(Self::warning(
                 WorksheetWarningKind::AccountFunding,
                 None,
                 &shortfall.account_id,
                 format!(
                     "Increases of {} in this account exceed the {} it can fund on its own; no transfer between accounts is assumed.",
-                    shortfall.required, shortfall.available
+                    shortfall.increases,
+                    shortfall.increases + shortfall.remaining
                 ),
             ));
         }
@@ -1335,10 +1353,8 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             }
         }
 
-        let weights = self
-            .allocation_target_service
-            .list_weights_for_target(&input.target_id)?;
-        let target_bps_by_category = weights
+        let target_bps_by_category = sources
+            .weights
             .iter()
             .map(|weight| (weight.category_id.clone(), weight.target_bps))
             .collect::<HashMap<_, _>>();
@@ -1447,20 +1463,6 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             .max()
             .unwrap_or(0);
 
-        let mut source_asset_ids = asset_ids.clone();
-        for holding in holdings_by_account.values().flatten() {
-            if holding.holding_type != HoldingType::Cash {
-                source_asset_ids.push(Self::asset_key(holding));
-            }
-        }
-        source_asset_ids.sort();
-        source_asset_ids.dedup();
-        let source_assignments = self
-            .taxonomy_service
-            .get_asset_assignments_for_assets(&source_asset_ids)?;
-        let source_quotes = self
-            .quote_service
-            .get_latest_quotes_snapshot(&source_asset_ids)?;
         let mut source_records = vec![WorksheetSourceRecord {
             source_type: "allocation_target".to_string(),
             id: target.id.clone(),
@@ -1479,14 +1481,14 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         }];
         source_records.push(WorksheetSourceRecord {
             source_type: "taxonomy".to_string(),
-            id: taxonomy.taxonomy.id.clone(),
-            version: taxonomy.taxonomy.updated_at.and_utc().to_rfc3339(),
+            id: sources.taxonomy.taxonomy.id.clone(),
+            version: sources.taxonomy.taxonomy.updated_at.and_utc().to_rfc3339(),
             details: format!(
                 "name={};scope={}",
-                taxonomy.taxonomy.name, taxonomy.taxonomy.scope
+                sources.taxonomy.taxonomy.name, sources.taxonomy.taxonomy.scope
             ),
         });
-        for weight in &weights {
+        for weight in &sources.weights {
             source_records.push(WorksheetSourceRecord {
                 source_type: "target_weight".to_string(),
                 id: weight.id.clone(),
@@ -1497,7 +1499,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 ),
             });
         }
-        for category in &taxonomy.categories {
+        for category in &sources.taxonomy.categories {
             source_records.push(WorksheetSourceRecord {
                 source_type: "taxonomy_category".to_string(),
                 id: category.id.clone(),
@@ -1508,7 +1510,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 ),
             });
         }
-        for asset in assets_by_id.values() {
+        for asset in sources.assets_by_id.values() {
             source_records.push(WorksheetSourceRecord {
                 source_type: "asset".to_string(),
                 id: asset.id.clone(),
@@ -1537,7 +1539,8 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 ),
             });
         }
-        for assignment in source_assignments
+        for assignment in sources
+            .assignments
             .iter()
             .filter(|assignment| assignment.taxonomy_id == target.taxonomy_id)
         {
@@ -1554,7 +1557,7 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 ),
             });
         }
-        for constraint in &constraints {
+        for constraint in &sources.constraints {
             source_records.push(WorksheetSourceRecord {
                 source_type: "constraint".to_string(),
                 id: constraint.id.clone(),
@@ -1568,11 +1571,11 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
                 ),
             });
         }
-        for (asset_id, snapshot) in source_quotes {
-            if let Some(quote) = snapshot.quote {
+        for (asset_id, snapshot) in &sources.quote_snapshots {
+            if let Some(quote) = &snapshot.quote {
                 source_records.push(WorksheetSourceRecord {
                     source_type: "security_quote".to_string(),
-                    id: quote.id,
+                    id: quote.id.clone(),
                     version: quote.timestamp.to_rfc3339(),
                     details: format!(
                         "asset={};close={};currency={};source={}",
@@ -1618,16 +1621,16 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
         });
         warnings.sort_by(|a, b| a.id.cmp(&b.id));
         warnings.dedup_by(|a, b| a.id == b.id);
-        let source_fingerprint = Self::source_fingerprint(&input, &source_records);
+        let source_fingerprint = Self::source_fingerprint(input, &source_records);
 
         Ok(AllocationWorksheetResult {
-            target_id: target.id,
-            target_name: target.name,
-            base_currency: input.base_currency,
+            target_id: target.id.clone(),
+            target_name: target.name.clone(),
+            base_currency: input.base_currency.clone(),
             calculated_at: Utc::now().to_rfc3339(),
             source_fingerprint,
-            resolved_account_ids: input.account_ids,
-            observed_tracked_cash: drift.deployable_cash,
+            resolved_account_ids: input.account_ids.clone(),
+            observed_tracked_cash,
             tracked_cash_to_use,
             external_contribution: external_total,
             increase_total,
@@ -1637,27 +1640,227 @@ impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
             max_difference_bps_after,
             lines: results,
             categories,
+            account_funding,
             warnings,
             source_records,
         })
+    }
+
+    // ── Loading ──────────────────────────────────────────────────────────────
+
+    fn load_target(&self, target_id: &str) -> CoreResult<AllocationTarget> {
+        self.allocation_target_service
+            .get_target(target_id)?
+            .ok_or_else(|| {
+                CoreError::Database(DatabaseError::NotFound(format!(
+                    "AllocationTarget {target_id} not found"
+                )))
+            })
+    }
+
+    /// Validates the selected accounts, then loads what each holds and how its
+    /// cash is classified.
+    async fn load_accounts(
+        &self,
+        scope_account_ids: &[String],
+        selected_account_ids: &[String],
+        base_currency: &str,
+        taxonomy_id: &str,
+    ) -> CoreResult<Vec<AccountSource>> {
+        let known = self
+            .account_service
+            .get_accounts_by_ids(selected_account_ids)?;
+        let selected = Self::selected_accounts(scope_account_ids, selected_account_ids, &known)?;
+
+        let mut sources = Vec::with_capacity(selected.len());
+        for account in selected {
+            let account_ids = [account.id.clone()];
+            let contributions = self
+                .allocation_service
+                .get_holding_contributions_for_taxonomy_for_accounts(
+                    &account_ids,
+                    base_currency,
+                    taxonomy_id,
+                    &account.id,
+                )
+                .await?;
+            let holdings = self
+                .holdings_service
+                .get_holdings(&account.id, base_currency)
+                .await?;
+            sources.push(AccountSource {
+                account,
+                contributions,
+                holdings,
+            });
+        }
+        Ok(sources)
+    }
+
+    async fn load_assets(&self, asset_ids: &[String]) -> CoreResult<HashMap<String, Asset>> {
+        if asset_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(self
+            .asset_service
+            .get_assets_by_asset_ids(asset_ids)
+            .await?
+            .into_iter()
+            .map(|asset| (asset.id.clone(), asset))
+            .collect())
+    }
+
+    fn load_quotes(
+        &self,
+        asset_ids: &[String],
+    ) -> CoreResult<HashMap<String, LatestQuoteSnapshot>> {
+        if asset_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.quote_service.get_latest_quotes_snapshot(asset_ids)
+    }
+}
+
+fn sorted_unique(mut ids: Vec<String>) -> Vec<String> {
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+#[async_trait]
+impl AllocationWorksheetServiceTrait for AllocationWorksheetService {
+    async fn generate_adjustments(
+        &self,
+        input: GenerateCalculatedAdjustmentsInput,
+    ) -> CoreResult<CalculatedAdjustments> {
+        let target = self.load_target(&input.target_id)?;
+        let accounts = self
+            .load_accounts(
+                &input.account_ids,
+                &input.selected_account_ids,
+                &input.base_currency,
+                &target.taxonomy_id,
+            )
+            .await?;
+        let drift = self
+            .drift_service
+            .get_drift_report_for_target(
+                &input.target_id,
+                &input.account_ids,
+                &input.base_currency,
+                &input.aggregated_account_id,
+            )
+            .await?;
+
+        let asset_ids = sorted_unique(
+            accounts
+                .iter()
+                .flat_map(|source| source.contributions.contributions.iter())
+                .filter(|contribution| contribution.holding_type != HoldingType::Cash)
+                .map(|contribution| contribution.asset_id.clone())
+                .collect(),
+        );
+        let sources = GenerationSources {
+            constraints: self
+                .allocation_target_service
+                .list_target_constraints(&input.target_id)?,
+            assets_by_id: self.load_assets(&asset_ids).await?,
+            quote_snapshots: self.load_quotes(&asset_ids)?,
+            fx_rates: self.fx_service.get_latest_exchange_rates()?,
+            target,
+            drift,
+            accounts,
+        };
+        Self::generate(&input, &sources)
+    }
+
+    async fn calculate_worksheet(
+        &self,
+        input: CalculateAllocationWorksheetInput,
+    ) -> CoreResult<AllocationWorksheetResult> {
+        let target = self.load_target(&input.target_id)?;
+        let accounts = self
+            .load_accounts(
+                &input.account_ids,
+                &input.selected_account_ids,
+                &input.base_currency,
+                &target.taxonomy_id,
+            )
+            .await?;
+        let drift = self
+            .drift_service
+            .get_drift_report_for_target(
+                &input.target_id,
+                &input.account_ids,
+                &input.base_currency,
+                &input.aggregated_account_id,
+            )
+            .await?;
+        let taxonomy = self
+            .taxonomy_service
+            .get_taxonomy(&target.taxonomy_id)?
+            .ok_or_else(|| Self::invalid("Target taxonomy no longer exists"))?;
+
+        let asset_ids = sorted_unique(
+            input
+                .lines
+                .iter()
+                .map(|line| line.asset_id.clone())
+                .chain(
+                    accounts
+                        .iter()
+                        .flat_map(|source| source.holdings.iter())
+                        .filter(|holding| holding.holding_type != HoldingType::Cash)
+                        .map(Self::asset_key),
+                )
+                .collect(),
+        );
+        let assignments = if asset_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.taxonomy_service
+                .get_asset_assignments_for_assets(&asset_ids)?
+        };
+        let sources = PreviewSources {
+            weights: self
+                .allocation_target_service
+                .list_weights_for_target(&input.target_id)?,
+            constraints: self
+                .allocation_target_service
+                .list_target_constraints(&input.target_id)?,
+            assets_by_id: self.load_assets(&asset_ids).await?,
+            quote_snapshots: self.load_quotes(&asset_ids)?,
+            fx_rates: self.fx_service.get_latest_exchange_rates()?,
+            assignments,
+            target,
+            drift,
+            taxonomy,
+            accounts,
+        };
+        Self::preview(&input, &sources)
     }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 //
-// The calculation itself is covered in `worksheet_calculator`, which is pure by
-// design. What is left here is the resolution of its inputs: who may be
-// increased, who may be reduced, what a unit costs and what the weights are
-// sized against.
+// The arithmetic is covered in `worksheet_calculator`. What is tested here is
+// the resolution of its inputs and the complete flow the service runs once the
+// repositories have answered: generating adjustments, then previewing exactly
+// the worksheet those adjustments prefill.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::assets::AssetKind;
-    use crate::portfolio::allocation_targets::WorksheetCashInput;
+    use crate::portfolio::allocation_targets::{
+        AllocationRule, BandType, DriftRow, DriftStatus, RebalanceGoal, ScopeType, TriggerType,
+    };
     use crate::portfolio::holdings::{Instrument, MonetaryValue};
     use crate::quotes::Quote;
+    use crate::taxonomies::{Category, Taxonomy};
     use rust_decimal_macros::dec;
+
+    // ── Fixtures ─────────────────────────────────────────────────────────────
 
     fn asset(id: &str) -> Asset {
         Asset {
@@ -1674,28 +1877,49 @@ mod tests {
         ids.iter().map(|id| (id.to_string(), asset(id))).collect()
     }
 
-    fn contribution(
+    fn account(id: &str, account_type: &str) -> Account {
+        Account {
+            id: id.to_string(),
+            name: id.to_ascii_uppercase(),
+            account_type: account_type.to_string(),
+            currency: "USD".to_string(),
+            is_active: true,
+            ..Default::default()
+        }
+    }
+
+    fn contribution_in(
         asset_id: &str,
+        account_id: &str,
         category_id: &str,
+        holding_type: HoldingType,
         value: Decimal,
     ) -> HoldingAllocationContribution {
         HoldingAllocationContribution {
-            id: format!("{asset_id}:{category_id}"),
-            holding_id: format!("holding-{asset_id}"),
+            id: format!("{account_id}:{asset_id}:{category_id}"),
+            holding_id: format!("{account_id}-{asset_id}"),
             asset_id: asset_id.to_string(),
-            account_id: "acc-1".to_string(),
+            account_id: account_id.to_string(),
             source_account_ids: vec![],
             symbol: asset_id.to_ascii_uppercase(),
             name: asset_id.to_string(),
             exchange_mic: None,
             instrument_type: None,
-            holding_type: HoldingType::Security,
+            holding_type,
             quantity: Decimal::ONE,
             category_id: category_id.to_string(),
             category_name: category_id.to_string(),
             category_color: "#aaa".to_string(),
             value,
         }
+    }
+
+    fn contribution(
+        asset_id: &str,
+        category_id: &str,
+        value: Decimal,
+    ) -> HoldingAllocationContribution {
+        contribution_in(asset_id, "acc-1", category_id, HoldingType::Security, value)
     }
 
     fn holding(asset_id: &str, account_id: &str, quantity: Decimal) -> Holding {
@@ -1751,6 +1975,20 @@ mod tests {
         }
     }
 
+    fn cash_holding(account_id: &str, amount: Decimal) -> Holding {
+        Holding {
+            id: format!("{account_id}-cash"),
+            holding_type: HoldingType::Cash,
+            instrument: None,
+            quantity: amount,
+            market_value: MonetaryValue {
+                local: amount,
+                base: amount,
+            },
+            ..holding("cash", account_id, amount)
+        }
+    }
+
     fn snapshot(asset_id: &str, close: Decimal, currency: &str) -> LatestQuoteSnapshot {
         LatestQuoteSnapshot {
             quote: Some(Quote {
@@ -1789,14 +2027,44 @@ mod tests {
         }
     }
 
+    fn assignment_for(asset_id: &str, category_id: &str, weight: i32) -> AssetTaxonomyAssignment {
+        let now = Utc::now().naive_utc();
+        AssetTaxonomyAssignment {
+            id: format!("assignment-{asset_id}-{category_id}"),
+            asset_id: asset_id.to_string(),
+            taxonomy_id: "asset_classes".to_string(),
+            category_id: category_id.to_string(),
+            weight,
+            source: "manual".to_string(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn assignment(category_id: &str, weight: i32) -> AssetTaxonomyAssignment {
+        assignment_for("vti", category_id, weight)
+    }
+
+    fn fx_rate(id: &str, from: &str, to: &str, rate: Decimal) -> ExchangeRate {
+        ExchangeRate {
+            id: id.to_string(),
+            from_currency: from.to_string(),
+            to_currency: to.to_string(),
+            rate,
+            source: "manual".to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
     /// One security worth 1000 of equity, 10 units of it in `acc-1`, priced at
     /// 100 in the base currency.
     fn securities(
         constraints: &[AllocationTargetConstraint],
         eligible: Option<&HashSet<String>>,
     ) -> Vec<SecurityInput> {
+        let rows = [contribution("vti", "EQUITY", dec!(1000))];
         AllocationWorksheetService::securities_from(
-            &[contribution("vti", "EQUITY", dec!(1000))],
+            &rows.iter().collect::<Vec<_>>(),
             &assets(&["vti"]),
             &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "USD"))]),
             &[],
@@ -1806,6 +2074,637 @@ mod tests {
             "USD",
         )
     }
+
+    // ── A portfolio as the repositories would report it ─────────────────────
+
+    /// A security held in one account: its category and how many units at 100.
+    struct Position {
+        asset_id: String,
+        account_id: &'static str,
+        category_id: &'static str,
+        units: Decimal,
+    }
+
+    fn position(
+        asset_id: &str,
+        account_id: &'static str,
+        category_id: &'static str,
+        units: Decimal,
+    ) -> Position {
+        Position {
+            asset_id: asset_id.to_string(),
+            account_id,
+            category_id,
+            units,
+        }
+    }
+
+    /// Cash recorded in one account, and the category its contribution lands in.
+    struct CashBalance {
+        account_id: &'static str,
+        category_id: Option<&'static str>,
+        amount: Decimal,
+    }
+
+    struct Portfolio {
+        taxonomy_id: &'static str,
+        /// `(category, current value, target bps, is the cash sleeve)`.
+        categories: Vec<(&'static str, Decimal, i32, bool)>,
+        total_value: Decimal,
+        account_ids: Vec<&'static str>,
+        positions: Vec<Position>,
+        cash: Vec<CashBalance>,
+        allow_sells: bool,
+    }
+
+    const PRICE: Decimal = dec!(100);
+
+    impl Portfolio {
+        fn target(&self) -> AllocationTarget {
+            AllocationTarget {
+                id: "target-1".to_string(),
+                name: "Balanced".to_string(),
+                scope_type: ScopeType::All,
+                scope_id: None,
+                taxonomy_id: self.taxonomy_id.to_string(),
+                trigger_type: TriggerType::Manual,
+                drift_band_bps: 500,
+                band_type: BandType::Absolute,
+                relative_factor_bps: 2000,
+                rebalance_goal: RebalanceGoal::ExactTarget,
+                min_trade_amount: "0".to_string(),
+                whole_shares_only: false,
+                allow_sells: self.allow_sells,
+                max_turnover_bps: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                archived_at: None,
+            }
+        }
+
+        fn drift(&self) -> DriftReport {
+            let rows = self
+                .categories
+                .iter()
+                .map(|(category_id, current_value, target_bps, is_cash)| {
+                    let current_bps =
+                        AllocationWorksheetService::bps(*current_value, self.total_value);
+                    let target_value =
+                        Decimal::from(*target_bps) / Decimal::from(10_000) * self.total_value;
+                    DriftRow {
+                        category_id: category_id.to_string(),
+                        category_name: category_id.to_string(),
+                        color: "#aaa".to_string(),
+                        current_bps,
+                        target_bps: *target_bps,
+                        drift_bps: current_bps - target_bps,
+                        current_value: *current_value,
+                        target_value,
+                        value_delta: *current_value - target_value,
+                        effective_band_bps: 500,
+                        status: DriftStatus::InBand,
+                        is_required: true,
+                        is_zero_current: *current_value == Decimal::ZERO,
+                        is_cash: *is_cash,
+                    }
+                })
+                .collect();
+            DriftReport {
+                target_id: "target-1".to_string(),
+                scope_type: ScopeType::All,
+                scope_id: None,
+                total_value: self.total_value,
+                base_currency: "USD".to_string(),
+                max_drift_bps: 0,
+                out_of_band_count: 0,
+                rows,
+                holdings: None,
+                deployable_cash: Decimal::ZERO,
+            }
+        }
+
+        fn weights(&self) -> Vec<AllocationTargetWeight> {
+            self.categories
+                .iter()
+                .map(|(category_id, _, target_bps, _)| AllocationTargetWeight {
+                    id: format!("weight-{category_id}"),
+                    target_id: "target-1".to_string(),
+                    taxonomy_id: self.taxonomy_id.to_string(),
+                    category_id: category_id.to_string(),
+                    target_bps: *target_bps,
+                    is_locked: false,
+                    is_required: true,
+                    created_at: "2026-01-01T00:00:00Z".to_string(),
+                    updated_at: "2026-01-01T00:00:00Z".to_string(),
+                })
+                .collect()
+        }
+
+        fn taxonomy(&self) -> TaxonomyWithCategories {
+            let now = Utc::now().naive_utc();
+            TaxonomyWithCategories {
+                taxonomy: Taxonomy {
+                    id: self.taxonomy_id.to_string(),
+                    name: self.taxonomy_id.to_string(),
+                    color: "#aaa".to_string(),
+                    description: None,
+                    is_system: true,
+                    is_single_select: false,
+                    sort_order: 0,
+                    created_at: now,
+                    updated_at: now,
+                    scope: "asset".to_string(),
+                },
+                categories: self
+                    .categories
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (category_id, ..))| Category {
+                        id: category_id.to_string(),
+                        taxonomy_id: self.taxonomy_id.to_string(),
+                        parent_id: None,
+                        name: category_id.to_string(),
+                        key: category_id.to_string(),
+                        color: "#aaa".to_string(),
+                        description: None,
+                        sort_order: index as i32,
+                        created_at: now,
+                        updated_at: now,
+                        icon: None,
+                    })
+                    .collect(),
+            }
+        }
+
+        fn accounts(&self) -> Vec<AccountSource> {
+            self.account_ids
+                .iter()
+                .map(|account_id| {
+                    let mut rows: Vec<HoldingAllocationContribution> = self
+                        .positions
+                        .iter()
+                        .filter(|position| position.account_id == *account_id)
+                        .map(|position| {
+                            contribution_in(
+                                &position.asset_id,
+                                account_id,
+                                position.category_id,
+                                HoldingType::Security,
+                                position.units * PRICE,
+                            )
+                        })
+                        .collect();
+                    let mut holdings: Vec<Holding> = self
+                        .positions
+                        .iter()
+                        .filter(|position| position.account_id == *account_id)
+                        .map(|position| holding(&position.asset_id, account_id, position.units))
+                        .collect();
+                    for balance in self
+                        .cash
+                        .iter()
+                        .filter(|balance| balance.account_id == *account_id)
+                    {
+                        holdings.push(cash_holding(account_id, balance.amount));
+                        if let Some(category_id) = balance.category_id {
+                            rows.push(contribution_in(
+                                "cash",
+                                account_id,
+                                category_id,
+                                HoldingType::Cash,
+                                balance.amount,
+                            ));
+                        }
+                    }
+                    AccountSource {
+                        account: account(account_id, account_types::SECURITIES),
+                        contributions: TaxonomyHoldingContributions {
+                            taxonomy_id: self.taxonomy_id.to_string(),
+                            taxonomy_name: self.taxonomy_id.to_string(),
+                            total_value: rows.iter().map(|row| row.value).sum(),
+                            currency: "USD".to_string(),
+                            contributions: rows,
+                        },
+                        holdings,
+                    }
+                })
+                .collect()
+        }
+
+        fn asset_ids(&self) -> Vec<String> {
+            sorted_unique(self.positions.iter().map(|p| p.asset_id.clone()).collect())
+        }
+
+        fn assets_by_id(&self) -> HashMap<String, Asset> {
+            self.asset_ids()
+                .into_iter()
+                .map(|id| (id.clone(), asset(&id)))
+                .collect()
+        }
+
+        fn quotes(&self) -> HashMap<String, LatestQuoteSnapshot> {
+            self.asset_ids()
+                .into_iter()
+                .map(|id| (id.clone(), snapshot(&id, PRICE, "USD")))
+                .collect()
+        }
+
+        fn assignments(&self) -> Vec<AssetTaxonomyAssignment> {
+            self.positions
+                .iter()
+                .map(|position| AssetTaxonomyAssignment {
+                    taxonomy_id: self.taxonomy_id.to_string(),
+                    ..assignment_for(&position.asset_id, position.category_id, 10_000)
+                })
+                .collect()
+        }
+
+        fn scope(&self) -> Vec<String> {
+            self.account_ids.iter().map(|id| id.to_string()).collect()
+        }
+
+        fn generate(
+            &self,
+            mode: WorksheetMode,
+            cash: WorksheetCashInput,
+        ) -> CoreResult<CalculatedAdjustments> {
+            AllocationWorksheetService::generate(
+                &GenerateCalculatedAdjustmentsInput {
+                    target_id: "target-1".to_string(),
+                    account_ids: self.scope(),
+                    base_currency: "USD".to_string(),
+                    aggregated_account_id: "all".to_string(),
+                    selected_account_ids: self.scope(),
+                    mode,
+                    rule: AllocationRule::CurrentHoldingProportions,
+                    cash,
+                    eligible_asset_ids: None,
+                },
+                &GenerationSources {
+                    target: self.target(),
+                    drift: self.drift(),
+                    accounts: self.accounts(),
+                    constraints: Vec::new(),
+                    assets_by_id: self.assets_by_id(),
+                    quote_snapshots: self.quotes(),
+                    fx_rates: Vec::new(),
+                },
+            )
+        }
+
+        fn preview(
+            &self,
+            cash: WorksheetCashInput,
+            lines: Vec<AllocationWorksheetLineInput>,
+        ) -> CoreResult<AllocationWorksheetResult> {
+            AllocationWorksheetService::preview(
+                &CalculateAllocationWorksheetInput {
+                    target_id: "target-1".to_string(),
+                    cash,
+                    lines,
+                    account_ids: self.scope(),
+                    base_currency: "USD".to_string(),
+                    aggregated_account_id: "all".to_string(),
+                    selected_account_ids: self.scope(),
+                },
+                &PreviewSources {
+                    target: self.target(),
+                    drift: self.drift(),
+                    weights: self.weights(),
+                    taxonomy: self.taxonomy(),
+                    accounts: self.accounts(),
+                    constraints: Vec::new(),
+                    assets_by_id: self.assets_by_id(),
+                    quote_snapshots: self.quotes(),
+                    assignments: self.assignments(),
+                    fx_rates: Vec::new(),
+                },
+            )
+        }
+    }
+
+    fn tracked(amount: Decimal) -> WorksheetCashInput {
+        WorksheetCashInput {
+            tracked_cash_to_use: amount,
+            external_contribution: HashMap::new(),
+        }
+    }
+
+    /// The worksheet the calculated adjustments prefill, placed as calculated.
+    fn prefilled_lines(calculated: &CalculatedAdjustments) -> Vec<AllocationWorksheetLineInput> {
+        calculated
+            .adjustments
+            .iter()
+            .map(|adjustment| AllocationWorksheetLineInput {
+                line_id: adjustment.line_id.clone(),
+                direction: adjustment.direction.clone(),
+                asset_id: adjustment.asset_id.clone(),
+                account_id: adjustment
+                    .account_id
+                    .clone()
+                    .expect("a single-account worksheet places every line"),
+                input_mode: WorksheetInputMode::Amount,
+                value: adjustment.amount.abs(),
+            })
+            .collect()
+    }
+
+    fn projected_bps(result: &AllocationWorksheetResult, category_id: &str) -> i32 {
+        result
+            .categories
+            .iter()
+            .find(|category| category.category_id == category_id)
+            .map(|category| category.projected_bps)
+            .unwrap_or_else(|| panic!("no projection for {category_id}"))
+    }
+
+    fn has_warning(result: &AllocationWorksheetResult, kind: WorksheetWarningKind) -> bool {
+        result.warnings.iter().any(|warning| warning.kind == kind)
+    }
+
+    /// One brokerage account on asset classes: 6000 of equity, 2000 of fixed
+    /// income and 2000 of cash in the cash sleeve, out of 10000.
+    fn brokerage(equity_bps: i32, fixed_income_bps: i32, cash_bps: i32) -> Portfolio {
+        Portfolio {
+            taxonomy_id: "asset_classes",
+            categories: vec![
+                ("EQUITY", dec!(6000), equity_bps, false),
+                ("FIXED_INCOME", dec!(2000), fixed_income_bps, false),
+                ("CASH", dec!(2000), cash_bps, true),
+            ],
+            total_value: dec!(10000),
+            account_ids: vec!["acc-1"],
+            positions: vec![
+                position("vti", "acc-1", "EQUITY", dec!(60)),
+                position("bnd", "acc-1", "FIXED_INCOME", dec!(20)),
+            ],
+            cash: vec![CashBalance {
+                account_id: "acc-1",
+                category_id: Some("CASH"),
+                amount: dec!(2000),
+            }],
+            allow_sells: true,
+        }
+    }
+
+    // ── Generation to preview ───────────────────────────────────────────────
+
+    #[test]
+    fn the_preview_projects_what_the_generation_aimed_for() {
+        let portfolio = brokerage(7000, 3000, 0);
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(2000)))
+            .unwrap();
+        let result = portfolio
+            .preview(tracked(dec!(2000)), prefilled_lines(&calculated))
+            .unwrap();
+
+        assert_eq!(projected_bps(&result, "EQUITY"), 7000);
+        assert_eq!(projected_bps(&result, "FIXED_INCOME"), 3000);
+        assert_eq!(projected_bps(&result, "CASH"), 0);
+        assert_eq!(result.cash_remaining, calculated.remaining_cash);
+        assert!(!has_warning(
+            &result,
+            WorksheetWarningKind::InsufficientFunding
+        ));
+        assert!(!has_warning(&result, WorksheetWarningKind::AccountFunding));
+    }
+
+    #[test]
+    fn cash_left_undeployed_stays_in_the_sleeve_on_both_sides() {
+        // The target only asks for 500 more equity, so 1500 of the 2000 stays
+        // put. The generation reports it as remaining cash; the preview must
+        // agree and keep it in the cash sleeve rather than in the basis alone.
+        let portfolio = brokerage(6500, 2000, 1500);
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(2000)))
+            .unwrap();
+        let result = portfolio
+            .preview(tracked(dec!(2000)), prefilled_lines(&calculated))
+            .unwrap();
+
+        assert_eq!(calculated.remaining_cash, dec!(1500));
+        assert_eq!(result.cash_remaining, dec!(1500));
+        assert_eq!(projected_bps(&result, "EQUITY"), 6500);
+        assert_eq!(projected_bps(&result, "CASH"), 1500);
+    }
+
+    #[test]
+    fn a_taxonomy_without_a_cash_category_is_sized_against_the_cash_it_deploys() {
+        // Regions carry no cash sleeve, so the 2000 of cash is outside the 8000
+        // the drift report totals. Deploying it grows the classified universe
+        // to 10000, and both halves size the target against that.
+        let portfolio = Portfolio {
+            taxonomy_id: "regions",
+            categories: vec![
+                ("NORTH_AMERICA", dec!(6000), 7500, false),
+                ("EUROPE", dec!(2000), 2500, false),
+            ],
+            total_value: dec!(8000),
+            account_ids: vec!["acc-1"],
+            positions: vec![
+                position("vti", "acc-1", "NORTH_AMERICA", dec!(60)),
+                position("veu", "acc-1", "EUROPE", dec!(20)),
+            ],
+            cash: vec![CashBalance {
+                account_id: "acc-1",
+                category_id: None,
+                amount: dec!(2000),
+            }],
+            allow_sells: true,
+        };
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(2000)))
+            .unwrap();
+        let result = portfolio
+            .preview(tracked(dec!(2000)), prefilled_lines(&calculated))
+            .unwrap();
+
+        assert_eq!(calculated.adjustments.len(), 2);
+        assert_eq!(projected_bps(&result, "NORTH_AMERICA"), 7500);
+        assert_eq!(projected_bps(&result, "EUROPE"), 2500);
+        assert_eq!(result.observed_tracked_cash, dec!(2000));
+    }
+
+    #[test]
+    fn an_edit_past_the_available_funding_is_previewed_and_flagged() {
+        let portfolio = brokerage(7000, 3000, 0);
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(2000)))
+            .unwrap();
+        let mut lines = prefilled_lines(&calculated);
+        let vti = lines
+            .iter_mut()
+            .find(|line| line.asset_id == "vti")
+            .unwrap();
+        vti.value = dec!(3000);
+
+        let result = portfolio.preview(tracked(dec!(2000)), lines).unwrap();
+
+        assert_eq!(result.cash_remaining, dec!(-2000));
+        assert!(has_warning(
+            &result,
+            WorksheetWarningKind::InsufficientFunding
+        ));
+        assert!(has_warning(&result, WorksheetWarningKind::AccountFunding));
+        assert_eq!(result.account_funding[0].remaining, dec!(-2000));
+    }
+
+    #[test]
+    fn cash_excluded_globally_is_excluded_from_each_account() {
+        // The second account's cash is tagged as fixed income, so it is not
+        // cash to deploy. It must not count in the total, and it must not fund
+        // an increase placed in that account either.
+        let portfolio = Portfolio {
+            taxonomy_id: "asset_classes",
+            categories: vec![
+                ("EQUITY", dec!(6000), 7000, false),
+                ("FIXED_INCOME", dec!(3000), 3000, false),
+                ("CASH", dec!(1000), 0, true),
+            ],
+            total_value: dec!(10000),
+            account_ids: vec!["acc-1", "acc-2"],
+            positions: vec![
+                position("vti", "acc-1", "EQUITY", dec!(60)),
+                position("bnd", "acc-2", "FIXED_INCOME", dec!(20)),
+            ],
+            cash: vec![
+                CashBalance {
+                    account_id: "acc-1",
+                    category_id: Some("CASH"),
+                    amount: dec!(1000),
+                },
+                CashBalance {
+                    account_id: "acc-2",
+                    category_id: Some("FIXED_INCOME"),
+                    amount: dec!(1000),
+                },
+            ],
+            allow_sells: true,
+        };
+
+        assert!(portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(1500)))
+            .is_err());
+
+        let result = portfolio
+            .preview(
+                tracked(dec!(1000)),
+                vec![AllocationWorksheetLineInput {
+                    line_id: "vti-acc-2".to_string(),
+                    direction: WorksheetDirection::Increase,
+                    asset_id: "vti".to_string(),
+                    account_id: "acc-2".to_string(),
+                    input_mode: WorksheetInputMode::Amount,
+                    value: dec!(800),
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(result.observed_tracked_cash, dec!(1000));
+        let second = result
+            .account_funding
+            .iter()
+            .find(|funding| funding.account_id == "acc-2")
+            .unwrap();
+        assert_eq!(second.available_cash, Decimal::ZERO);
+        assert_eq!(second.remaining, dec!(-800));
+        assert!(has_warning(&result, WorksheetWarningKind::AccountFunding));
+        assert!(!has_warning(
+            &result,
+            WorksheetWarningKind::InsufficientFunding
+        ));
+    }
+
+    #[test]
+    fn a_worksheet_with_no_adjustments_previews_the_current_allocation() {
+        let portfolio = brokerage(7000, 3000, 0);
+
+        let result = portfolio
+            .preview(tracked(Decimal::ZERO), Vec::new())
+            .unwrap();
+
+        assert!(result.lines.is_empty());
+        for category in &result.categories {
+            assert_eq!(category.projected_bps, category.current_bps);
+        }
+        assert_eq!(result.account_funding.len(), 1);
+    }
+
+    #[test]
+    fn a_worksheet_is_not_cut_to_fit_a_line_count() {
+        // Sixty securities each receive a share of the cash. Every line the
+        // generation produces must reach the preview.
+        let portfolio = Portfolio {
+            taxonomy_id: "asset_classes",
+            categories: vec![
+                ("EQUITY", dec!(6000), 10000, false),
+                ("CASH", dec!(4000), 0, true),
+            ],
+            total_value: dec!(10000),
+            account_ids: vec!["acc-1"],
+            positions: (0..60)
+                .map(|index| position(&format!("s{index:02}"), "acc-1", "EQUITY", dec!(1)))
+                .collect(),
+            cash: vec![CashBalance {
+                account_id: "acc-1",
+                category_id: Some("CASH"),
+                amount: dec!(4000),
+            }],
+            allow_sells: true,
+        };
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(3000)))
+            .unwrap();
+        let result = portfolio
+            .preview(tracked(dec!(3000)), prefilled_lines(&calculated))
+            .unwrap();
+
+        assert_eq!(calculated.adjustments.len(), 60);
+        assert_eq!(result.lines.len(), 60);
+    }
+
+    #[test]
+    fn a_cash_account_cannot_take_part_in_the_worksheet() {
+        let scope = vec!["acc-1".to_string(), "bank".to_string()];
+        let known = vec![
+            account("acc-1", account_types::SECURITIES),
+            account("bank", account_types::CASH),
+        ];
+
+        assert!(AllocationWorksheetService::selected_accounts(
+            &scope,
+            &["bank".to_string()],
+            &known
+        )
+        .is_err());
+        let selected =
+            AllocationWorksheetService::selected_accounts(&scope, &["acc-1".to_string()], &known)
+                .unwrap();
+        assert_eq!(selected.len(), 1);
+    }
+
+    #[test]
+    fn an_account_outside_the_scope_cannot_be_selected() {
+        let known = vec![account("acc-9", account_types::SECURITIES)];
+
+        assert!(AllocationWorksheetService::selected_accounts(
+            &["acc-1".to_string()],
+            &["acc-9".to_string()],
+            &known
+        )
+        .is_err());
+        assert!(
+            AllocationWorksheetService::selected_accounts(&["acc-1".to_string()], &[], &known)
+                .is_err()
+        );
+    }
+
+    // ── Calculator inputs ───────────────────────────────────────────────────
 
     #[test]
     fn the_prefill_and_the_preview_are_sized_against_the_same_total() {
@@ -1824,7 +2723,7 @@ mod tests {
     #[test]
     fn selecting_no_eligible_security_is_a_valid_state() {
         // §4.1 — the increases that cannot be placed become unresolved category
-        // amounts. It is not a validation error, which is what `main` makes it.
+        // amounts. It is not a validation error.
         let securities = securities(&[], Some(&HashSet::new()));
 
         assert_eq!(securities.len(), 1);
@@ -1931,9 +2830,10 @@ mod tests {
     fn a_security_the_preview_would_refuse_is_never_a_candidate() {
         let mut inactive = asset("vti");
         inactive.is_active = false;
+        let rows = [contribution("vti", "EQUITY", dec!(1000))];
 
         let securities = AllocationWorksheetService::securities_from(
-            &[contribution("vti", "EQUITY", dec!(1000))],
+            &rows.iter().collect::<Vec<_>>(),
             &HashMap::from([("vti".to_string(), inactive)]),
             &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "USD"))]),
             &[],
@@ -1948,8 +2848,10 @@ mod tests {
 
     #[test]
     fn a_security_without_a_usable_price_carries_none() {
+        let rows = [contribution("vti", "EQUITY", dec!(1000))];
+
         let securities = AllocationWorksheetService::securities_from(
-            &[contribution("vti", "EQUITY", dec!(1000))],
+            &rows.iter().collect::<Vec<_>>(),
             &assets(&["vti"]),
             &HashMap::new(),
             &[],
@@ -1964,20 +2866,13 @@ mod tests {
 
     #[test]
     fn a_price_is_converted_into_the_base_currency() {
-        let rates = vec![ExchangeRate {
-            id: "eur-usd".to_string(),
-            from_currency: "EUR".to_string(),
-            to_currency: "USD".to_string(),
-            rate: dec!(1.1),
-            source: "manual".to_string(),
-            timestamp: Utc::now(),
-        }];
+        let rows = [contribution("vti", "EQUITY", dec!(1000))];
 
         let securities = AllocationWorksheetService::securities_from(
-            &[contribution("vti", "EQUITY", dec!(1000))],
+            &rows.iter().collect::<Vec<_>>(),
             &assets(&["vti"]),
             &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "EUR"))]),
-            &rates,
+            &[fx_rate("eur-usd", "EUR", "USD", dec!(1.1))],
             &HashMap::new(),
             &[],
             None,
@@ -1992,11 +2887,13 @@ mod tests {
         // The projection has to spread an amount exactly as the preview's
         // exposures do, so the residual is part of the security's value. It
         // carries no target, so no category gap ever reaches it.
+        let rows = [
+            contribution("vti", "EQUITY", dec!(650)),
+            contribution("vti", UNKNOWN_CATEGORY_ID, dec!(350)),
+        ];
+
         let securities = AllocationWorksheetService::securities_from(
-            &[
-                contribution("vti", "EQUITY", dec!(650)),
-                contribution("vti", UNKNOWN_CATEGORY_ID, dec!(350)),
-            ],
+            &rows.iter().collect::<Vec<_>>(),
             &assets(&["vti"]),
             &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "USD"))]),
             &[],
@@ -2015,7 +2912,33 @@ mod tests {
         );
     }
 
-    // ── Preview of an edited worksheet (§5) ──────────────────────────────
+    #[test]
+    fn a_position_is_where_the_units_actually_sit() {
+        let rows = [contribution("vti", "EQUITY", dec!(1000))];
+
+        let securities = AllocationWorksheetService::securities_from(
+            &rows.iter().collect::<Vec<_>>(),
+            &assets(&["vti"]),
+            &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "USD"))]),
+            &[],
+            &HashMap::from([
+                ("acc-1".to_string(), vec![holding("vti", "acc-1", dec!(6))]),
+                ("acc-2".to_string(), vec![holding("vti", "acc-2", dec!(4))]),
+            ]),
+            &[],
+            None,
+            "USD",
+        );
+
+        let positions = &securities[0].positions;
+        assert_eq!(positions.len(), 2);
+        assert_eq!(positions[0].account_id, "acc-1");
+        assert_eq!(positions[0].quantity, dec!(6));
+        assert_eq!(positions[1].account_id, "acc-2");
+        assert_eq!(positions[1].quantity, dec!(4));
+    }
+
+    // ── Worksheet lines ─────────────────────────────────────────────────────
 
     fn line(mode: WorksheetInputMode, value: Decimal) -> AllocationWorksheetLineInput {
         AllocationWorksheetLineInput {
@@ -2031,39 +2954,12 @@ mod tests {
     fn request() -> CalculateAllocationWorksheetInput {
         CalculateAllocationWorksheetInput {
             target_id: "target-1".to_string(),
-            cash: WorksheetCashInput {
-                tracked_cash_to_use: dec!(10),
-                external_contribution: HashMap::new(),
-            },
+            cash: tracked(dec!(10)),
             lines: vec![line(WorksheetInputMode::Amount, dec!(10))],
             account_ids: vec!["acc-1".to_string()],
             base_currency: "USD".to_string(),
             aggregated_account_id: "all".to_string(),
-        }
-    }
-
-    fn assignment(category_id: &str, weight: i32) -> AssetTaxonomyAssignment {
-        let now = Utc::now().naive_utc();
-        AssetTaxonomyAssignment {
-            id: format!("assignment-{category_id}"),
-            asset_id: "vti".to_string(),
-            taxonomy_id: "asset_classes".to_string(),
-            category_id: category_id.to_string(),
-            weight,
-            source: "manual".to_string(),
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    fn fx_rate(id: &str, from: &str, to: &str, rate: Decimal) -> ExchangeRate {
-        ExchangeRate {
-            id: id.to_string(),
-            from_currency: from.to_string(),
-            to_currency: to.to_string(),
-            rate,
-            source: "manual".to_string(),
-            timestamp: Utc::now(),
+            selected_account_ids: vec!["acc-1".to_string()],
         }
     }
 
@@ -2176,9 +3072,6 @@ mod tests {
 
     #[test]
     fn an_edit_over_the_available_funding_is_reported_not_rejected() {
-        // §5 — the worksheet is the source of truth once prefilled, so the
-        // overspend comes back as a negative remainder the caller warns on
-        // rather than as a refusal to calculate.
         assert_eq!(
             AllocationWorksheetService::cash_remaining(dec!(100), dec!(25), dec!(160), dec!(50)),
             dec!(15)
@@ -2241,29 +3134,5 @@ mod tests {
             original,
             AllocationWorksheetService::source_fingerprint(&request(), &source_changed)
         );
-    }
-
-    #[test]
-    fn a_position_is_where_the_units_actually_sit() {
-        let securities = AllocationWorksheetService::securities_from(
-            &[contribution("vti", "EQUITY", dec!(1000))],
-            &assets(&["vti"]),
-            &HashMap::from([("vti".to_string(), snapshot("vti", dec!(100), "USD"))]),
-            &[],
-            &HashMap::from([
-                ("acc-1".to_string(), vec![holding("vti", "acc-1", dec!(6))]),
-                ("acc-2".to_string(), vec![holding("vti", "acc-2", dec!(4))]),
-            ]),
-            &[],
-            None,
-            "USD",
-        );
-
-        let positions = &securities[0].positions;
-        assert_eq!(positions.len(), 2);
-        assert_eq!(positions[0].account_id, "acc-1");
-        assert_eq!(positions[0].quantity, dec!(6));
-        assert_eq!(positions[1].account_id, "acc-2");
-        assert_eq!(positions[1].quantity, dec!(4));
     }
 }

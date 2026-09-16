@@ -210,6 +210,7 @@ struct GenerateAdjustmentsBody {
     cash: WorksheetCashInput,
     #[serde(default)]
     eligible_asset_ids: Option<Vec<String>>,
+    selected_account_ids: Vec<String>,
     filter: AccountScope,
 }
 
@@ -219,6 +220,7 @@ struct CalculateWorksheetBody {
     target_id: String,
     cash: WorksheetCashInput,
     lines: Vec<AllocationWorksheetLineInput>,
+    selected_account_ids: Vec<String>,
     filter: AccountScope,
 }
 
@@ -284,6 +286,7 @@ async fn generate_adjustments(
             account_ids: scope.account_ids,
             base_currency: scope.base_currency,
             aggregated_account_id: scope.aggregated_account_id,
+            selected_account_ids: body.selected_account_ids,
             mode: body.mode,
             rule: body.rule,
             cash: body.cash,
@@ -307,6 +310,7 @@ async fn calculate_worksheet(
             account_ids: scope.account_ids,
             base_currency: scope.base_currency,
             aggregated_account_id: scope.aggregated_account_id,
+            selected_account_ids: body.selected_account_ids,
         })
         .await?;
     Ok(Json(result))
@@ -385,6 +389,7 @@ mod tests {
                 "externalContribution": { "acc-1": 1000, "acc-2": 500.25 }
             },
             "eligibleAssetIds": [],
+            "selectedAccountIds": ["acc-1"],
             "filter": { "type": "all" }
         }))
         .unwrap();
@@ -406,6 +411,7 @@ mod tests {
             "mode": "invest_cash",
             "rule": "current_holding_proportions",
             "cash": { "trackedCashToUse": 0 },
+            "selectedAccountIds": ["acc-1"],
             "filter": { "type": "all" }
         }))
         .unwrap();
@@ -427,6 +433,7 @@ mod tests {
                 "inputMode": "quantity",
                 "value": 3
             }],
+            "selectedAccountIds": ["acc-1"],
             "filter": { "type": "account", "accountId": "acc-1" }
         }))
         .unwrap();

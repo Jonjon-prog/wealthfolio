@@ -2886,6 +2886,16 @@ export interface WorksheetSourceRecord {
   details: string;
 }
 
+/** Where one account stands once the worksheet is applied. A negative `remaining` is funding the account needs. */
+export interface WorksheetAccountFunding {
+  accountId: string;
+  availableCash: number;
+  externalCash: number;
+  reductionProceeds: number;
+  increases: number;
+  remaining: number;
+}
+
 export interface AllocationWorksheetResult {
   targetId: string;
   targetName: string;
@@ -2903,6 +2913,7 @@ export interface AllocationWorksheetResult {
   maxDifferenceBpsAfter: number;
   lines: AllocationWorksheetLineResult[];
   categories: WorksheetCategoryResult[];
+  accountFunding: WorksheetAccountFunding[];
   warnings: WorksheetWarning[];
   sourceRecords: WorksheetSourceRecord[];
 }

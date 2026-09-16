@@ -525,6 +525,10 @@ pub struct GenerateCalculatedAdjustmentsInput {
     pub account_ids: Vec<String>,
     pub base_currency: String,
     pub aggregated_account_id: String,
+    /// Accounts the worksheet may change: where positions are reduced,
+    /// increases are placed and cash is deployed. The target's weights are
+    /// still measured against every account in `account_ids`.
+    pub selected_account_ids: Vec<String>,
     pub mode: WorksheetMode,
     pub rule: AllocationRule,
     pub cash: WorksheetCashInput,
@@ -587,6 +591,10 @@ pub struct CalculateAllocationWorksheetInput {
     pub account_ids: Vec<String>,
     pub base_currency: String,
     pub aggregated_account_id: String,
+    /// Accounts the worksheet may change: where positions are reduced,
+    /// increases are placed and cash is deployed. The target's weights are
+    /// still measured against every account in `account_ids`.
+    pub selected_account_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -687,6 +695,22 @@ pub struct WorksheetSourceRecord {
     pub details: String,
 }
 
+/// Where one account stands once the worksheet is applied (§6).
+///
+/// An account spends its own cash, the cash not yet recorded that the user put
+/// there, and what its own reductions raise. A negative `remaining` is funding
+/// the account needs and does not have; it is reported, never corrected.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorksheetAccountFunding {
+    pub account_id: String,
+    pub available_cash: Decimal,
+    pub external_cash: Decimal,
+    pub reduction_proceeds: Decimal,
+    pub increases: Decimal,
+    pub remaining: Decimal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AllocationWorksheetResult {
@@ -706,6 +730,7 @@ pub struct AllocationWorksheetResult {
     pub max_difference_bps_after: i32,
     pub lines: Vec<AllocationWorksheetLineResult>,
     pub categories: Vec<WorksheetCategoryResult>,
+    pub account_funding: Vec<WorksheetAccountFunding>,
     pub warnings: Vec<WorksheetWarning>,
     pub source_records: Vec<WorksheetSourceRecord>,
 }

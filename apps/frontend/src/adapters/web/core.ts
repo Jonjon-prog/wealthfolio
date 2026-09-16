@@ -1989,32 +1989,36 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "generate_calculated_adjustments": {
-      const { targetId, mode, rule, cash, filter, eligibleAssetIds } = payload as {
-        targetId: string;
-        mode: string;
-        rule: string;
-        cash: unknown;
-        filter: unknown;
-        eligibleAssetIds?: string[];
-      };
+      const { targetId, mode, rule, cash, selectedAccountIds, filter, eligibleAssetIds } =
+        payload as {
+          targetId: string;
+          mode: string;
+          rule: string;
+          cash: unknown;
+          selectedAccountIds: string[];
+          filter: unknown;
+          eligibleAssetIds?: string[];
+        };
       body = JSON.stringify({
         targetId,
         mode,
         rule,
         cash,
+        selectedAccountIds,
         filter,
         ...(eligibleAssetIds === undefined ? {} : { eligibleAssetIds }),
       });
       break;
     }
     case "calculate_allocation_worksheet": {
-      const { targetId, cash, lines, filter } = payload as {
+      const { targetId, cash, lines, selectedAccountIds, filter } = payload as {
         targetId: string;
         cash: unknown;
         lines: unknown[];
+        selectedAccountIds: string[];
         filter: unknown;
       };
-      body = JSON.stringify({ targetId, cash, lines, filter });
+      body = JSON.stringify({ targetId, cash, lines, selectedAccountIds, filter });
       break;
     }
     // AI Providers

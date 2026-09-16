@@ -125,6 +125,7 @@ export const generateCalculatedAdjustments = async (
   mode: WorksheetMode,
   rule: AllocationRule,
   cash: WorksheetCashInput,
+  selectedAccountIds: readonly string[],
   filter: AccountScope,
   eligibleAssetIds?: readonly string[],
 ): Promise<CalculatedAdjustments> => {
@@ -133,9 +134,10 @@ export const generateCalculatedAdjustments = async (
     mode: WorksheetMode;
     rule: AllocationRule;
     cash: WorksheetCashInput;
+    selectedAccountIds: string[];
     filter: AccountScope;
     eligibleAssetIds?: string[];
-  } = { targetId, mode, rule, cash, filter };
+  } = { targetId, mode, rule, cash, selectedAccountIds: [...selectedAccountIds], filter };
   const canonicalIds = canonicalizeEligibleAssetIds(eligibleAssetIds);
   if (canonicalIds !== undefined) payload.eligibleAssetIds = canonicalIds;
   return invoke<CalculatedAdjustments>("generate_calculated_adjustments", payload);
@@ -146,12 +148,14 @@ export const calculateAllocationWorksheet = async (
   targetId: string,
   cash: WorksheetCashInput,
   lines: AllocationWorksheetLineInput[],
+  selectedAccountIds: readonly string[],
   filter: AccountScope,
 ): Promise<AllocationWorksheetResult> => {
   return invoke<AllocationWorksheetResult>("calculate_allocation_worksheet", {
     targetId,
     cash,
     lines,
+    selectedAccountIds: [...selectedAccountIds],
     filter,
   });
 };

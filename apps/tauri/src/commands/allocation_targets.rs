@@ -311,6 +311,7 @@ pub async fn generate_calculated_adjustments(
     rule: AllocationRule,
     cash: WorksheetCashInput,
     eligible_asset_ids: Option<Vec<String>>,
+    selected_account_ids: Vec<String>,
     filter: AccountScopeInput,
 ) -> Result<CalculatedAdjustments, String> {
     let context = state.context()?;
@@ -322,6 +323,7 @@ pub async fn generate_calculated_adjustments(
             account_ids: scope.account_ids,
             base_currency: scope.base_currency,
             aggregated_account_id: scope.aggregated_account_id,
+            selected_account_ids,
             mode,
             rule,
             cash,
@@ -337,6 +339,7 @@ pub async fn calculate_allocation_worksheet(
     target_id: String,
     cash: WorksheetCashInput,
     lines: Vec<AllocationWorksheetLineInput>,
+    selected_account_ids: Vec<String>,
     filter: AccountScopeInput,
 ) -> Result<AllocationWorksheetResult, String> {
     let context = state.context()?;
@@ -350,6 +353,7 @@ pub async fn calculate_allocation_worksheet(
             account_ids: scope.account_ids,
             base_currency: scope.base_currency,
             aggregated_account_id: scope.aggregated_account_id,
+            selected_account_ids,
         })
         .await
         .map_err(|e| e.to_string())
