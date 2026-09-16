@@ -239,6 +239,11 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
 
   it("prefills the worksheet when the user recalculates from target", async () => {
     const user = await renderWorksheet();
+    // The cash to deploy follows what the chosen accounts record, which the
+    // core reports rather than the drift report.
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2000"),
+    );
 
     await calculateFromTarget(user);
 
@@ -247,7 +252,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
       targetId: "target-1",
       mode: "invest_cash",
       rule: "current_holding_proportions",
-      cash: { trackedCashToUse: 0, externalContribution: {} },
+      cash: { trackedCashToUse: 2000, externalContribution: {} },
       selectedAccountIds: ["acc-1"],
       eligibleAssetIds: undefined,
     });
@@ -283,7 +288,9 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     const user = await renderWorksheet();
     await calculateFromTarget(user);
 
-    await user.type(screen.getByRole("textbox", { name: "Cash to deploy" }), "100");
+    const cashInput = screen.getByRole("textbox", { name: "Cash to deploy" });
+    await user.clear(cashInput);
+    await user.type(cashInput, "100");
 
     expect(await screen.findByText(/Inputs changed since these adjustments/)).toBeInTheDocument();
     expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
@@ -341,6 +348,24 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
     await waitFor(() => expect(generateMock).toHaveBeenCalled());
     expect(generateMock.mock.lastCall?.[0]).toMatchObject({ selectedAccountIds: ["acc-1"] });
+  });
+
+  it("caps the cash to deploy at what the chosen accounts record", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage")];
+    const user = await renderWorksheet();
+    const cashInput = screen.getByRole("textbox", { name: "Cash to deploy" });
+    await waitFor(() => expect(cashInput).toHaveValue("2000"));
+
+    await user.clear(cashInput);
+    await user.type(cashInput, "5000");
+    await user.tab();
+
+    expect(cashInput).toHaveValue("2000");
+    await waitFor(() =>
+      expect(previewMock.mock.lastCall?.[0]).toMatchObject({
+        cash: { trackedCashToUse: 2000 },
+      }),
+    );
   });
 
   it("asks for cash not yet recorded per account only when several are in scope", async () => {

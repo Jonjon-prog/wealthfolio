@@ -89,7 +89,7 @@ import { accountScopeKey } from "./target-scope";
 const DISCLOSURE_STORAGE_KEY = "wealthfolio:rebalancing-worksheet-disclosure:v2";
 const DRAFT_STORAGE_PREFIX = "wealthfolio:rebalancing-worksheet-draft:v3";
 const DISCLOSURE_VERSION = 2;
-const DRAFT_VERSION = 3;
+const DRAFT_VERSION = 4;
 const CASH_PRESETS = [0.25, 0.5, 0.75, 1] as const;
 const AMOUNT_EPSILON = 0.01;
 const AUTO_CALCULATE_DEBOUNCE_MS = 500;
@@ -149,7 +149,8 @@ interface WorksheetDraft {
   editMode: WorksheetEditMode;
   mode: WorksheetMode;
   rule: AllocationRule | null;
-  trackedCash: string;
+  /** `null` follows the cash the chosen accounts record. */
+  trackedCash: string | null;
   externalCash: Record<string, string>;
   selectedAccountIds: string[];
   addedAssetIds: string[];
@@ -231,7 +232,7 @@ function readWorksheetDraft(storageKey: string): WorksheetDraft | null {
       (draft.editMode !== "amount" && draft.editMode !== "after_percentage") ||
       (draft.mode !== "invest_cash" && draft.mode !== "rebalance") ||
       (draft.rule !== null && draft.rule !== "current_holding_proportions") ||
-      typeof draft.trackedCash !== "string" ||
+      (draft.trackedCash !== null && typeof draft.trackedCash !== "string") ||
       !draft.externalCash ||
       typeof draft.externalCash !== "object" ||
       !Array.isArray(draft.selectedAccountIds) ||
@@ -670,8 +671,9 @@ function AccountsControl({
 }
 
 interface CashControlProps {
-  observedCash: number;
-  trackedCash: string;
+  /** What the chosen accounts record, as the core counts it. */
+  availableCash: number | undefined;
+  trackedCash: string | null;
   onTrackedCashChange: (value: string) => void;
   accounts: Account[];
   externalCash: Record<string, string>;
@@ -679,8 +681,17 @@ interface CashControlProps {
   currency: string;
 }
 
+/**
+ * The cash the worksheet may deploy, bounded by what the chosen accounts
+ * actually record (§6).
+ *
+ * `availableCash` is unknown until the core has answered for this selection.
+ * The drift report's figure is never substituted for it: that one spans the
+ * whole scope and counts cash accounts, which hold no securities and cannot
+ * fund one elsewhere with no transfer assumed.
+ */
 function CashControl({
-  observedCash,
+  availableCash,
   trackedCash,
   onTrackedCashChange,
   accounts,
@@ -690,19 +701,28 @@ function CashControl({
 }: CashControlProps) {
   const { t } = useTranslation();
   const { formatAmount, currencyFractionDigits } = useAmountFormatting();
-  const selectedCash = Math.max(0, decimalInputOrZero(trackedCash));
   const fractionDigits = currencyFractionDigits(currency);
-  const sliderPercentage =
-    observedCash > 0 ? Math.min(100, (selectedCash / observedCash) * 100) : 0;
+  // Nothing entered yet deploys all of it: the cash is already there, and
+  // lowering it is one edit away.
+  const displayValue =
+    trackedCash ??
+    (availableCash === undefined ? "" : formatDecimalInput(availableCash, fractionDigits));
+  const selectedCash = Math.max(0, decimalInputOrZero(displayValue));
+  const ceiling = availableCash ?? 0;
+  const exceedsAvailable =
+    availableCash !== undefined && selectedCash > availableCash + AMOUNT_EPSILON;
+  const sliderPercentage = ceiling > 0 ? Math.min(100, (selectedCash / ceiling) * 100) : 0;
 
   return (
     <div id="worksheet-cash" className="min-w-0 p-5 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <Eyebrow>{t("allocation:worksheet.cashToDeploy")}</Eyebrow>
         <span className="text-muted-foreground font-mono text-xs">
-          {t("allocation:worksheet.ofObservedCash", {
-            amount: formatAmount(observedCash, currency),
-          })}
+          {availableCash === undefined
+            ? t("allocation:worksheet.cashAvailablePending")
+            : t("allocation:worksheet.ofObservedCash", {
+                amount: formatAmount(availableCash, currency),
+              })}
         </span>
       </div>
 
@@ -710,22 +730,35 @@ function CashControl({
         <span className="text-muted-foreground text-sm">{currency}</span>
         <input
           aria-label={t("allocation:worksheet.cashToDeploy")}
-          value={trackedCash}
+          value={displayValue}
           onChange={(event) => onTrackedCashChange(event.target.value)}
+          onBlur={() => {
+            if (exceedsAvailable) {
+              onTrackedCashChange(formatDecimalInput(ceiling, fractionDigits));
+            }
+          }}
           inputMode="decimal"
           placeholder="0"
           className="placeholder:text-muted-foreground/50 min-w-0 flex-1 bg-transparent font-mono text-3xl font-semibold tabular-nums outline-none"
         />
       </div>
 
+      {exceedsAvailable && (
+        <p className="mt-2 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+          {t("allocation:worksheet.exceedsObservedCashIssue", {
+            amount: formatAmount(ceiling, currency),
+          })}
+        </p>
+      )}
+
       <input
         aria-label={t("allocation:worksheet.cashSlider")}
         type="range"
         min={0}
-        max={observedCash || 1}
-        step={observedCash > 0 ? 10 ** -fractionDigits : 1}
-        value={Math.min(selectedCash, observedCash)}
-        disabled={observedCash <= 0}
+        max={ceiling || 1}
+        step={ceiling > 0 ? 10 ** -fractionDigits : 1}
+        value={Math.min(selectedCash, ceiling)}
+        disabled={ceiling <= 0}
         onChange={(event) =>
           onTrackedCashChange(Number.parseFloat(event.target.value).toFixed(fractionDigits))
         }
@@ -735,13 +768,13 @@ function CashControl({
 
       <div className="mt-3 flex flex-wrap gap-2">
         {CASH_PRESETS.map((fraction) => {
-          const preset = observedCash * fraction;
-          const isActive = Math.abs(preset - selectedCash) <= 0.5 + observedCash * 0.001;
+          const preset = ceiling * fraction;
+          const isActive = Math.abs(preset - selectedCash) <= 0.5 + ceiling * 0.001;
           return (
             <button
               key={fraction}
               type="button"
-              disabled={observedCash <= 0}
+              disabled={ceiling <= 0}
               onClick={() => onTrackedCashChange(preset.toFixed(fractionDigits))}
               className={cn(
                 "rounded-full border px-3 py-1 font-mono text-xs transition-colors disabled:opacity-40",
@@ -1694,7 +1727,13 @@ export function AllocationWorksheetTab({
   const [editMode, setEditMode] = useState<WorksheetEditMode>("amount");
   const [mode, setMode] = useState<WorksheetMode>("invest_cash");
   const [rule, setRule] = useState<AllocationRule | null>(null);
-  const [trackedCash, setTrackedCash] = useState("");
+  // `null` follows the cash the chosen accounts record; a string is the
+  // user's own figure.
+  const [trackedCash, setTrackedCash] = useState<string | null>(null);
+  const [observedCashByAccounts, setObservedCashByAccounts] = useState<{
+    key: string;
+    amount: number;
+  } | null>(null);
   const [externalCash, setExternalCash] = useState<Record<string, string>>({});
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[] | null>(null);
   const [addedAssetIds, setAddedAssetIds] = useState<string[]>([]);
@@ -1759,6 +1798,15 @@ export function AllocationWorksheetTab({
     () => changeAccounts.map((account) => account.id),
     [changeAccounts],
   );
+  const changeAccountKey = [...changeAccountIds].sort().join("|");
+  // What the chosen accounts can deploy, as the core counts it: one rule per
+  // account and in total. The drift report's figure spans the whole scope and
+  // counts cash accounts the worksheet cannot use, so it never stands in —
+  // until the core has answered for this selection the ceiling is unknown.
+  const availableCash =
+    observedCashByAccounts?.key === changeAccountKey
+      ? Math.max(0, observedCashByAccounts.amount)
+      : undefined;
 
   const holdingQueries = useQueries({
     queries: scopedAccounts.map((account) => {
@@ -1864,7 +1912,7 @@ export function AllocationWorksheetTab({
     setEditMode(draft?.editMode ?? "amount");
     setMode(draft?.mode === "rebalance" && profile?.allowSells ? "rebalance" : "invest_cash");
     setRule(draft?.rule ?? null);
-    setTrackedCash(draft?.trackedCash ?? "");
+    setTrackedCash(draft?.trackedCash ?? null);
     setSelectedAccountIds(
       draft?.selectedAccountIds
         ? draft.selectedAccountIds.filter((accountId) => validAccountIds.has(accountId))
@@ -1958,6 +2006,9 @@ export function AllocationWorksheetTab({
   }, [
     adjustments,
     trackedCash,
+    // The cash the accounts record is learned from the core, and the default
+    // follows it.
+    availableCash,
     externalCash,
     changeAccountIds,
     addedAssetIds,
@@ -1977,17 +2028,19 @@ export function AllocationWorksheetTab({
   if (!profile || !driftReport) return null;
 
   const currency = driftReport.baseCurrency;
-  // The core applies one rule to the cash it will accept, per account and in
-  // total. Until it has answered, the drift report's figure stands in.
-  const observedCash = Math.max(0, result?.observedTrackedCash ?? driftReport.deployableCash);
   const fundingByAccount = new Map(
     (result && !isResultStale ? result.accountFunding : []).map((funding) => [
       funding.accountId,
       funding,
     ]),
   );
-  const rawTrackedCash = parseDecimalInput(trackedCash);
-  const trackedCashToUse = Number.isFinite(rawTrackedCash) ? Math.max(0, rawTrackedCash) : 0;
+  const rawTrackedCash = trackedCash === null ? null : parseDecimalInput(trackedCash);
+  const trackedCashToUse =
+    rawTrackedCash === null
+      ? (availableCash ?? 0)
+      : Number.isFinite(rawTrackedCash)
+        ? Math.min(Math.max(0, rawTrackedCash), availableCash ?? Math.max(0, rawTrackedCash))
+        : 0;
   const externalContribution = externalContributionFor(changeAccountIds, externalCash);
   const externalTotal = Object.values(externalContribution).reduce(
     (sum, amount) => sum + amount,
@@ -2000,17 +2053,13 @@ export function AllocationWorksheetTab({
     driftReport.rows.some((row) => row.isCash),
   );
 
-  const cashIssue: PreparedWorksheetIssue | undefined = !Number.isFinite(rawTrackedCash)
-    ? { message: t("allocation:worksheet.invalidCashInput"), kind: "cash" }
-    : rawTrackedCash < 0
-      ? { message: t("allocation:worksheet.cashMustBePositive"), kind: "cash" }
-      : trackedCashToUse > observedCash + AMOUNT_EPSILON
-        ? {
-            message: t("allocation:worksheet.exceedsObservedCashIssue", {
-              amount: formatAmount(observedCash, currency),
-            }),
-            kind: "cash",
-          }
+  // Asking for more cash than the accounts record is not an error: the cash
+  // control caps it and points the rest at the contribution input.
+  const cashIssue: PreparedWorksheetIssue | undefined =
+    rawTrackedCash !== null && !Number.isFinite(rawTrackedCash)
+      ? { message: t("allocation:worksheet.invalidCashInput"), kind: "cash" }
+      : rawTrackedCash !== null && rawTrackedCash < 0
+        ? { message: t("allocation:worksheet.cashMustBePositive"), kind: "cash" }
         : changeAccountIds.some((accountId) => {
               const amount = parseDecimalInput(externalCash[accountId] ?? "");
               return !Number.isFinite(amount) || amount < 0;
@@ -2343,6 +2392,7 @@ export function AllocationWorksheetTab({
       });
       if (calculationVersion !== calculationVersionRef.current) return;
       setResult(data);
+      setObservedCashByAccounts({ key: changeAccountKey, amount: data.observedTrackedCash });
       setIsResultStale(false);
       setCalculationError(null);
     } catch (error) {
@@ -2412,7 +2462,7 @@ export function AllocationWorksheetTab({
             onSelectAll={() => setSelectedAccountIds(null)}
           />
           <CashControl
-            observedCash={observedCash}
+            availableCash={availableCash}
             trackedCash={trackedCash}
             onTrackedCashChange={setTrackedCash}
             accounts={changeAccounts}
@@ -2600,9 +2650,15 @@ export function AllocationWorksheetTab({
                       const changeAmount = Number.isFinite(resolvedChangeAmount)
                         ? resolvedChangeAmount
                         : 0;
-                      const projectedValue = Math.max(0, position.value + changeAmount);
-                      const isExpanded = expandedAssetIds.has(position.assetId);
                       const resolved = resultByAsset.get(position.assetId);
+                      // The core resolves an amount into whole units when the
+                      // target asks for them, so the row projects what it
+                      // resolved rather than what was typed.
+                      const projectedValue = Math.max(
+                        0,
+                        position.value + (resolved ? resolved.amount : changeAmount),
+                      );
+                      const isExpanded = expandedAssetIds.has(position.assetId);
                       const quote = latestQuotes.data?.[position.assetId];
                       const asset = eligibleAssets.find((item) => item.id === position.assetId);
                       const displayInput = adjustment
@@ -2641,6 +2697,16 @@ export function AllocationWorksheetTab({
                                   })}
                                 </p>
                               )}
+                              {resolved &&
+                                profile.wholeSharesOnly &&
+                                Math.abs(resolved.amount - changeAmount) >= AMOUNT_EPSILON && (
+                                  <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-200">
+                                    {t("allocation:worksheet.roundedToWholeShares", {
+                                      amount: formatAmount(Math.abs(resolved.amount), currency),
+                                      requested: formatAmount(Math.abs(changeAmount), currency),
+                                    })}
+                                  </p>
+                                )}
                             </div>
 
                             <div className="flex items-center justify-between xl:block xl:text-right">

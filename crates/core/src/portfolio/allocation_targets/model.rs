@@ -615,6 +615,10 @@ pub enum WorksheetWarningKind {
     /// An account's increases exceed what that account can fund on its own
     /// (§6).
     AccountFunding,
+    /// The cash to deploy exceeded what the chosen accounts record, so the
+    /// worksheet deployed what exists. Cash that is not recorded yet belongs in
+    /// the contribution input (§6).
+    CashUnavailable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

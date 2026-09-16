@@ -23,7 +23,6 @@ use std::sync::Arc;
 use crate::accounts::{account_types, Account, AccountServiceTrait};
 use crate::assets::{Asset, AssetServiceTrait};
 use crate::errors::{DatabaseError, Error as CoreError, Result as CoreResult, ValidationError};
-use crate::fx::currency::currency_minor_unit;
 use crate::fx::{
     denormalization_multiplier, normalize_currency_code, ExchangeRate, FxServiceTrait,
 };
@@ -183,24 +182,14 @@ impl AllocationWorksheetService {
 
     /// The tracked cash the worksheet may actually deploy.
     ///
-    /// A rounding-sized overage is clamped rather than refused, since the
-    /// amount arrives from a control showing a rounded balance. The prefill and
-    /// the preview share the rule so a prefilled worksheet never fails a check
-    /// its own generation passed.
-    fn tracked_cash_to_use(
-        selected: Decimal,
-        deployable: Decimal,
-        base_currency: &str,
-    ) -> CoreResult<Decimal> {
-        if selected <= deployable {
-            return Ok(selected);
-        }
-        if selected - deployable <= currency_minor_unit(base_currency) {
-            return Ok(deployable);
-        }
-        Err(Self::invalid(format!(
-            "Tracked cash selected ({selected}) exceeds observed deployable cash ({deployable})"
-        )))
+    /// The chosen accounts cannot deploy cash they do not record, so an amount
+    /// above what they hold is met with what exists rather than refused: cash
+    /// that is not recorded yet belongs in the contribution input, where it
+    /// stays visible as hypothetical. The preview reports the difference (§5).
+    /// The prefill and the preview share the rule, so a prefilled worksheet
+    /// never fails a check its own generation passed.
+    fn tracked_cash_to_use(selected: Decimal, deployable: Decimal) -> Decimal {
+        selected.clamp(Decimal::ZERO, deployable.max(Decimal::ZERO))
     }
 
     fn bps(value: Decimal, total: Decimal) -> i32 {
@@ -873,8 +862,7 @@ impl AllocationWorksheetService {
         let tracked_cash_to_use = Self::tracked_cash_to_use(
             input.cash.tracked_cash_to_use,
             cash_by_account.values().copied().sum::<Decimal>(),
-            &input.base_currency,
-        )?;
+        );
 
         // An empty allowlist is a valid state, not an error (§4.1): every
         // increase it leaves unplaced becomes an unresolved category amount.
@@ -1045,11 +1033,8 @@ impl AllocationWorksheetService {
         let cash_by_account =
             Self::available_cash_by_account(&target.taxonomy_id, &sources.accounts);
         let observed_tracked_cash = cash_by_account.values().copied().sum::<Decimal>();
-        let tracked_cash_to_use = Self::tracked_cash_to_use(
-            input.cash.tracked_cash_to_use,
-            observed_tracked_cash,
-            &input.base_currency,
-        )?;
+        let tracked_cash_to_use =
+            Self::tracked_cash_to_use(input.cash.tracked_cash_to_use, observed_tracked_cash);
 
         let holdings_by_account = Self::holdings_by_account(&sources.accounts);
         let assignments_by_asset = sources
@@ -1074,6 +1059,17 @@ impl AllocationWorksheetService {
 
         let external_total = input.cash.external_total();
         let mut warnings = Vec::new();
+        if input.cash.tracked_cash_to_use > tracked_cash_to_use {
+            warnings.push(Self::warning(
+                WorksheetWarningKind::CashUnavailable,
+                None,
+                "cash-unavailable",
+                format!(
+                    "Deployed the {tracked_cash_to_use} of cash the chosen accounts record, not the {} asked for.",
+                    input.cash.tracked_cash_to_use
+                ),
+            ));
+        }
         if external_total > Decimal::ZERO {
             warnings.push(Self::warning(
                 WorksheetWarningKind::ExternalContribution,
@@ -2586,9 +2582,27 @@ mod tests {
             allow_sells: true,
         };
 
-        assert!(portfolio
+        // Only acc-1's cash is cash to deploy, so asking for 1500 deploys the
+        // 1000 that exists rather than refusing the worksheet.
+        let deployed = |calculated: &CalculatedAdjustments| {
+            calculated
+                .adjustments
+                .iter()
+                .map(|line| line.amount)
+                .sum::<Decimal>()
+        };
+        let asked_for_more = portfolio
             .generate(WorksheetMode::InvestCash, tracked(dec!(1500)))
-            .is_err());
+            .unwrap();
+        let all_there_is = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(1000)))
+            .unwrap();
+        assert_eq!(deployed(&asked_for_more), deployed(&all_there_is));
+
+        let clamped = portfolio.preview(tracked(dec!(1500)), Vec::new()).unwrap();
+        assert_eq!(clamped.observed_tracked_cash, dec!(1000));
+        assert_eq!(clamped.tracked_cash_to_use, dec!(1000));
+        assert!(has_warning(&clamped, WorksheetWarningKind::CashUnavailable));
 
         let result = portfolio
             .preview(
@@ -3088,16 +3102,16 @@ mod tests {
     }
 
     #[test]
-    fn a_rounding_sized_cash_overage_is_clamped_rather_than_refused() {
+    fn cash_to_deploy_is_met_with_what_the_chosen_accounts_record() {
         // Both halves of the service share the rule, so a prefilled worksheet
         // never fails a check its own generation passed.
         assert_eq!(
-            AllocationWorksheetService::tracked_cash_to_use(dec!(1000.004), dec!(1000), "USD")
-                .unwrap(),
-            dec!(1000)
+            AllocationWorksheetService::tracked_cash_to_use(dec!(600), dec!(1000)),
+            dec!(600)
         );
-        assert!(
-            AllocationWorksheetService::tracked_cash_to_use(dec!(1100), dec!(1000), "USD").is_err()
+        assert_eq!(
+            AllocationWorksheetService::tracked_cash_to_use(dec!(1100), dec!(1000)),
+            dec!(1000)
         );
     }
 
