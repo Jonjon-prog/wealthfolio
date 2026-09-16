@@ -416,6 +416,7 @@ interface CalculationControlProps {
   onToggleAsset: (assetId: string) => void;
   onSelectAllAssets: () => void;
   onClearAssets: () => void;
+  accountNames: ReadonlyMap<string, string>;
   blockingIssue?: string;
   isCalculating: boolean;
   hasGenerated: boolean;
@@ -436,6 +437,7 @@ function CalculationControl({
   onToggleAsset,
   onSelectAllAssets,
   onClearAssets,
+  accountNames,
   blockingIssue,
   isCalculating,
   hasGenerated,
@@ -542,6 +544,7 @@ function CalculationControl({
         onToggle={onToggleAsset}
         onSelectAll={onSelectAllAssets}
         onClear={onClearAssets}
+        accountNames={accountNames}
       />
 
       <div className="space-y-3">
@@ -2242,6 +2245,7 @@ export function AllocationWorksheetTab({
             onToggleAsset={eligibility.toggle}
             onSelectAllAssets={eligibility.selectAll}
             onClearAssets={eligibility.clear}
+            accountNames={accountNames}
             blockingIssue={generationIssue}
             isCalculating={calculator.isPending}
             hasGenerated={generated !== null}

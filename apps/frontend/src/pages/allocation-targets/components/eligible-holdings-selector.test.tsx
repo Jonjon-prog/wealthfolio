@@ -33,10 +33,11 @@ function holding(
   holdingType: Holding["holdingType"] = HoldingType.SECURITY,
   currency = "USD",
   exchangeMic?: string,
+  accountId = "account-1",
 ): Holding {
   return {
-    id: `${assetId}-${symbol}`,
-    accountId: "account-1",
+    id: `${assetId}-${symbol}-${accountId}`,
+    accountId,
     holdingType,
     instrument: {
       id: assetId,
@@ -49,6 +50,11 @@ function holding(
     },
   } as Holding;
 }
+
+const ACCOUNT_NAMES = new Map([
+  ["account-1", "Brokerage"],
+  ["account-2", "Retirement"],
+]);
 
 function Harness({ holdings }: { holdings: Holding[] }) {
   const [excludedAssetIds, setExcludedAssetIds] = useState<Set<string>>(new Set());
@@ -68,6 +74,7 @@ function Harness({ holdings }: { holdings: Holding[] }) {
       onClear={() =>
         setExcludedAssetIds(new Set(getEligibleHoldings(holdings).map((row) => row.assetId)))
       }
+      accountNames={ACCOUNT_NAMES}
     />
   );
 }
@@ -76,7 +83,16 @@ describe("EligibleHoldingsSelector", () => {
   const holdings = [
     holding("asset-bond", "BND", "Bond fund", "BOND"),
     holding("asset-vti", "VTI", "Vanguard Total Stock", "EQUITY"),
-    holding("asset-vti", "VTI", "Vanguard Total Stock", "EQUITY", HoldingType.SECURITY),
+    holding(
+      "asset-vti",
+      "VTI",
+      "Vanguard Total Stock",
+      "EQUITY",
+      HoldingType.SECURITY,
+      "USD",
+      undefined,
+      "account-2",
+    ),
     holding("asset-unknown", "MYST", "Mystery asset"),
     holding("cash-usd", "USD", "Cash", undefined, HoldingType.CASH),
   ];
@@ -95,6 +111,18 @@ describe("EligibleHoldingsSelector", () => {
     ]);
 
     expect(screen.queryByText("Equity")).not.toBeInTheDocument();
+  });
+
+  it("says which accounts hold a security, merging its rows into one choice", async () => {
+    const user = userEvent.setup();
+    render(<Harness holdings={holdings} />);
+    await user.click(screen.getByRole("button", { name: /Eligible holdings/ }));
+
+    expect(
+      getEligibleHoldings(holdings).find((row) => row.assetId === "asset-vti")?.accountIds,
+    ).toEqual(["account-1", "account-2"]);
+    expect(screen.getByText("In Brokerage · Retirement")).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: /VTI/ })).toHaveLength(1);
   });
 
   it("announces selection state on the trigger and rows", async () => {

@@ -133,7 +133,8 @@
       "fx": "FX",
       "other": "Other"
     },
-    "emptyAllowed": "No security selected. Increases that cannot be placed will show as unresolved amounts."
+    "emptyAllowed": "No security selected. Increases that cannot be placed will show as unresolved amounts.",
+    "inAccounts": "In {{accounts}}"
   },
   "narrative": {
     "liftAndShrink": "{{verb}} lift {{lifted}} toward target and shrink the {{shrank}} overweight from {{before}} to {{after}}.",
