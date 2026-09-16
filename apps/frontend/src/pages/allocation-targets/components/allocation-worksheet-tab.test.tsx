@@ -317,6 +317,32 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(previewMock).not.toHaveBeenCalled();
   });
 
+  it("previews a worksheet with no adjustments instead of refusing it", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage")];
+    await renderWorksheet();
+
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
+    expect(previewMock.mock.lastCall?.[0]).toMatchObject({
+      lines: [],
+      selectedAccountIds: ["acc-1"],
+    });
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves an account the user removed out of the calculation", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    const user = await renderWorksheet();
+
+    await user.click(screen.getByRole("button", { name: "Retirement" }));
+    await user.click(
+      screen.getByRole("button", { name: /Allocate by current holding proportions/ }),
+    );
+    await user.click(screen.getByRole("button", { name: /Recalculate from target/ }));
+
+    await waitFor(() => expect(generateMock).toHaveBeenCalled());
+    expect(generateMock.mock.lastCall?.[0]).toMatchObject({ selectedAccountIds: ["acc-1"] });
+  });
+
   it("asks for cash not yet recorded per account only when several are in scope", async () => {
     accountsRef.current = [account("acc-1", "Brokerage")];
     await renderWorksheet();

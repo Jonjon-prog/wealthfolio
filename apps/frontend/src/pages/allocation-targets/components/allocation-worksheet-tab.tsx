@@ -53,6 +53,7 @@ import type {
   Holding,
   TaxonomyCategory,
   UnresolvedReason,
+  WorksheetAccountFunding,
   WorksheetMode,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -86,13 +87,12 @@ import { EligibleHoldingsSelector } from "./eligible-holdings-selector";
 import { accountScopeKey } from "./target-scope";
 
 const DISCLOSURE_STORAGE_KEY = "wealthfolio:rebalancing-worksheet-disclosure:v2";
-const DRAFT_STORAGE_PREFIX = "wealthfolio:rebalancing-worksheet-draft:v2";
+const DRAFT_STORAGE_PREFIX = "wealthfolio:rebalancing-worksheet-draft:v3";
 const DISCLOSURE_VERSION = 2;
-const DRAFT_VERSION = 2;
+const DRAFT_VERSION = 3;
 const CASH_PRESETS = [0.25, 0.5, 0.75, 1] as const;
 const AMOUNT_EPSILON = 0.01;
 const AUTO_CALCULATE_DEBOUNCE_MS = 500;
-const MAX_WORKSHEET_LINES = 50;
 
 const UNRESOLVED_REASON_KEYS: Record<UnresolvedReason, string> = {
   no_recorded_security: "allocation:worksheet.unresolvedNoRecordedSecurity",
@@ -151,6 +151,7 @@ interface WorksheetDraft {
   rule: AllocationRule | null;
   trackedCash: string;
   externalCash: Record<string, string>;
+  selectedAccountIds: string[];
   addedAssetIds: string[];
   adjustments: PositionAdjustments;
   generated: GeneratedAdjustments | null;
@@ -161,12 +162,11 @@ interface PreparedWorksheet {
   issue?: PreparedWorksheetIssue;
   increaseTotal: number;
   reductionTotal: number;
-  changedPositionCount: number;
 }
 
 interface PreparedWorksheetIssue {
   message: string;
-  kind: "cash" | "position" | "allocation" | "empty" | "lines";
+  kind: "cash" | "position" | "allocation";
   assetId?: string;
 }
 
@@ -234,6 +234,7 @@ function readWorksheetDraft(storageKey: string): WorksheetDraft | null {
       typeof draft.trackedCash !== "string" ||
       !draft.externalCash ||
       typeof draft.externalCash !== "object" ||
+      !Array.isArray(draft.selectedAccountIds) ||
       !Array.isArray(draft.addedAssetIds) ||
       !draft.adjustments ||
       typeof draft.adjustments !== "object" ||
@@ -596,6 +597,78 @@ function CalculationControl({
   );
 }
 
+interface AccountsControlProps {
+  accounts: Account[];
+  selectedAccountIds: string[];
+  onToggle: (accountId: string) => void;
+  onSelectAll: () => void;
+}
+
+/** Which accounts the worksheet may change (§6). Cash accounts never appear. */
+function AccountsControl({
+  accounts,
+  selectedAccountIds,
+  onToggle,
+  onSelectAll,
+}: AccountsControlProps) {
+  const { t } = useTranslation();
+  const allSelected = selectedAccountIds.length === accounts.length;
+
+  return (
+    <div id="worksheet-accounts" className="min-w-0 p-5 sm:p-6 lg:border-r">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <Eyebrow>{t("allocation:worksheet.accountsLabel")}</Eyebrow>
+        <button
+          type="button"
+          disabled={allSelected}
+          onClick={onSelectAll}
+          className="text-foreground text-xs underline-offset-4 hover:underline disabled:pointer-events-none disabled:opacity-35"
+        >
+          {t("allocation:worksheet.selectAllAccounts")}
+        </button>
+      </div>
+      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+        {t("allocation:worksheet.accountsHint")}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {accounts.map((account) => {
+          const selected = selectedAccountIds.includes(account.id);
+          return (
+            <button
+              key={account.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onToggle(account.id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 font-mono text-xs transition-colors",
+                selected
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground",
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "flex h-3.5 w-3.5 items-center justify-center rounded-full border",
+                  selected ? "border-background" : "border-current/40",
+                )}
+              >
+                {selected && <Icons.Check className="h-2.5 w-2.5" />}
+              </span>
+              {account.name}
+            </button>
+          );
+        })}
+      </div>
+      {selectedAccountIds.length === 0 && (
+        <p className="text-muted-foreground mt-2 text-xs">
+          {t("allocation:worksheet.selectAccountIssue")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface CashControlProps {
   observedCash: number;
   trackedCash: string;
@@ -725,6 +798,73 @@ function CashControl({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface FundingSummaryProps {
+  result: AllocationWorksheetResult | null;
+  accountNames: Map<string, string>;
+  currency: string;
+}
+
+/**
+ * What each account can fund and what the worksheet asks of it (§6). A shortage
+ * is reported, never corrected: after prefill the worksheet is the source of
+ * truth (§5).
+ */
+function FundingSummary({ result, accountNames, currency }: FundingSummaryProps) {
+  const { t } = useTranslation();
+  const { formatAmount } = useAmountFormatting();
+
+  return (
+    <div className="min-w-0 p-5 sm:p-6">
+      <Eyebrow>{t("allocation:worksheet.fundingLabel")}</Eyebrow>
+      {!result ? (
+        <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+          {t("allocation:worksheet.fundingPending")}
+        </p>
+      ) : (
+        <>
+          <p className="mt-2 font-mono text-xl font-semibold leading-tight">
+            {formatAmount(result.cashRemaining, currency)}
+          </p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            {t(
+              result.cashRemaining < 0
+                ? "allocation:worksheet.fundingShort"
+                : "allocation:worksheet.fundingLeft",
+            )}
+          </p>
+          <ul className="mt-4 divide-y">
+            {result.accountFunding.map((funding) => (
+              <li key={funding.accountId} className="py-2 text-xs">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate font-medium">
+                    {accountNames.get(funding.accountId) ??
+                      t("allocation:worksheet.unknownAccount")}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 font-mono tabular-nums",
+                      funding.remaining < 0 && "text-amber-800 dark:text-amber-200",
+                    )}
+                  >
+                    {formatAmount(funding.remaining, currency)}
+                  </span>
+                </div>
+                {funding.remaining < 0 && (
+                  <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">
+                    {t("allocation:worksheet.fundingNeeded", {
+                      amount: formatAmount(-funding.remaining, currency),
+                    })}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -874,7 +1014,7 @@ interface AccountAllocationProps {
   accounts: Account[];
   adjustment: PositionAdjustment;
   currency: string;
-  cashByAccount: Map<string, number>;
+  fundingByAccount: Map<string, WorksheetAccountFunding>;
   onAmountChange: (accountId: string, value: string) => void;
 }
 
@@ -888,7 +1028,7 @@ function AccountAllocation({
   accounts,
   adjustment,
   currency,
-  cashByAccount,
+  fundingByAccount,
   onAmountChange,
 }: AccountAllocationProps) {
   const { t } = useTranslation();
@@ -957,6 +1097,7 @@ function AccountAllocation({
         )}
         {accounts.map((account) => {
           const holding = position.accountHoldings.find((item) => item.accountId === account.id);
+          const funding = fundingByAccount.get(account.id);
           const currentAmount = Math.max(
             0,
             decimalInputOrZero(adjustment.accountAmounts[account.id] ?? ""),
@@ -978,9 +1119,16 @@ function AccountAllocation({
                   {holding && !isReduce && " · "}
                   {!isReduce &&
                     t("allocation:worksheet.accountCashSummary", {
-                      amount: formatAmount(cashByAccount.get(account.id) ?? 0, currency),
+                      amount: formatAmount(funding?.availableCash ?? 0, currency),
                     })}
                 </p>
+                {funding && funding.remaining < -AMOUNT_EPSILON && (
+                  <p className="mt-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+                    {t("allocation:worksheet.fundingNeeded", {
+                      amount: formatAmount(-funding.remaining, currency),
+                    })}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {accounts.length === 1 ? (
@@ -1126,7 +1274,7 @@ function ReviewChanges({
         <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
           {calculationError?.description ?? issue?.message ?? t("allocation:worksheet.reviewHint")}
         </p>
-        {issue && issue.kind !== "empty" && (
+        {issue && (
           <Button size="sm" variant="outline" className="mt-4" onClick={onReviewIssue}>
             <Icons.AlertCircle className="mr-1.5 h-4 w-4" />
             {t("allocation:worksheet.reviewWorksheet")}
@@ -1548,6 +1696,7 @@ export function AllocationWorksheetTab({
   const [rule, setRule] = useState<AllocationRule | null>(null);
   const [trackedCash, setTrackedCash] = useState("");
   const [externalCash, setExternalCash] = useState<Record<string, string>>({});
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[] | null>(null);
   const [addedAssetIds, setAddedAssetIds] = useState<string[]>([]);
   const [adjustments, setAdjustments] = useState<PositionAdjustments>({});
   const [generated, setGenerated] = useState<GeneratedAdjustments | null>(null);
@@ -1597,6 +1746,19 @@ export function AllocationWorksheetTab({
     [scopedAccounts],
   );
   const scopedAccountKey = [...scopedAccountIds].sort().join("|");
+  // Where changes may happen. Everything in scope until the user narrows it;
+  // the target's weights are still measured against the whole scope.
+  const changeAccounts = useMemo(
+    () =>
+      selectedAccountIds === null
+        ? scopedAccounts
+        : scopedAccounts.filter((account) => selectedAccountIds.includes(account.id)),
+    [scopedAccounts, selectedAccountIds],
+  );
+  const changeAccountIds = useMemo(
+    () => changeAccounts.map((account) => account.id),
+    [changeAccounts],
+  );
 
   const holdingQueries = useQueries({
     queries: scopedAccounts.map((account) => {
@@ -1622,7 +1784,13 @@ export function AllocationWorksheetTab({
   const assignmentsByAsset = new Map(
     addedAssetIds.map((assetId, index) => [assetId, addedAssignmentQueries[index]?.data ?? []]),
   );
-  const eligibility = useEligibleHoldingsSelection(scopedHoldings, draftStorageKey ?? "");
+  const changeHoldings = scopedHoldings.filter((holding) =>
+    changeAccountIds.includes(holding.accountId),
+  );
+  const eligibility = useEligibleHoldingsSelection(
+    changeHoldings,
+    `${draftStorageKey ?? ""}:${[...changeAccountIds].sort().join(",")}`,
+  );
 
   const eligibleAssets = useMemo(
     () =>
@@ -1638,7 +1806,7 @@ export function AllocationWorksheetTab({
   const positions =
     driftReport && profile
       ? buildPositions(
-          scopedHoldings,
+          changeHoldings,
           eligibleAssets,
           addedAssetIds,
           driftReport,
@@ -1657,14 +1825,6 @@ export function AllocationWorksheetTab({
     () => new Map(scopedAccounts.map((account) => [account.id, account.name])),
     [scopedAccounts],
   );
-  const cashByAccount = new Map<string, number>();
-  for (const holding of scopedHoldings) {
-    if (holding.holdingType !== HoldingType.CASH) continue;
-    cashByAccount.set(
-      holding.accountId,
-      (cashByAccount.get(holding.accountId) ?? 0) + (Number(holding.marketValue.base) || 0),
-    );
-  }
   const assetSourceVersion = useMemo(
     () => eligibleAssets.map((asset) => `${asset.id}:${asset.updatedAt}`).join("|"),
     [eligibleAssets],
@@ -1705,6 +1865,11 @@ export function AllocationWorksheetTab({
     setMode(draft?.mode === "rebalance" && profile?.allowSells ? "rebalance" : "invest_cash");
     setRule(draft?.rule ?? null);
     setTrackedCash(draft?.trackedCash ?? "");
+    setSelectedAccountIds(
+      draft?.selectedAccountIds
+        ? draft.selectedAccountIds.filter((accountId) => validAccountIds.has(accountId))
+        : null,
+    );
     setExternalCash(
       Object.fromEntries(
         Object.entries(draft?.externalCash ?? {}).filter(
@@ -1748,6 +1913,7 @@ export function AllocationWorksheetTab({
         rule,
         trackedCash,
         externalCash,
+        selectedAccountIds: changeAccountIds,
         addedAssetIds,
         adjustments,
         generated,
@@ -1769,6 +1935,7 @@ export function AllocationWorksheetTab({
     mode,
     rule,
     trackedCash,
+    changeAccountIds,
   ]);
 
   // Validates and projects the worksheet as it stands. Mode, rule and eligible
@@ -1792,6 +1959,7 @@ export function AllocationWorksheetTab({
     adjustments,
     trackedCash,
     externalCash,
+    changeAccountIds,
     addedAssetIds,
     sourceVersion,
     latestQuotes.dataUpdatedAt,
@@ -1809,10 +1977,18 @@ export function AllocationWorksheetTab({
   if (!profile || !driftReport) return null;
 
   const currency = driftReport.baseCurrency;
-  const observedCash = Math.max(0, driftReport.deployableCash);
+  // The core applies one rule to the cash it will accept, per account and in
+  // total. Until it has answered, the drift report's figure stands in.
+  const observedCash = Math.max(0, result?.observedTrackedCash ?? driftReport.deployableCash);
+  const fundingByAccount = new Map(
+    (result && !isResultStale ? result.accountFunding : []).map((funding) => [
+      funding.accountId,
+      funding,
+    ]),
+  );
   const rawTrackedCash = parseDecimalInput(trackedCash);
   const trackedCashToUse = Number.isFinite(rawTrackedCash) ? Math.max(0, rawTrackedCash) : 0;
-  const externalContribution = externalContributionFor(scopedAccountIds, externalCash);
+  const externalContribution = externalContributionFor(changeAccountIds, externalCash);
   const externalTotal = Object.values(externalContribution).reduce(
     (sum, amount) => sum + amount,
     0,
@@ -1835,7 +2011,7 @@ export function AllocationWorksheetTab({
             }),
             kind: "cash",
           }
-        : scopedAccountIds.some((accountId) => {
+        : changeAccountIds.some((accountId) => {
               const amount = parseDecimalInput(externalCash[accountId] ?? "");
               return !Number.isFinite(amount) || amount < 0;
             })
@@ -1846,7 +2022,7 @@ export function AllocationWorksheetTab({
     ? {
         targetId: profile.id,
         targetVersion: profile.updatedAt,
-        accountIds: scopedAccountIds,
+        accountIds: changeAccountIds,
         mode,
         rule,
         trackedCashToUse,
@@ -1859,8 +2035,8 @@ export function AllocationWorksheetTab({
   );
   const generationIssue = !rule
     ? t("allocation:worksheet.chooseRuleIssue")
-    : scopedAccountIds.length === 0
-      ? t("allocation:worksheet.noAccountsInScope")
+    : changeAccountIds.length === 0
+      ? t("allocation:worksheet.selectAccountIssue")
       : cashIssue?.message;
 
   const categories = driftReport.rows.filter(
@@ -1877,7 +2053,7 @@ export function AllocationWorksheetTab({
     return eligibleAccountIdsForChange(
       changeAmount,
       position.accountHoldings.map((holding) => holding.accountId),
-      scopedAccountIds,
+      changeAccountIds,
     ).flatMap((accountId) => {
       const account = accountById.get(accountId);
       return account ? [account] : [];
@@ -1888,7 +2064,6 @@ export function AllocationWorksheetTab({
     const lines: AllocationWorksheetLineInput[] = [];
     let increaseTotal = 0;
     let reductionTotal = 0;
-    let changedPositionCount = 0;
     let issue: PreparedWorksheetIssue | undefined = cashIssue;
 
     for (const position of positions) {
@@ -1903,7 +2078,6 @@ export function AllocationWorksheetTab({
       }
       const changeAmount = positionChangeAmount(adjustment, position, basis);
       if (!adjustment || Math.abs(changeAmount) < AMOUNT_EPSILON) continue;
-      changedPositionCount += 1;
 
       if (changeAmount < 0 && !profile.allowSells) {
         issue ??= {
@@ -2000,21 +2174,10 @@ export function AllocationWorksheetTab({
       }
     }
 
-    if (changedPositionCount === 0) {
-      issue ??= { message: t("allocation:worksheet.addAdjustmentIssue"), kind: "empty" };
-    }
-    if (lines.length > MAX_WORKSHEET_LINES) {
-      issue ??= { message: t("allocation:worksheet.tooManyLinesIssue"), kind: "lines" };
-    }
-
-    return { lines, issue, increaseTotal, reductionTotal, changedPositionCount };
+    return { lines, issue, increaseTotal, reductionTotal };
   })();
   const isPreviewUpdating =
-    worksheet.isPending ||
-    (isResultStale &&
-      !prepared.issue &&
-      prepared.changedPositionCount > 0 &&
-      calculationError === null);
+    worksheet.isPending || (isResultStale && !prepared.issue && calculationError === null);
   const resultByAsset = new Map<string, { amount: number; quantity: number }>();
   if (result && !isResultStale) {
     for (const line of result.lines) {
@@ -2127,7 +2290,7 @@ export function AllocationWorksheetTab({
         mode: generationInputs.mode,
         rule: generationInputs.rule,
         cash: { trackedCashToUse, externalContribution },
-        selectedAccountIds: scopedAccountIds,
+        selectedAccountIds: changeAccountIds,
         eligibleAssetIds: generationInputs.eligibleAssetIds,
       });
       setGenerated({ calculated, inputsKey: generationInputsKey(generationInputs) });
@@ -2164,7 +2327,9 @@ export function AllocationWorksheetTab({
   }
 
   async function calculate() {
-    if (prepared.issue || prepared.lines.length === 0 || firstUseOpen) return;
+    // A worksheet with no adjustments is valid: it projects the allocation as
+    // it stands today.
+    if (prepared.issue || firstUseOpen) return;
     if (autoCalculateTimerRef.current) clearTimeout(autoCalculateTimerRef.current);
     setCalculationError(null);
     const calculationVersion = calculationVersionRef.current;
@@ -2174,7 +2339,7 @@ export function AllocationWorksheetTab({
         filter: accountScope,
         cash: { trackedCashToUse, externalContribution },
         lines: prepared.lines,
-        selectedAccountIds: scopedAccountIds,
+        selectedAccountIds: changeAccountIds,
       });
       if (calculationVersion !== calculationVersionRef.current) return;
       setResult(data);
@@ -2233,6 +2398,34 @@ export function AllocationWorksheetTab({
       </AlertDialog>
 
       <Card className="overflow-hidden">
+        <CardContent className="grid p-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
+          <AccountsControl
+            accounts={scopedAccounts}
+            selectedAccountIds={changeAccountIds}
+            onToggle={(accountId) =>
+              setSelectedAccountIds(
+                changeAccountIds.includes(accountId)
+                  ? changeAccountIds.filter((id) => id !== accountId)
+                  : [...changeAccountIds, accountId],
+              )
+            }
+            onSelectAll={() => setSelectedAccountIds(null)}
+          />
+          <CashControl
+            observedCash={observedCash}
+            trackedCash={trackedCash}
+            onTrackedCashChange={setTrackedCash}
+            accounts={changeAccounts}
+            externalCash={externalCash}
+            onExternalCashChange={(accountId, value) =>
+              setExternalCash((current) => ({ ...current, [accountId]: value }))
+            }
+            currency={currency}
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
         <CardContent className="grid p-0 lg:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.7fr)]">
           <CalculationControl
             mode={mode}
@@ -2254,15 +2447,9 @@ export function AllocationWorksheetTab({
             onRecalculate={() => void recalculateFromTarget()}
             onReset={resetToCalculated}
           />
-          <CashControl
-            observedCash={observedCash}
-            trackedCash={trackedCash}
-            onTrackedCashChange={setTrackedCash}
-            accounts={scopedAccounts}
-            externalCash={externalCash}
-            onExternalCashChange={(accountId, value) =>
-              setExternalCash((current) => ({ ...current, [accountId]: value }))
-            }
+          <FundingSummary
+            result={isResultStale ? null : result}
+            accountNames={accountNames}
             currency={currency}
           />
         </CardContent>
@@ -2627,7 +2814,7 @@ export function AllocationWorksheetTab({
                               accounts={accountsForChange(position, changeAmount)}
                               adjustment={adjustment}
                               currency={currency}
-                              cashByAccount={cashByAccount}
+                              fundingByAccount={fundingByAccount}
                               onAmountChange={(accountId, value) =>
                                 updateAccountAmount(position.assetId, accountId, value)
                               }
