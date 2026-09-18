@@ -259,6 +259,18 @@ function positionChangeAmount(
   return (parseDecimalInput(adjustment.inputValue) / 100) * basis - position.value;
 }
 
+/**
+ * The unit price the core will resolve a line at, in the base currency.
+ *
+ * Taken from the recorded holding rather than a quote, so it already carries
+ * the currency conversion and any contract multiplier. A position with nothing
+ * recorded has no price here, and the core reports the line instead.
+ */
+function unitPriceFor(position: WorksheetPosition): number | undefined {
+  if (position.quantity <= 0 || position.value <= 0) return undefined;
+  return position.value / position.quantity;
+}
+
 function buildPositions(
   holdings: Holding[],
   assets: Asset[],
@@ -1048,6 +1060,9 @@ interface AccountAllocationProps {
   adjustment: PositionAdjustment;
   currency: string;
   fundingByAccount: Map<string, WorksheetAccountFunding>;
+  /** Resolved in the base currency, when the position records one. */
+  unitPrice: number | undefined;
+  wholeSharesOnly: boolean;
   onAmountChange: (accountId: string, value: string) => void;
 }
 
@@ -1062,6 +1077,8 @@ function AccountAllocation({
   adjustment,
   currency,
   fundingByAccount,
+  unitPrice,
+  wholeSharesOnly,
   onAmountChange,
 }: AccountAllocationProps) {
   const { t } = useTranslation();
@@ -1136,6 +1153,13 @@ function AccountAllocation({
             decimalInputOrZero(adjustment.accountAmounts[account.id] ?? ""),
           );
           const rowRemaining = Math.max(0, requested - (assigned - currentAmount));
+          // Offering a remainder that buys less than one unit only produces a
+          // line the core has to report as placing nothing.
+          const placeableRemaining =
+            wholeSharesOnly && unitPrice
+              ? Math.floor(rowRemaining / unitPrice) * unitPrice
+              : rowRemaining;
+          const currentUnits = unitPrice ? currentAmount / unitPrice : undefined;
           return (
             <div
               key={account.id}
@@ -1163,39 +1187,50 @@ function AccountAllocation({
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                {accounts.length === 1 ? (
-                  <span className="font-mono text-sm font-semibold tabular-nums">
-                    {formatAmount(requested, currency)}
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  {accounts.length === 1 ? (
+                    <span className="font-mono text-sm font-semibold tabular-nums">
+                      {formatAmount(requested, currency)}
+                    </span>
+                  ) : (
+                    <>
+                      <div className="border-input bg-background focus-within:ring-ring flex h-9 w-40 items-center rounded-md border px-2.5 focus-within:ring-1">
+                        <span className="text-muted-foreground mr-1.5 text-xs">{currency}</span>
+                        <input
+                          aria-label={t("allocation:worksheet.accountAmountLabel", {
+                            account: account.name,
+                          })}
+                          value={adjustment.accountAmounts[account.id] ?? ""}
+                          onChange={(event) => onAmountChange(account.id, event.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
+                        />
+                      </div>
+                      {placeableRemaining > AMOUNT_EPSILON && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2 text-[11px]"
+                          onClick={() =>
+                            onAmountChange(account.id, formatDecimalInput(placeableRemaining, 6))
+                          }
+                        >
+                          {t("allocation:worksheet.useRemaining")}
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+                {currentUnits !== undefined && currentAmount > AMOUNT_EPSILON && (
+                  <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+                    {t("allocation:worksheet.accountUnitsSummary", {
+                      quantity: formatQuantity(
+                        wholeSharesOnly ? Math.floor(currentUnits) : currentUnits,
+                      ),
+                    })}
                   </span>
-                ) : (
-                  <>
-                    <div className="border-input bg-background focus-within:ring-ring flex h-9 w-40 items-center rounded-md border px-2.5 focus-within:ring-1">
-                      <span className="text-muted-foreground mr-1.5 text-xs">{currency}</span>
-                      <input
-                        aria-label={t("allocation:worksheet.accountAmountLabel", {
-                          account: account.name,
-                        })}
-                        value={adjustment.accountAmounts[account.id] ?? ""}
-                        onChange={(event) => onAmountChange(account.id, event.target.value)}
-                        inputMode="decimal"
-                        placeholder="0"
-                        className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
-                      />
-                    </div>
-                    {remaining > AMOUNT_EPSILON && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-8 px-2 text-[11px]"
-                        onClick={() =>
-                          onAmountChange(account.id, formatDecimalInput(rowRemaining, 6))
-                        }
-                      >
-                        {t("allocation:worksheet.useRemaining")}
-                      </Button>
-                    )}
-                  </>
                 )}
               </div>
             </div>
@@ -2190,7 +2225,18 @@ export function AllocationWorksheetTab({
               }))
               .filter((allocation) => allocation.amount >= AMOUNT_EPSILON);
       const allocatedAmount = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
-      if (eligibleAccounts.length > 1 && Math.abs(allocatedAmount - requestedAmount) > 0.02) {
+      // Under a whole-unit policy the last fraction of a unit buys nothing, so
+      // no account can take it. Demanding it be placed would leave the
+      // worksheet permanently unreviewable; anything from a whole unit up still
+      // has to be placed.
+      const positionUnitPrice = unitPriceFor(position);
+      const unplaceable =
+        profile.wholeSharesOnly && positionUnitPrice ? Math.max(0.02, positionUnitPrice) : 0.02;
+      if (
+        eligibleAccounts.length > 1 &&
+        (requestedAmount - allocatedAmount > unplaceable ||
+          allocatedAmount - requestedAmount > 0.02)
+      ) {
         issue ??= {
           message: t("allocation:worksheet.allocateAccountsIssue", {
             symbol: position.symbol,
@@ -2881,6 +2927,8 @@ export function AllocationWorksheetTab({
                               adjustment={adjustment}
                               currency={currency}
                               fundingByAccount={fundingByAccount}
+                              unitPrice={unitPriceFor(position)}
+                              wholeSharesOnly={profile.wholeSharesOnly}
                               onAmountChange={(accountId, value) =>
                                 updateAccountAmount(position.assetId, accountId, value)
                               }

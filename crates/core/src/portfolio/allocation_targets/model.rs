@@ -619,6 +619,10 @@ pub enum WorksheetWarningKind {
     /// worksheet deployed what exists. Cash that is not recorded yet belongs in
     /// the contribution input (§6).
     CashUnavailable,
+    /// The amount buys less than one whole unit under the target's whole-unit
+    /// policy, so the line places nothing. Reported rather than refused, since
+    /// the worksheet is the source of truth once prefilled (§5).
+    BelowOneUnit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

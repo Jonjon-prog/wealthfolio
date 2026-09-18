@@ -602,12 +602,9 @@ impl AllocationWorksheetService {
                 } else {
                     line.value / unit_price
                 };
-                if quantity <= Decimal::ZERO {
-                    return Err(Self::line_invalid(
-                        &line.line_id,
-                        "amount is below one whole unit at the resolved price",
-                    ));
-                }
+                // An amount short of one whole unit places nothing. It is
+                // reported rather than refused: refusing would fail the whole
+                // preview over one line the user can still edit (§5).
                 Ok((quantity, quantity * unit_price))
             }
             WorksheetInputMode::Quantity => {
@@ -1219,7 +1216,17 @@ impl AllocationWorksheetService {
                     ),
                 ));
             }
-            if min_line_amount > Decimal::ZERO && amount < min_line_amount {
+            if quantity.is_zero() {
+                warnings.push(Self::warning(
+                    WorksheetWarningKind::BelowOneUnit,
+                    Some(&line.line_id),
+                    "whole-units",
+                    format!(
+                        "{} buys less than one whole unit at {unit_price}, so this line places nothing.",
+                        line.value
+                    ),
+                ));
+            } else if min_line_amount > Decimal::ZERO && amount < min_line_amount {
                 warnings.push(Self::warning(
                     WorksheetWarningKind::BelowMinimumLine,
                     Some(&line.line_id),
@@ -2998,6 +3005,21 @@ mod tests {
             true,
         )
         .is_err());
+    }
+
+    #[test]
+    fn an_amount_below_one_whole_unit_places_nothing_rather_than_failing() {
+        // Refusing would fail the whole preview over one line the user can
+        // still edit, and §5 reports an edit rather than correcting it.
+        let (quantity, amount) = AllocationWorksheetService::resolved_quantity_and_amount(
+            &line(WorksheetInputMode::Amount, dec!(40)),
+            dec!(100),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(quantity, Decimal::ZERO);
+        assert_eq!(amount, Decimal::ZERO);
     }
 
     #[test]

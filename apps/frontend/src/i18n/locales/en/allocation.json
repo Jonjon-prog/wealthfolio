@@ -373,6 +373,7 @@
     "accountCount_one": "{{count}} account",
     "accountCount_other": "{{count}} accounts",
     "accountHoldingSummary": "Holds {{amount}} · {{quantity}} units",
+    "accountUnitsSummary": "≈ {{quantity}} units",
     "accountShortfall": "{{account}} has {{required}} of increases but can fund {{available}} on its own.",
     "accountsHint": "Where reductions are drawn from and increases are placed. Target weights are still measured against every account in scope.",
     "accountsLabel": "Accounts to change",
