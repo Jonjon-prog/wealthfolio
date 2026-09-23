@@ -192,7 +192,7 @@ const previewResult: AllocationWorksheetResult = {
   sourceRecords: [],
 };
 
-async function renderWorksheet(target: AllocationTarget = profile) {
+async function renderWorksheet() {
   const user = userEvent.setup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const Providers = ({ children }: { children: ReactNode }) => (
@@ -202,7 +202,7 @@ async function renderWorksheet(target: AllocationTarget = profile) {
   );
   render(
     <AllocationWorksheetTab
-      profile={target}
+      profile={profile}
       driftReport={driftReport}
       accountScope={{ type: "all" }}
       sourceVersion="source-1"
@@ -259,25 +259,6 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
       selectedAccountIds: ["acc-1"],
       eligibleAssetIds: undefined,
     });
-  });
-
-  it("sizes a whole-unit target in units rather than currency", async () => {
-    // The share is the unit of decision, so it is what the user enters and what
-    // the preview receives: no amount is floored back into one.
-    const user = await renderWorksheet({ ...profile, wholeSharesOnly: true });
-
-    await user.click(
-      screen.getByRole("button", { name: /Allocate by current holding proportions/ }),
-    );
-    await user.click(screen.getByRole("button", { name: /Recalculate from target/ }));
-
-    // 1200 of VTI at 100 is 12 units.
-    await waitFor(() => expect(screen.getByLabelText("Change for VTI")).toHaveValue("12"));
-    await waitFor(() =>
-      expect(previewMock.mock.lastCall?.[0].lines).toEqual([
-        expect.objectContaining({ inputMode: "quantity", value: 12 }),
-      ]),
-    );
   });
 
   it("previews an edited line without calculating adjustments again", async () => {

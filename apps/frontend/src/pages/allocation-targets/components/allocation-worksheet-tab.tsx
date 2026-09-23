@@ -230,9 +230,7 @@ function readWorksheetDraft(storageKey: string): WorksheetDraft | null {
     const draft = parsed as Partial<WorksheetDraft>;
     if (
       draft.version !== DRAFT_VERSION ||
-      (draft.editMode !== "amount" &&
-        draft.editMode !== "after_percentage" &&
-        draft.editMode !== "quantity") ||
+      (draft.editMode !== "amount" && draft.editMode !== "after_percentage") ||
       (draft.mode !== "invest_cash" && draft.mode !== "rebalance") ||
       (draft.rule !== null && draft.rule !== "current_holding_proportions") ||
       (draft.trackedCash !== null && typeof draft.trackedCash !== "string") ||
@@ -259,18 +257,7 @@ function positionChangeAmount(
 ): number {
   if (!adjustment || adjustment.inputValue.trim() === "") return 0;
   if (adjustment.inputMode === "amount") return parseDecimalInput(adjustment.inputValue);
-  if (adjustment.inputMode === "quantity") {
-    // A position with nothing recorded has no price to size units against; it
-    // is entered as an amount or a Final % instead.
-    const unitPrice = unitPriceFor(position);
-    return unitPrice === undefined ? 0 : parseDecimalInput(adjustment.inputValue) * unitPrice;
-  }
   return (parseDecimalInput(adjustment.inputValue) / 100) * basis - position.value;
-}
-
-/** Account allocations are entered in units only when the change itself is. */
-function allocationUnit(mode: WorksheetEditMode): "amount" | "quantity" {
-  return mode === "quantity" ? "quantity" : "amount";
 }
 
 /**
@@ -1070,10 +1057,6 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
 interface AccountAllocationProps {
   position: WorksheetPosition;
   changeAmount: number;
-  /** The size of the change, expressed in `unit`. */
-  changeValue: number;
-  /** What the placements on this card are entered in. */
-  unit: "amount" | "quantity";
   accounts: Account[];
   adjustment: PositionAdjustment;
   currency: string;
@@ -1093,8 +1076,6 @@ interface AccountAllocationProps {
 function AccountAllocation({
   position,
   changeAmount,
-  changeValue,
-  unit,
   accounts,
   adjustment,
   currency,
@@ -1107,9 +1088,7 @@ function AccountAllocation({
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
   const { formatQuantity } = useNumberFormatting();
-  const requested = Math.abs(changeValue);
-  const formatValue = (value: number) =>
-    unit === "quantity" ? formatQuantity(value) : formatAmount(value, currency);
+  const requested = Math.abs(changeAmount);
   const hasEnteredAmount = accounts.some(
     (account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "",
   );
@@ -1167,18 +1146,12 @@ function AccountAllocation({
           {isFullyAllocated
             ? t("allocation:worksheet.fullyAllocated")
             : overallocated > AMOUNT_EPSILON
-              ? unit === "quantity"
-                ? t("allocation:worksheet.unitsOverAllocated", {
-                    quantity: formatQuantity(overallocated),
-                  })
-                : t("allocation:worksheet.overAllocatedBy", {
-                    amount: formatAmount(overallocated, currency),
-                  })
-              : unit === "quantity"
-                ? t("allocation:worksheet.unitsRemaining", { quantity: formatQuantity(remaining) })
-                : t("allocation:worksheet.remainingToAllocate", {
-                    amount: formatAmount(remaining, currency),
-                  })}
+              ? t("allocation:worksheet.overAllocatedBy", {
+                  amount: formatAmount(overallocated, currency),
+                })
+              : t("allocation:worksheet.remainingToAllocate", {
+                  amount: formatAmount(remaining, currency),
+                })}
         </span>
       </div>
 
@@ -1199,25 +1172,12 @@ function AccountAllocation({
           // nothing is still offered: the core reports such a line now, and
           // withholding the button only forces the same amount in by hand.
           const wholeUnitRemaining =
-            unit === "amount" && wholeSharesOnly && unitPrice
+            wholeSharesOnly && unitPrice
               ? Math.floor(rowRemaining / unitPrice + 1e-9) * unitPrice
               : rowRemaining;
           const remainingToUse =
             wholeUnitRemaining > AMOUNT_EPSILON ? wholeUnitRemaining : rowRemaining;
-          // The other side of what was entered: units for an amount, and the
-          // amount those units come to when the change is decided in shares.
-          const secondary =
-            currentAmount <= AMOUNT_EPSILON || !unitPrice
-              ? undefined
-              : unit === "quantity"
-                ? formatAmount(currentAmount * unitPrice, currency)
-                : t("allocation:worksheet.accountUnitsSummary", {
-                    quantity: formatQuantity(
-                      wholeSharesOnly
-                        ? Math.floor(currentAmount / unitPrice)
-                        : currentAmount / unitPrice,
-                    ),
-                  });
+          const currentUnits = unitPrice ? currentAmount / unitPrice : undefined;
           return (
             <div
               key={account.id}
@@ -1257,14 +1217,12 @@ function AccountAllocation({
                 <div className="flex items-center gap-2">
                   {accounts.length === 1 ? (
                     <span className="font-mono text-sm font-semibold tabular-nums">
-                      {formatValue(requested)}
+                      {formatAmount(requested, currency)}
                     </span>
                   ) : (
                     <>
                       <div className="border-input bg-background focus-within:ring-ring flex h-9 w-40 items-center rounded-md border px-2.5 focus-within:ring-1">
-                        <span className="text-muted-foreground mr-1.5 text-xs">
-                          {unit === "quantity" ? "" : currency}
-                        </span>
+                        <span className="text-muted-foreground mr-1.5 text-xs">{currency}</span>
                         <input
                           aria-label={t("allocation:worksheet.accountAmountLabel", {
                             account: account.name,
@@ -1295,9 +1253,13 @@ function AccountAllocation({
                     </>
                   )}
                 </div>
-                {secondary && (
+                {currentUnits !== undefined && currentAmount > AMOUNT_EPSILON && (
                   <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
-                    {secondary}
+                    {t("allocation:worksheet.accountUnitsSummary", {
+                      quantity: formatQuantity(
+                        wholeSharesOnly ? Math.floor(currentUnits) : currentUnits,
+                      ),
+                    })}
                   </span>
                 )}
               </div>
@@ -1827,10 +1789,7 @@ export function AllocationWorksheetTab({
   const { data: portfolios = [] } = usePortfolios();
 
   const [view, setView] = useState<WorksheetView>("position");
-  // A whole-unit target is decided in shares: sizing it in currency only to
-  // have the core floor it back hides the number the user actually chooses.
-  const unitEditMode: "amount" | "quantity" = profile?.wholeSharesOnly ? "quantity" : "amount";
-  const [editMode, setEditMode] = useState<WorksheetEditMode>(unitEditMode);
+  const [editMode, setEditMode] = useState<WorksheetEditMode>("amount");
   const [mode, setMode] = useState<WorksheetMode>("invest_cash");
   const [rule, setRule] = useState<AllocationRule | null>(null);
   // `null` follows the cash the chosen accounts record; a string is the
@@ -2015,7 +1974,7 @@ export function AllocationWorksheetTab({
     }
 
     initializedScopeRef.current = draftStorageKey;
-    setEditMode(draft?.editMode ?? unitEditMode);
+    setEditMode(draft?.editMode ?? "amount");
     setMode(draft?.mode === "rebalance" && profile?.allowSells ? "rebalance" : "invest_cash");
     setRule(draft?.rule ?? null);
     setTrackedCash(draft?.trackedCash ?? null);
@@ -2276,13 +2235,6 @@ export function AllocationWorksheetTab({
       if (changeAmount > 0) increaseTotal += requestedAmount;
       else reductionTotal += requestedAmount;
 
-      // Placements carry the unit the change was entered in, so a worksheet
-      // decided in shares never round-trips through a currency amount and back.
-      const isUnitEntry = allocationUnit(adjustment.inputMode) === "quantity";
-      const requestedValue = isUnitEntry
-        ? Math.abs(parseDecimalInput(adjustment.inputValue))
-        : requestedAmount;
-
       const eligibleAccounts = accountsForChange(position, changeAmount);
       if (eligibleAccounts.length === 0) {
         issue ??= {
@@ -2314,9 +2266,9 @@ export function AllocationWorksheetTab({
       );
       const allocations =
         eligibleAccounts.length === 1
-          ? [{ accountId: eligibleAccounts[0].id, amount: requestedValue }]
+          ? [{ accountId: eligibleAccounts[0].id, amount: requestedAmount }]
           : impliedAccountId && !hasEnteredAllocation
-            ? [{ accountId: impliedAccountId, amount: requestedValue }]
+            ? [{ accountId: impliedAccountId, amount: requestedAmount }]
             : eligibleAccounts
                 .map((account) => ({
                   accountId: account.id,
@@ -2332,14 +2284,12 @@ export function AllocationWorksheetTab({
       // worksheet permanently unreviewable; anything from a whole unit up still
       // has to be placed.
       const positionUnitPrice = unitPriceFor(position);
-      const unplaceable = isUnitEntry
-        ? AMOUNT_EPSILON
-        : profile.wholeSharesOnly && positionUnitPrice
-          ? Math.max(0.02, positionUnitPrice)
-          : 0.02;
+      const unplaceable =
+        profile.wholeSharesOnly && positionUnitPrice ? Math.max(0.02, positionUnitPrice) : 0.02;
       if (
         eligibleAccounts.length > 1 &&
-        (requestedValue - allocatedAmount > unplaceable || allocatedAmount - requestedValue > 0.02)
+        (requestedAmount - allocatedAmount > unplaceable ||
+          allocatedAmount - requestedAmount > 0.02)
       ) {
         issue ??= {
           message: t("allocation:worksheet.allocateAccountsIssue", {
@@ -2359,19 +2309,16 @@ export function AllocationWorksheetTab({
         const reducesEntireAccountHolding =
           changeAmount < 0 &&
           accountHolding !== undefined &&
-          Math.abs(
-            allocation.amount - (isUnitEntry ? accountHolding.quantity : accountHolding.value),
-          ) <= 0.02;
+          Math.abs(allocation.amount - accountHolding.value) <= 0.02;
         lines.push({
           lineId: `position:${position.assetId}:${allocation.accountId}:${changeAmount > 0 ? "increase" : "reduce"}`,
           direction: changeAmount > 0 ? "increase" : "reduce",
           assetId: position.assetId,
           accountId: allocation.accountId,
-          inputMode: isUnitEntry || reducesEntireAccountHolding ? "quantity" : "amount",
-          value:
-            reducesEntireAccountHolding && !isUnitEntry
-              ? accountHolding.quantity
-              : Number(allocation.amount.toFixed(6)),
+          inputMode: reducesEntireAccountHolding ? "quantity" : "amount",
+          value: reducesEntireAccountHolding
+            ? accountHolding.quantity
+            : Number(allocation.amount.toFixed(6)),
         });
       }
     }
@@ -2409,9 +2356,7 @@ export function AllocationWorksheetTab({
     const nextChange =
       editMode === "amount"
         ? parseDecimalInput(value)
-        : editMode === "quantity"
-          ? parseDecimalInput(value) * (unitPriceFor(position) ?? 0)
-          : (parseDecimalInput(value) / 100) * basis - position.value;
+        : (parseDecimalInput(value) / 100) * basis - position.value;
     if (Math.abs(nextChange) >= AMOUNT_EPSILON) {
       setExpandedAssetIds((current) => new Set(current).add(position.assetId));
     }
@@ -2420,19 +2365,11 @@ export function AllocationWorksheetTab({
   function reducePositionToZero(position: WorksheetPosition) {
     updateAdjustment(position.assetId, {
       inputMode: editMode,
-      inputValue:
-        editMode === "amount"
-          ? formatDecimalInput(-position.value, 6)
-          : editMode === "quantity"
-            ? formatDecimalInput(-position.quantity, 6)
-            : "0",
+      inputValue: editMode === "amount" ? formatDecimalInput(-position.value, 6) : "0",
       accountAmounts: Object.fromEntries(
         position.accountHoldings.map((holding) => [
           holding.accountId,
-          formatDecimalInput(
-            allocationUnit(editMode) === "quantity" ? holding.quantity : holding.value,
-            6,
-          ),
+          formatDecimalInput(holding.value, 6),
         ]),
       ),
     });
@@ -2447,22 +2384,13 @@ export function AllocationWorksheetTab({
         const position = positionByAsset.get(assetId);
         if (!position) continue;
         const change = positionChangeAmount(adjustment, position, basis);
-        const unitPrice = unitPriceFor(position);
         updated[assetId] = {
           ...adjustment,
           inputMode: nextMode,
           inputValue:
             nextMode === "amount"
               ? formatDecimalInput(change, 6)
-              : nextMode === "quantity"
-                ? formatDecimalInput(unitPrice ? Math.trunc(change / unitPrice) : 0, 6)
-                : formatDecimalInput(basis > 0 ? ((position.value + change) / basis) * 100 : 0, 4),
-          // Placements are in the unit they were entered in, so a switch that
-          // changes the unit cannot carry them over.
-          accountAmounts:
-            allocationUnit(nextMode) === allocationUnit(adjustment.inputMode)
-              ? adjustment.accountAmounts
-              : {},
+              : formatDecimalInput(basis > 0 ? ((position.value + change) / basis) * 100 : 0, 4),
         };
       }
       return updated;
@@ -2491,8 +2419,8 @@ export function AllocationWorksheetTab({
 
   /** Replaces the worksheet with a calculated set. Only the two explicit actions call this. */
   function applyCalculated(calculated: CalculatedAdjustments) {
-    const prefilled = adjustmentsFromCalculated(calculated, unitEditMode);
-    setEditMode(unitEditMode);
+    const prefilled = adjustmentsFromCalculated(calculated);
+    setEditMode("amount");
     setAdjustments(prefilled);
     setAddedAssetIds([]);
     setExpandedAssetIds(new Set(Object.keys(prefilled)));
@@ -2704,7 +2632,7 @@ export function AllocationWorksheetTab({
                   </div>
                   {view === "position" && (
                     <div className="border-border bg-muted/20 flex rounded-full border p-1">
-                      {([unitEditMode, "after_percentage"] as WorksheetEditMode[]).map((option) => (
+                      {(["amount", "after_percentage"] as const).map((option) => (
                         <button
                           key={option}
                           type="button"
@@ -2718,9 +2646,7 @@ export function AllocationWorksheetTab({
                         >
                           {option === "amount"
                             ? t("allocation:worksheet.changeAmount")
-                            : option === "quantity"
-                              ? t("allocation:worksheet.changeUnits")
-                              : t("allocation:worksheet.afterPercentage")}
+                            : t("allocation:worksheet.afterPercentage")}
                         </button>
                       ))}
                     </div>
@@ -2800,9 +2726,7 @@ export function AllocationWorksheetTab({
                   <span className="text-right">
                     {editMode === "amount"
                       ? t("allocation:worksheet.changeAmount")
-                      : editMode === "quantity"
-                        ? t("allocation:worksheet.changeUnits")
-                        : t("allocation:worksheet.projectedPercent")}
+                      : t("allocation:worksheet.projectedPercent")}
                   </span>
                   <span className="text-right">{t("allocation:worksheet.projectedChange")}</span>
                   <span />
@@ -2842,9 +2766,9 @@ export function AllocationWorksheetTab({
                       const asset = eligibleAssets.find((item) => item.id === position.assetId);
                       const displayInput = adjustment
                         ? adjustment.inputValue
-                        : editMode === "after_percentage"
-                          ? formatDecimalInput(position.currentPct, 4)
-                          : "";
+                        : editMode === "amount"
+                          ? ""
+                          : formatDecimalInput(position.currentPct, 4);
                       return (
                         <div
                           id={`worksheet-position-${position.assetId}`}
@@ -2908,9 +2832,7 @@ export function AllocationWorksheetTab({
                               <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
                                 {editMode === "amount"
                                   ? t("allocation:worksheet.changeAmount")
-                                  : editMode === "quantity"
-                                    ? t("allocation:worksheet.changeUnits")
-                                    : t("allocation:worksheet.projectedPercent")}
+                                  : t("allocation:worksheet.projectedPercent")}
                               </span>
                               <div className="flex w-44 items-center gap-1 xl:w-full">
                                 <div className="border-input bg-background flex h-9 min-w-0 flex-1 items-center rounded-md border px-2.5 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
@@ -2945,7 +2867,7 @@ export function AllocationWorksheetTab({
                                       updatePositionInput(position, formatDecimalInput(next, 4));
                                     }}
                                     inputMode="decimal"
-                                    placeholder={editMode === "after_percentage" ? undefined : "±0"}
+                                    placeholder={editMode === "amount" ? "±0" : undefined}
                                     className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
                                   />
                                   {editMode === "after_percentage" && (
@@ -3058,12 +2980,6 @@ export function AllocationWorksheetTab({
                             <AccountAllocation
                               position={position}
                               changeAmount={changeAmount}
-                              changeValue={
-                                allocationUnit(adjustment.inputMode) === "quantity"
-                                  ? Math.abs(parseDecimalInput(adjustment.inputValue))
-                                  : Math.abs(changeAmount)
-                              }
-                              unit={allocationUnit(adjustment.inputMode)}
                               accounts={accountsForChange(position, changeAmount)}
                               adjustment={adjustment}
                               currency={currency}

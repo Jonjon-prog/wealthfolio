@@ -1,17 +1,11 @@
 import type { AllocationRule, CalculatedAdjustments, WorksheetMode } from "@/lib/types";
 
-/**
- * `quantity` is the unit of decision under a whole-unit policy: a share cannot
- * be bought in halves, so entering the amount only to have it floored back is a
- * detour through a number the user never meant. Amounts stay the output either
- * way (§4.6).
- */
-export type WorksheetEditMode = "amount" | "after_percentage" | "quantity";
+export type WorksheetEditMode = "amount" | "after_percentage";
 
 export interface PositionAdjustment {
   inputMode: WorksheetEditMode;
   inputValue: string;
-  /** What each account takes, as entered, in the unit `inputMode` uses. */
+  /** Amount placed in each account, as entered. */
   accountAmounts: Record<string, string>;
 }
 
@@ -116,25 +110,21 @@ export function soleHoldingAccountId(
  * calculation left unallocated arrives without account amounts, so the user
  * places it.
  */
-export function adjustmentsFromCalculated(
-  calculated: CalculatedAdjustments,
-  unit: "amount" | "quantity" = "amount",
-): PositionAdjustments {
+export function adjustmentsFromCalculated(calculated: CalculatedAdjustments): PositionAdjustments {
   const totals = new Map<string, number>();
   const placed = new Map<string, Map<string, number>>();
   for (const line of calculated.adjustments) {
-    const value = unit === "quantity" ? line.quantity : line.amount;
-    totals.set(line.assetId, (totals.get(line.assetId) ?? 0) + value);
+    totals.set(line.assetId, (totals.get(line.assetId) ?? 0) + line.amount);
     if (!line.accountId) continue;
     const accounts = placed.get(line.assetId) ?? new Map<string, number>();
-    accounts.set(line.accountId, (accounts.get(line.accountId) ?? 0) + Math.abs(value));
+    accounts.set(line.accountId, (accounts.get(line.accountId) ?? 0) + Math.abs(line.amount));
     placed.set(line.assetId, accounts);
   }
 
   const adjustments: PositionAdjustments = {};
   for (const [assetId, total] of totals) {
     adjustments[assetId] = {
-      inputMode: unit,
+      inputMode: "amount",
       inputValue: formatDecimalInput(total, 6),
       accountAmounts: Object.fromEntries(
         [...(placed.get(assetId) ?? [])].map(([accountId, amount]) => [
