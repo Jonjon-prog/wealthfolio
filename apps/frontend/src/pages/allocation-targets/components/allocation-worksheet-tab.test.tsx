@@ -320,6 +320,8 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const user = await renderWorksheet();
 
     await calculateFromTarget(user);
+    // The empty worksheet may be previewed on mount, before the calculation.
+    previewMock.mockClear();
 
     const allocation = screen
       .getByText("Account allocation")
@@ -327,6 +329,8 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(within(allocation).getByText("$1,200.00 remaining")).toBeInTheDocument();
     expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("");
     expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("");
+    // Wait past the preview debounce, or the check below cannot fail.
+    await new Promise((resolve) => setTimeout(resolve, 600));
     expect(previewMock).not.toHaveBeenCalled();
   });
 
