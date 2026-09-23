@@ -597,8 +597,12 @@ impl AllocationWorksheetService {
 
         match line.input_mode {
             WorksheetInputMode::Amount => {
+                // Prices arrive as 32-bit floats widened to decimals, so an
+                // amount meant to buy N units can divide out a fraction of a
+                // billionth below N. Rounding before the floor reads that as
+                // the N it was.
                 let quantity = if whole_shares_only {
-                    (line.value / unit_price).floor()
+                    (line.value / unit_price).round_dp(6).floor()
                 } else {
                     line.value / unit_price
                 };
@@ -1222,8 +1226,9 @@ impl AllocationWorksheetService {
                     Some(&line.line_id),
                     "whole-units",
                     format!(
-                        "{} buys less than one whole unit at {unit_price}, so this line places nothing.",
-                        line.value
+                        "{} buys less than one whole unit at {}, so this line places nothing.",
+                        line.value.normalize(),
+                        unit_price.round_dp(4).normalize()
                     ),
                 ));
             } else if min_line_amount > Decimal::ZERO && amount < min_line_amount {
@@ -3005,6 +3010,20 @@ mod tests {
             true,
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_price_carrying_float_residue_still_buys_its_whole_unit() {
+        // Providers send 32-bit floats, so 9.173 is recorded as a price a
+        // fraction of a billionth above the amount meant to buy one of it.
+        let (quantity, _) = AllocationWorksheetService::resolved_quantity_and_amount(
+            &line(WorksheetInputMode::Amount, dec!(9.173)),
+            dec!(9.173000335693359375),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(quantity, dec!(1));
     }
 
     #[test]

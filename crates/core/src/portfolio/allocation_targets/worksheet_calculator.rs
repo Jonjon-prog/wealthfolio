@@ -633,6 +633,16 @@ fn scale_to_funding(nets: &mut [NetAdjustment], available: Decimal) -> Option<De
     Some(factor)
 }
 
+/// The whole units a quantity comes to.
+///
+/// Prices arrive as 32-bit floats widened to decimals, so an amount meant to
+/// buy N units can divide out a fraction of a billionth below N. Rounding
+/// before the floor reads that as the N it was rather than as N-1; the
+/// tolerance is far below any quantity anyone trades.
+fn whole_units(quantity: Decimal) -> Decimal {
+    quantity.round_dp(6).floor()
+}
+
 /// §4.6 steps 5 and 6 — quantities are floored under whole-unit policy, and a
 /// line below the minimum is flagged rather than dropped or re-rounded.
 ///
@@ -651,7 +661,7 @@ fn finalize(
     };
     let mut quantity = amount.abs() / unit_price;
     if limits.whole_shares_only {
-        quantity = quantity.floor();
+        quantity = whole_units(quantity);
     }
     let resolved = quantity * unit_price;
     let is_below_minimum =
@@ -761,7 +771,11 @@ fn apportion(
             let share = total * *weight / weight_total;
             (
                 account_id.clone(),
-                if whole_units { share.floor() } else { share },
+                if whole_units {
+                    self::whole_units(share)
+                } else {
+                    share
+                },
             )
         })
         .collect()
