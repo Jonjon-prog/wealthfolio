@@ -2692,7 +2692,10 @@ export function AllocationWorksheetTab({
               )}
             </div>
 
-            {view === "position" && generated && (
+            {/* Visible in both views: what the calculation could not place is
+                exactly what the review is missing, and hiding it there leaves
+                the leftover cash unexplained. */}
+            {generated && (
               <CalculatedSummary
                 calculated={generated.calculated}
                 currency={currency}

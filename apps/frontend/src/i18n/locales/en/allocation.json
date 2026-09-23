@@ -493,6 +493,7 @@
     "singleAccountAllocationHint": "The only account in scope receives this change.",
     "soleHolderAllocationHint": "Placed in the only account that records this security. Enter amounts yourself to split it.",
     "target": "Target",
+    "title": "Rebalancing worksheet",
     "toggleAccountAllocation": "Edit account allocation",
     "totalAdjusted": "{{amount}} adjusted",
     "unclassified": "Unclassified",
