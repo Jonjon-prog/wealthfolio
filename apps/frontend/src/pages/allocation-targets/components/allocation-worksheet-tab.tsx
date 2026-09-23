@@ -1128,13 +1128,19 @@ function AccountAllocation({
     AMOUNT_EPSILON,
   );
   const isReduce = changeAmount < 0;
+  // Which accounts record the security is a fact about the portfolio, so it is
+  // stated whether or not the user has since placed the change by hand. Only
+  // the first sentence — that the app placed it — depends on that.
+  const holderName = accounts.find((account) => account.id === impliedAccountId)?.name;
   const hint = isReduce
     ? "allocation:worksheet.reductionAccountAllocationHint"
     : accounts.length === 1
       ? "allocation:worksheet.singleAccountAllocationHint"
       : impliedHolder
         ? "allocation:worksheet.soleHolderAllocationHint"
-        : "allocation:worksheet.increaseAccountAllocationHint";
+        : impliedAccountId
+          ? "allocation:worksheet.soleHolderSplitHint"
+          : "allocation:worksheet.increaseAccountAllocationHint";
 
   return (
     <div
@@ -1146,7 +1152,7 @@ function AccountAllocation({
           <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em]">
             {t("allocation:worksheet.accountAllocation")}
           </p>
-          <p className="text-muted-foreground mt-1 text-xs">{t(hint)}</p>
+          <p className="text-muted-foreground mt-1 text-xs">{t(hint, { account: holderName })}</p>
         </div>
         <span
           className={cn(

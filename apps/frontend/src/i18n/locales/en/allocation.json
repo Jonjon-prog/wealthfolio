@@ -494,6 +494,7 @@
     "selectAllAccounts": "Select all",
     "singleAccountAllocationHint": "The only account in scope receives this change.",
     "soleHolderAllocationHint": "Placed in the only account that records this security. Enter amounts yourself to split it.",
+    "soleHolderSplitHint": "Only {{account}} records this security. Placing it elsewhere opens a new position there.",
     "target": "Target",
     "title": "Rebalancing worksheet",
     "toggleAccountAllocation": "Edit account allocation",
