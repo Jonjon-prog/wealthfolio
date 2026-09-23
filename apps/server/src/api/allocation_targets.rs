@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -52,7 +52,7 @@ fn account_scope_for_target(target: &AllocationTarget) -> ApiResult<AccountScope
 // ── Target CRUD ──────────────────────────────────────────────────────────────
 
 async fn list_targets(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<AllocationTarget>>> {
     let targets = state.allocation_target_service.list_targets()?;
     Ok(Json(targets))
@@ -60,14 +60,14 @@ async fn list_targets(
 
 async fn get_target(
     Path(id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<Option<AllocationTarget>>> {
     let target = state.allocation_target_service.get_target(&id)?;
     Ok(Json(target))
 }
 
 async fn create_target(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(payload): Json<NewAllocationTarget>,
 ) -> ApiResult<Json<AllocationTarget>> {
     let created = state
@@ -79,7 +79,7 @@ async fn create_target(
 
 async fn update_target(
     Path(id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(payload): Json<NewAllocationTarget>,
 ) -> ApiResult<Json<AllocationTarget>> {
     let updated = state
@@ -91,7 +91,7 @@ async fn update_target(
 
 async fn archive_target(
     Path(id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<AllocationTarget>> {
     let target = state.allocation_target_service.archive_target(&id).await?;
     Ok(Json(target))
@@ -99,7 +99,7 @@ async fn archive_target(
 
 async fn delete_target(
     Path(id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<StatusCode> {
     state.allocation_target_service.delete_target(&id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -109,7 +109,7 @@ async fn delete_target(
 
 async fn list_weights(
     Path(target_id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<AllocationTargetWeight>>> {
     let weights = state
         .allocation_target_service
@@ -119,7 +119,7 @@ async fn list_weights(
 
 async fn save_weights(
     Path(target_id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(weights): Json<Vec<NewAllocationTargetWeight>>,
 ) -> ApiResult<Json<Vec<AllocationTargetWeight>>> {
     let saved = state
@@ -138,7 +138,7 @@ struct SaveTargetWithWeightsBody {
 }
 
 async fn save_target_with_weights(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<SaveTargetWithWeightsBody>,
 ) -> ApiResult<Json<SaveAllocationTargetResult>> {
     let saved = state
@@ -160,7 +160,7 @@ struct DriftBody {
 
 async fn get_drift_for_target(
     Path(target_id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<DriftBody>,
 ) -> ApiResult<Json<DriftReport>> {
     let base_currency = state.base_currency.read().unwrap().clone();
@@ -275,7 +275,7 @@ fn resolve_worksheet_scope(
 }
 
 async fn generate_adjustments(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<GenerateAdjustmentsBody>,
 ) -> ApiResult<Json<CalculatedAdjustments>> {
     let scope = resolve_worksheet_scope(&state, &body.target_id, &body.filter)?;
@@ -297,7 +297,7 @@ async fn generate_adjustments(
 }
 
 async fn calculate_worksheet(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<CalculateWorksheetBody>,
 ) -> ApiResult<Json<AllocationWorksheetResult>> {
     let scope = resolve_worksheet_scope(&state, &body.target_id, &body.filter)?;
@@ -319,7 +319,7 @@ async fn calculate_worksheet(
 // ── Sell constraints ─────────────────────────────────────────────────────────
 
 async fn list_target_constraints_handler(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Path(target_id): Path<String>,
 ) -> ApiResult<Json<Vec<AllocationTargetConstraint>>> {
     let constraints = state
@@ -329,7 +329,7 @@ async fn list_target_constraints_handler(
 }
 
 async fn save_target_constraints_handler(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Path(target_id): Path<String>,
     Json(constraints): Json<Vec<AllocationTargetConstraint>>,
 ) -> ApiResult<Json<Vec<AllocationTargetConstraint>>> {
@@ -342,7 +342,7 @@ async fn save_target_constraints_handler(
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-pub fn router() -> Router<Arc<AppState>> {
+pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/allocation-targets", get(list_targets).post(create_target))
         .route(

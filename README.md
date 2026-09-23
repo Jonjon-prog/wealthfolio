@@ -504,6 +504,11 @@ docker compose --env-file .env.docker -f compose.yml -f compose.proxy.yml up -d
 Use this when the proxy runs on the same Docker network and forwards traffic to
 `http://wealthfolio:8088`.
 
+Set `WF_CORS_ALLOW_ORIGINS` to the public HTTP(S) origin, including any custom
+port. Profile startup accepts that explicit origin even if the proxy rewrites
+`Host`; wildcard `*` does not authorize this fallback. See
+[reverse proxies and profile startup](docs/self-host/README.md#reverse-proxies-and-profile-startup).
+
 **Using Docker CLI environment file**:
 
 Docker CLI `--env-file` keeps `$` characters as-is, so use raw values without

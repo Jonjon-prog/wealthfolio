@@ -1,3 +1,4 @@
+import { isExpiredOptionAsset } from "./asset-utils";
 import { createActivity, getAssetHoldings, getAssetLots, searchActivities } from "@/adapters";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { AssetLogoDialog } from "@/components/asset-logo/asset-logo-dialog";
@@ -65,6 +66,7 @@ import { useAssetProfile } from "./hooks/use-asset-profile";
 import { useAssetProfileMutations } from "./hooks/use-asset-profile-mutations";
 import { useQuoteMutations } from "./hooks/use-quote-mutations";
 import { QuoteHistoryDataGrid } from "./quote-history-data-grid";
+import { ResetProviderHistoryDialog } from "./reset-provider-history-dialog";
 import { RefreshQuotesConfirmDialog } from "./refresh-quotes-confirm-dialog";
 
 // Alternative asset kinds that should use ValueHistoryDataGrid
@@ -516,12 +518,10 @@ export const AssetProfilePage = () => {
     return option;
   }, [assetProfile]);
 
-  const isExpiredOption = useMemo(() => {
-    if (!optionSpec?.expiration) return false;
-    // Compare date-only: expired once the calendar day after expiration has started
-    const today = new Date().toISOString().split("T")[0];
-    return optionSpec.expiration < today;
-  }, [optionSpec]);
+  const isExpiredOption =
+    optionSpec?.expiration && assetProfile
+      ? isExpiredOptionAsset(assetProfile, settings?.timezone)
+      : false;
 
   const [confirmExpiryOpen, setConfirmExpiryOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -1059,6 +1059,7 @@ export const AssetProfilePage = () => {
 
   const isLoading = isHoldingLoading || isQuotesLoading || isAssetProfileLoading;
   const [refreshConfirmOpen, setRefreshConfirmOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [symbolCopied, setSymbolCopied] = useState(false);
   const displayedSymbol = assetProfile?.displayCode ?? holding?.instrument?.symbol ?? assetId;
 
@@ -1152,7 +1153,7 @@ export const AssetProfilePage = () => {
                       items: [
                         {
                           icon: Icons.Download,
-                          label: t("asset:profile.update_price"),
+                          label: t("common:component.update_quotes"),
                           onClick: handleUpdateQuotes,
                         },
                         {
@@ -1160,6 +1161,16 @@ export const AssetProfilePage = () => {
                           label: t("asset:profile.refresh_history"),
                           onClick: handleRefreshQuotesWithConfirm,
                         },
+                        ...(!isManualPricingMode
+                          ? [
+                              {
+                                icon: Icons.Refresh,
+                                label: t("asset:resetDialog.title"),
+                                onClick: () => setResetConfirmOpen(true),
+                                variant: "destructive" as const,
+                              },
+                            ]
+                          : []),
                         {
                           icon: Icons.Pencil,
                           label: t("asset:profile.edit"),
@@ -1233,6 +1244,17 @@ export const AssetProfilePage = () => {
           )}
         </PageContent>
 
+        <RefreshQuotesConfirmDialog
+          open={refreshConfirmOpen}
+          onOpenChange={setRefreshConfirmOpen}
+          onConfirm={handleRefreshQuotes}
+        />
+        <ResetProviderHistoryDialog
+          assetId={assetId}
+          assetName={assetProfile.displayCode ?? assetId}
+          open={resetConfirmOpen}
+          onOpenChange={setResetConfirmOpen}
+        />
         <AssetEditSheet
           open={editSheetOpen}
           onOpenChange={setEditSheetOpen}
@@ -1388,7 +1410,7 @@ export const AssetProfilePage = () => {
                         items: [
                           {
                             icon: Icons.Download,
-                            label: t("asset:profile.update_price"),
+                            label: t("common:component.update_quotes"),
                             onClick: handleUpdateQuotes,
                           },
                           {
@@ -1396,6 +1418,16 @@ export const AssetProfilePage = () => {
                             label: t("asset:profile.refresh_history"),
                             onClick: handleRefreshQuotesWithConfirm,
                           },
+                          ...(!isManualPricingMode
+                            ? [
+                                {
+                                  icon: Icons.Refresh,
+                                  label: t("asset:resetDialog.title"),
+                                  onClick: () => setResetConfirmOpen(true),
+                                  variant: "destructive" as const,
+                                },
+                              ]
+                            : []),
                           {
                             icon: Icons.Pencil,
                             label: t("asset:profile.edit"),
@@ -1640,6 +1672,13 @@ export const AssetProfilePage = () => {
         open={refreshConfirmOpen}
         onOpenChange={setRefreshConfirmOpen}
         onConfirm={handleRefreshQuotes}
+      />
+
+      <ResetProviderHistoryDialog
+        assetId={assetId}
+        assetName={assetProfile?.displayCode ?? assetId}
+        open={resetConfirmOpen}
+        onOpenChange={setResetConfirmOpen}
       />
 
       {/* Confirm Option Expiry Dialog */}

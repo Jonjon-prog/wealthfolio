@@ -1,8 +1,7 @@
-use crate::database::DatabaseRuntime;
+use crate::profiles::ProfileAccess;
 use std::sync::Arc;
 
 use rust_decimal::prelude::ToPrimitive;
-use tauri::State;
 
 use crate::context::ServiceContext;
 use wealthfolio_core::goals::validate_retirement_plan;
@@ -28,8 +27,11 @@ fn normalize_sim_count(n_sims: Option<u32>) -> u32 {
     n_sims.unwrap_or(DEFAULT_SIMS).clamp(1, MAX_SIMS)
 }
 
-fn normalize_and_validate_plan(mut plan: RetirementPlan) -> Result<RetirementPlan, String> {
-    normalize_retirement_plan_ages(&mut plan);
+fn normalize_and_validate_plan(
+    mut plan: RetirementPlan,
+    as_of: chrono::NaiveDate,
+) -> Result<RetirementPlan, String> {
+    normalize_retirement_plan_ages(&mut plan, as_of);
     validate_retirement_plan(&plan).map_err(|e| e.to_string())?;
     Ok(plan)
 }
@@ -98,6 +100,7 @@ async fn resolve_retirement_inputs(
     planner_mode: Option<RetirementTimingMode>,
     plan: RetirementPlan,
     current_portfolio: f64,
+    as_of: chrono::NaiveDate,
 ) -> Result<(RetirementPlan, f64, RetirementTimingMode), String> {
     if let Some(goal_id) = goal_id {
         let valuation_map = build_valuation_map(state).await?;
@@ -112,7 +115,7 @@ async fn resolve_retirement_inputs(
             prepared.planner_mode,
         ))
     } else {
-        let plan = normalize_and_validate_plan(plan)?;
+        let plan = normalize_and_validate_plan(plan, as_of)?;
         Ok((
             plan,
             current_portfolio,
@@ -140,16 +143,24 @@ pub async fn calculate_retirement_projection(
     current_portfolio: f64,
     goal_id: Option<String>,
     planner_mode: Option<RetirementTimingMode>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<FireProjection, String> {
     let context = state.context()?;
-    let (plan, current_portfolio, planner_mode) =
-        resolve_retirement_inputs(&context, &goal_id, planner_mode, plan, current_portfolio)
-            .await?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
+    let (plan, current_portfolio, planner_mode) = resolve_retirement_inputs(
+        &context,
+        &goal_id,
+        planner_mode,
+        plan,
+        current_portfolio,
+        as_of,
+    )
+    .await?;
     Ok(project_retirement_with_mode(
         &plan,
         current_portfolio,
         planner_mode,
+        as_of,
     ))
 }
 
@@ -161,13 +172,20 @@ pub async fn run_retirement_monte_carlo(
     seed: Option<u64>,
     goal_id: Option<String>,
     planner_mode: Option<RetirementTimingMode>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<MonteCarloResult, String> {
     let context = state.context()?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
     let n = normalize_sim_count(n_sims);
-    let (plan, current_portfolio, planner_mode) =
-        resolve_retirement_inputs(&context, &goal_id, planner_mode, plan, current_portfolio)
-            .await?;
+    let (plan, current_portfolio, planner_mode) = resolve_retirement_inputs(
+        &context,
+        &goal_id,
+        planner_mode,
+        plan,
+        current_portfolio,
+        as_of,
+    )
+    .await?;
     run_retirement_blocking(move || {
         run_monte_carlo_with_mode_and_seed(&plan, current_portfolio, n, planner_mode, seed)
     })
@@ -180,14 +198,21 @@ pub async fn run_retirement_stress_tests(
     current_portfolio: f64,
     goal_id: Option<String>,
     planner_mode: Option<RetirementTimingMode>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<Vec<StressTestResult>, String> {
     let context = state.context()?;
-    let (plan, current_portfolio, planner_mode) =
-        resolve_retirement_inputs(&context, &goal_id, planner_mode, plan, current_portfolio)
-            .await?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
+    let (plan, current_portfolio, planner_mode) = resolve_retirement_inputs(
+        &context,
+        &goal_id,
+        planner_mode,
+        plan,
+        current_portfolio,
+        as_of,
+    )
+    .await?;
     run_retirement_blocking(move || {
-        run_stress_tests_with_mode(&plan, current_portfolio, planner_mode)
+        run_stress_tests_with_mode(&plan, current_portfolio, planner_mode, as_of)
     })
     .await
 }
@@ -198,14 +223,21 @@ pub async fn run_retirement_scenario_analysis(
     current_portfolio: f64,
     goal_id: Option<String>,
     planner_mode: Option<RetirementTimingMode>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<Vec<ScenarioResult>, String> {
     let context = state.context()?;
-    let (plan, current_portfolio, planner_mode) =
-        resolve_retirement_inputs(&context, &goal_id, planner_mode, plan, current_portfolio)
-            .await?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
+    let (plan, current_portfolio, planner_mode) = resolve_retirement_inputs(
+        &context,
+        &goal_id,
+        planner_mode,
+        plan,
+        current_portfolio,
+        as_of,
+    )
+    .await?;
     run_retirement_blocking(move || {
-        run_scenario_analysis_with_mode(&plan, current_portfolio, planner_mode)
+        run_scenario_analysis_with_mode(&plan, current_portfolio, planner_mode, as_of)
     })
     .await
 }
@@ -216,9 +248,10 @@ pub async fn run_retirement_sorr(
     portfolio_at_fire: f64,
     retirement_start_age: u32,
     goal_id: Option<String>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<Vec<SorrScenario>, String> {
     let context = state.context()?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
     let plan = if let Some(goal_id) = &goal_id {
         let valuation_map = build_valuation_map(&context).await?;
         context
@@ -228,7 +261,7 @@ pub async fn run_retirement_sorr(
             .map_err(|e| e.to_string())?
             .plan
     } else {
-        normalize_and_validate_plan(plan)?
+        normalize_and_validate_plan(plan, as_of)?
     };
     run_retirement_blocking(move || run_sorr(&plan, portfolio_at_fire, retirement_start_age)).await
 }
@@ -240,14 +273,27 @@ pub async fn run_retirement_decision_sensitivity_map(
     map: DecisionSensitivityMap,
     goal_id: Option<String>,
     planner_mode: Option<RetirementTimingMode>,
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<DecisionSensitivityMatrix, String> {
     let context = state.context()?;
-    let (plan, current_portfolio, planner_mode) =
-        resolve_retirement_inputs(&context, &goal_id, planner_mode, plan, current_portfolio)
-            .await?;
+    let as_of = user_today(parse_user_timezone_or_default(&context.get_timezone()));
+    let (plan, current_portfolio, planner_mode) = resolve_retirement_inputs(
+        &context,
+        &goal_id,
+        planner_mode,
+        plan,
+        current_portfolio,
+        as_of,
+    )
+    .await?;
     run_retirement_blocking(move || {
-        run_decision_sensitivity_matrix_with_mode(&plan, current_portfolio, planner_mode, map)
+        run_decision_sensitivity_matrix_with_mode(
+            &plan,
+            current_portfolio,
+            planner_mode,
+            map,
+            as_of,
+        )
     })
     .await
 }

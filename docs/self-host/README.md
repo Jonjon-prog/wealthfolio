@@ -29,6 +29,40 @@ Existing deployments that pin `afadil/wealthfolio:latest` keep working — both
 Docker Hub repos receive the same multi-arch build from CI. New deployments
 should prefer `wealthfolio/wealthfolio`.
 
+## Reverse proxies and profile startup
+
+Serve the frontend and API through the same public URL. Set
+`WF_CORS_ALLOW_ORIGINS` to that HTTP(S) origin, including any nonstandard port,
+for example `https://wealthfolio.example.com:8443` (no path or trailing slash).
+Keep this setting explicit even when the proxy handles authentication.
+
+Profile requests accept a browser origin that matches the forwarded `Host`, or
+an explicit origin in `WF_CORS_ALLOW_ORIGINS`. This lets proxies rewrite `Host`
+to an internal container address without blocking profile startup. Wildcard `*`
+does not authorize a mismatched origin. The server does not automatically trust
+`X-Forwarded-Host`, and existing browser cross-site protections still apply;
+this does not enable a separately hosted cross-origin frontend.
+
+For Nginx, preserve the public hostname and port:
+
+```nginx
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+A `502 Bad Gateway` or upstream connection timeout is a separate networking
+problem: make sure the proxy can reach the app. With Docker, attach both
+services to the same network. Declaring an external network at the bottom of a
+Compose file does not attach a service; the service must also list that network.
+If the app loads but profile startup reports an origin mismatch, check the
+public origin and forwarded `Host` instead.
+
+Portfolio events use SSE and AI responses use HTTP streaming. Configure the
+proxy to forward responses without buffering; WebSocket upgrade support alone
+does not provide this. See the
+[reverse proxy guide](https://wealthfolio.app/docs/guide/self-hosting/reverse-proxy/)
+for examples.
+
 ## Master-key configuration
 
 Configure exactly one nonempty master-key input. Existing `WF_SECRET_KEY`
@@ -119,9 +153,17 @@ server and devices, and failure recovery, see
 and portable backup passwords are separate protections; that guide explains
 which key each requires.
 
-Back up the database and encrypted vault, and retain the matching master key in
-a separately protected recovery location. Check that the backup process can read
-the required files. A lost master key cannot be recovered from the vault.
+Back up the complete data directory, including `profiles.json`,
+`profiles.json.bak`, the `profiles/` directory, the legacy database and
+encrypted vault. Include any database, vault or addon paths configured outside
+that directory, and retain the matching master key in a separately protected
+recovery location. Check that the backup process can read the required files. A
+lost master key cannot be recovered from the vault.
+
+Profile registry failures stop server startup; there is no browser recovery
+screen. Check the server logs and follow
+[profile registry recovery](backups.md#profile-registry-startup-failures). The
+guide also explains how to start fresh without discarding the old installation.
 
 Use one server process per vault. Stop the old instance before starting its
 replacement when both use the same vault; overlapping rolling updates can lose

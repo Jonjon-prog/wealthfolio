@@ -7,6 +7,7 @@ use crate::auth::{
 };
 use crate::oidc::OidcConfig;
 
+#[derive(Clone)]
 pub struct Config {
     pub listen_addr: SocketAddr,
     pub db_path: String,

@@ -59,6 +59,8 @@ pub struct QueueWorkerDeps {
     pub secret_store: Arc<dyn SecretStore>,
     /// Shared token lifecycle state; must be the same instance used by API handlers.
     pub token_lifecycle: Arc<TokenLifecycleState>,
+    pub profile_binding:
+        Arc<std::sync::OnceLock<(Arc<wealthfolio_core::profiles::ProfileRegistry>, uuid::Uuid)>>,
     /// Spending settings — used to filter ActivitiesChanged events to opted-in accounts.
     pub spending_settings_service: Arc<wealthfolio_spending::settings::SpendingSettingsService>,
     /// Categorization rules service — auto-runs rules against newly-changed activities.
@@ -250,7 +252,32 @@ async fn process_event_batch(events: &[DomainEvent], deps: Arc<QueueWorkerDeps>)
     let Some(timezone) = read_setting(&deps, &deps.timezone, "Timezone") else {
         return;
     };
-    if let Some(config) = plan_portfolio_job(events, &timezone) {
+    if let Some(mut config) = plan_portfolio_job(events, &timezone) {
+        let prices_changed = events
+            .iter()
+            .any(|event| matches!(event, DomainEvent::PriceHistoryChanged));
+        if prices_changed {
+            deps.health_service.clear_cache().await;
+            use wealthfolio_core::accounts::AccountServiceTrait;
+            // Saved prices affect archived account history and the in-memory FX cache too.
+            let accounts = deps
+                .fx_service
+                .initialize()
+                .and_then(|()| deps.account_service.get_all_accounts());
+            match accounts {
+                Ok(accounts) => {
+                    config.account_ids = Some(accounts.into_iter().map(|a| a.id).collect())
+                }
+                Err(error) => {
+                    deps.event_bus
+                        .publish(crate::events::ServerEvent::with_payload(
+                            crate::events::PORTFOLIO_UPDATE_ERROR,
+                            serde_json::json!(error.to_string()),
+                        ));
+                    return;
+                }
+            }
+        }
         tracing::info!(
             "Triggering portfolio job for accounts: {:?}, market_sync: {:?}",
             config.account_ids,
@@ -282,6 +309,7 @@ async fn process_event_batch(events: &[DomainEvent], deps: Arc<QueueWorkerDeps>)
         let event_bus = deps.event_bus.clone();
         let secret_store = deps.secret_store.clone();
         let token_lifecycle = deps.token_lifecycle.clone();
+        let profile_binding = deps.profile_binding.get().cloned();
         let settings_service = deps.settings_service.clone();
         let broker_sync_running = deps.broker_sync_running.clone();
 
@@ -299,6 +327,7 @@ async fn process_event_batch(events: &[DomainEvent], deps: Arc<QueueWorkerDeps>)
                 event_bus,
                 secret_store,
                 token_lifecycle,
+                profile_binding,
             )
             .await
             {
@@ -523,6 +552,7 @@ async fn run_portfolio_job(
         }
     }
 
+    deps.health_service.clear_cache().await;
     event_bus.publish(ServerEvent::new(PORTFOLIO_UPDATE_COMPLETE));
 }
 
@@ -740,6 +770,7 @@ async fn mint_access_token(
     settings: &dyn wealthfolio_core::settings::SettingsServiceTrait,
     secret_store: &Arc<dyn SecretStore>,
     token_lifecycle: &TokenLifecycleState,
+    profile_binding: Option<&(Arc<wealthfolio_core::profiles::ProfileRegistry>, uuid::Uuid)>,
 ) -> Result<String, String> {
     if settings
         .requires_cloud_reconnect()
@@ -747,10 +778,20 @@ async fn mint_access_token(
     {
         return Err("Reconnect Wealthfolio Connect after restoring this backup.".into());
     }
-    let config = token_lifecycle_config();
-    ensure_valid_access_token(secret_store.as_ref(), token_lifecycle, config.as_ref())
+    let config = token_lifecycle_config().ok_or("Connect auth unavailable")?;
+    let (registry, id) = profile_binding.ok_or("Profile binding unavailable")?;
+    let token = ensure_valid_access_token(secret_store.as_ref(), token_lifecycle, Some(&config))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    wealthfolio_connect::token_lifecycle::admit_profile_binding(
+        &token,
+        &config,
+        &cloud_api_base_url(),
+        registry.as_ref(),
+        *id,
+    )
+    .await?;
+    Ok(token)
 }
 
 /// Core broker sync logic - syncs connections, accounts, and activities from cloud to local DB.
@@ -762,6 +803,7 @@ async fn perform_broker_sync(
     event_bus: EventBus,
     secret_store: Arc<dyn SecretStore>,
     token_lifecycle: Arc<TokenLifecycleState>,
+    profile_binding: Option<(Arc<wealthfolio_core::profiles::ProfileRegistry>, uuid::Uuid)>,
 ) -> Result<wealthfolio_connect::SyncResult, String> {
     use wealthfolio_connect::{ConnectApiClient, SyncConfig, SyncOrchestrator};
 
@@ -770,8 +812,13 @@ async fn perform_broker_sync(
     }
 
     // Create API client with fresh access token
-    let token =
-        mint_access_token(settings.as_ref(), &secret_store, token_lifecycle.as_ref()).await?;
+    let token = mint_access_token(
+        settings.as_ref(),
+        &secret_store,
+        token_lifecycle.as_ref(),
+        profile_binding.as_ref(),
+    )
+    .await?;
     let client = ConnectApiClient::new(&cloud_api_base_url(), &token).map_err(|e| e.to_string())?;
 
     // Check plan entitlement before syncing

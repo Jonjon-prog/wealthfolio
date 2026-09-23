@@ -10,9 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use wealthfolio_core::quotes::{DATA_SOURCE_CUSTOM_SCRAPER, MARKET_DATA_PROVIDER_IDS};
-use wealthfolio_market_data::ProviderOverrides;
-use wealthfolio_spending::settings::{SETTING_KEY_ACCOUNT_IDS, SETTING_KEY_ENABLED};
 use zeroize::Zeroizing;
 
 use super::{copy_database, DbAccess, DbEncryptionKey};
@@ -134,22 +131,6 @@ fn validate_database(conn: &Connection, encrypted: bool, file_len: u64) -> anyho
         u64::from(pages).checked_mul(u64::from(size)) == Some(file_len),
         "The backup has an invalid length"
     );
-    // Only application-owned trigger definitions may cross the boundary. Git
-    // checkouts can embed CRLF migrations; backups retain their producer's SQL.
-    let known_triggers =
-        include_str!("../../migrations/2026-05-25-000002_allocation_targets/up.sql")
-            .replace("\r\n", "\n");
-    let mut schema =
-        conn.prepare("SELECT type, sql FROM sqlite_master WHERE type IN ('trigger', 'view')")?;
-    for object in schema.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })? {
-        let (kind, sql) = object?;
-        ensure!(
-            kind == "trigger" && known_triggers.contains(sql.replace("\r\n", "\n").trim()),
-            "This backup contains an unsupported trigger or view"
-        );
-    }
     for table in ["accounts", "activities", "__diesel_schema_migrations"] {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
@@ -223,45 +204,10 @@ fn validate_foreign_keys(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn portable_asset_provider_config(raw: &str) -> Option<String> {
-    let config: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let builtin =
-        |id: &str| MARKET_DATA_PROVIDER_IDS.contains(&id) && id != DATA_SOURCE_CUSTOM_SCRAPER;
-    let mut clean = serde_json::Map::new();
-    if let Some(provider) = config.get("preferred_provider").and_then(|v| v.as_str()) {
-        if builtin(provider) {
-            clean.insert("preferred_provider".into(), provider.into());
-        }
-    }
-    if let Some(overrides) = config.get("overrides").and_then(|v| v.as_object()) {
-        let filtered = overrides
-            .iter()
-            .filter(|(id, _)| builtin(id))
-            .map(|(id, value)| (id.clone(), value.clone()))
-            .collect();
-        // Deserialize and reserialize known instrument fields so arbitrary
-        // nested credentials cannot travel inside an otherwise valid override.
-        if let Ok(overrides) = ProviderOverrides::from_json(&serde_json::Value::Object(filtered)) {
-            if !overrides.is_empty() {
-                clean.insert("overrides".into(), serde_json::to_value(overrides).ok()?);
-            }
-        }
-    }
-    (!clean.is_empty()).then(|| serde_json::Value::Object(clean).to_string())
-}
-
-fn sanitize(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        "PRAGMA secure_delete = ON; PRAGMA foreign_keys = OFF; PRAGMA temp_store = MEMORY;",
-    )?;
-    // Installation state must not replay requests, grant access, or associate
-    // destination credentials with imported accounts. Financial rows remain.
+/// A restore starts a new device-sync baseline. User data, configuration, broker
+/// associations and MCP grants belong to the backup and remain unchanged.
+fn reset_restored_sync_state(conn: &Connection) -> anyhow::Result<()> {
     for table in [
-        "personal_access_tokens",
-        "mcp_audit_log",
-        "addon_storage",
-        "brokers_sync_state",
-        "market_data_custom_providers",
         "sync_cursor",
         "sync_outbox",
         "sync_entity_metadata",
@@ -270,53 +216,15 @@ fn sanitize(conn: &Connection) -> anyhow::Result<()> {
         "sync_table_state",
         "sync_applied_events",
     ] {
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
-            [table],
-            |r| r.get(0),
-        )?;
-        if exists {
-            conn.execute(&format!("DELETE FROM \"{table}\""), [])?;
-        }
+        conn.execute(&format!("DELETE FROM \"{table}\""), [])?;
     }
-    let mut stmt =
-        conn.prepare("SELECT id, provider_config FROM assets WHERE provider_config IS NOT NULL")?;
-    let configs = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    drop(stmt);
-    for (id, config) in configs {
-        conn.execute(
-            "UPDATE assets SET provider_config=?1 WHERE id=?2",
-            params![portable_asset_provider_config(&config), id],
-        )?;
-    }
-    conn.execute(
-        "DELETE FROM app_settings WHERE setting_key NOT IN (
-            'theme','font','language','formatting_region','base_currency','timezone',
-            'onboarding_completed','auto_update_check_enabled','menu_bar_visible','default_return_metric',?1,?2)",
-        params![SETTING_KEY_ENABLED, SETTING_KEY_ACCOUNT_IDS],
-    )?;
     conn.execute_batch(
-        "UPDATE market_data_providers SET config=NULL, enabled=0, url=NULL,
-            last_synced_at=NULL, last_sync_status=NULL, last_sync_error=NULL;
-         INSERT INTO app_settings(setting_key, setting_value) VALUES ('sync_enabled','false')
-            ON CONFLICT(setting_key) DO UPDATE SET setting_value='false';
+        "INSERT INTO sync_cursor(id, cursor, updated_at)
+            VALUES (1, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+         INSERT INTO sync_engine_state(id, lock_version) VALUES (1, 0);
          INSERT INTO app_settings(setting_key, setting_value) VALUES ('restore_reconnect_required','true')
             ON CONFLICT(setting_key) DO UPDATE SET setting_value='true';",
     )?;
-    // Older plaintext backups can predate the broker columns.
-    let mut stmt = conn.prepare("PRAGMA table_info(accounts)")?;
-    let columns = stmt
-        .query_map([], |r| r.get::<_, String>(1))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for column in ["provider", "provider_account_id"] {
-        if columns.iter().any(|name| name == column) {
-            conn.execute(&format!("UPDATE accounts SET {column}=NULL"), [])?;
-        }
-    }
     validate_foreign_keys(conn)?;
     Ok(())
 }
@@ -344,7 +252,7 @@ fn summary(conn: &Connection) -> anyhow::Result<BackupSummary> {
     })
 }
 
-/// Creates a sanitized portable copy. All intermediate databases are encrypted,
+/// Creates a faithful portable copy. All intermediate databases are encrypted,
 /// including when the final output is explicitly requested as plaintext.
 pub fn export(
     source: &DbAccess,
@@ -364,7 +272,7 @@ pub fn export(
     )?;
     migrate_and_validate(&clean, work.path())?;
     let conn = clean.connect_rusqlite()?;
-    sanitize(&conn)?;
+    validate_foreign_keys(&conn)?;
     conn.execute_batch("DROP TABLE IF EXISTS wealthfolio_portable_backup;
         CREATE TABLE wealthfolio_portable_backup(id INTEGER PRIMARY KEY CHECK(id=1), profile INTEGER NOT NULL, created_at TEXT NOT NULL, app_version TEXT NOT NULL);")?;
     conn.execute(
@@ -516,14 +424,14 @@ pub fn prepare_import(
     drop(conn);
     migrate_and_validate(&clean, work.path())?;
     let conn = clean.connect_rusqlite()?;
-    sanitize(&conn)?;
-    // The migration that originally created this local identity is already
-    // recorded. Restored services need a fresh identity, never the source's.
-    conn.execute_batch("INSERT INTO app_settings(setting_key, setting_value) VALUES ('instance_id', hex(randomblob(16)));")?;
+    reset_restored_sync_state(&conn)?;
+    // Recovery may have no readable destination identity. Normal maintenance
+    // replaces this fallback with the destination installation ID before install.
+    conn.execute_batch("INSERT INTO app_settings(setting_key, setting_value) VALUES ('instance_id', hex(randomblob(16))) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value;")?;
     conn.execute_batch("DROP TABLE IF EXISTS wealthfolio_portable_backup;")?;
     drop(conn);
-    // Re-export into a fresh file so deleted authorization data cannot survive
-    // in freelist pages, including if the destination will be plaintext.
+    // Re-export into a fresh file so discarded sync state does not survive in
+    // freelist pages, including if the destination will be plaintext.
     let access = encrypted_access(&work.path().join("restore.db"))?;
     copy_database(&clean, access.path(), access.key().map(Arc::as_ref))?;
     Ok(PreparedBackup {
@@ -539,6 +447,7 @@ mod tests {
     use crate::db::{DbAccess, DbEncryptionKey};
     use rusqlite::OptionalExtension;
     use std::sync::Arc;
+    use wealthfolio_spending::settings::{SETTING_KEY_ACCOUNT_IDS, SETTING_KEY_ENABLED};
 
     fn seeded(dir: &Path, encrypted: bool) -> DbAccess {
         let access = DbAccess::new(
@@ -549,12 +458,13 @@ mod tests {
         access.run_migrations().unwrap();
         let conn = access.connect_rusqlite().unwrap();
         conn.execute_batch("INSERT INTO app_settings(setting_key,setting_value) VALUES ('theme','dark') ON CONFLICT(setting_key) DO UPDATE SET setting_value='dark';
-            INSERT INTO personal_access_tokens(id,name,token_prefix,token_hash) VALUES ('test','Synthetic token','wf','DO_NOT_EXPORT_TOKEN_HASH');").unwrap();
+            INSERT INTO app_settings(setting_key,setting_value) VALUES ('sync_enabled','true') ON CONFLICT(setting_key) DO UPDATE SET setting_value='true';
+            INSERT INTO personal_access_tokens(id,name,token_prefix,token_hash) VALUES ('test','Synthetic token','wf','SYNTHETIC_TOKEN_HASH');").unwrap();
         access
     }
 
     #[test]
-    fn portable_roundtrips_preserve_data_and_remove_authorization() {
+    fn portable_roundtrips_preserve_data_and_require_reconnection() {
         for encrypted in [false, true] {
             for password in [None, Some("a portable 日本語 password")] {
                 let dir = tempfile::tempdir().unwrap();
@@ -597,7 +507,7 @@ mod tests {
                     conn.query_row("SELECT count(*) FROM personal_access_tokens", [], |r| r
                         .get::<_, i64>(0))
                         .unwrap(),
-                    0
+                    1
                 );
                 assert_eq!(
                     conn.query_row(
@@ -606,7 +516,7 @@ mod tests {
                         |r| r.get::<_, String>(0)
                     )
                     .unwrap(),
-                    "false"
+                    "true"
                 );
                 assert_eq!(
                     source
@@ -762,50 +672,139 @@ mod tests {
         }
     }
 
+    fn table_rows(conn: &Connection, table: &str) -> Vec<Vec<rusqlite::types::Value>> {
+        let mut stmt = conn.prepare(&format!("SELECT * FROM \"{table}\"")).unwrap();
+        let columns = stmt.column_count();
+        let order = (1..=columns)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        stmt = conn
+            .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY {order}"))
+            .unwrap();
+        stmt.query_map([], |row| (0..columns).map(|i| row.get(i)).collect())
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+
     #[test]
-    fn provider_secrets_and_references_are_removed_from_export() {
+    fn backups_preserve_configuration_and_grants_and_only_reset_restore_sync_state() {
         let dir = tempfile::tempdir().unwrap();
         let source = seeded(dir.path(), false);
-        source.connect_rusqlite().unwrap().execute_batch(
-            "INSERT INTO market_data_custom_providers(id,code,name,config,created_at,updated_at)
-                VALUES('custom','custom','Private source','{\"headers\":{\"Authorization\":\"SENTINEL_CUSTOM_SECRET\"}}','now','now');
-             UPDATE market_data_providers SET config='{\"secret\":\"__SECRET__SENTINEL_VAULT_REF\"}', url='https://example.com/SENTINEL_URL_SECRET';"
-        ).unwrap();
+        let original = source.connect_rusqlite().unwrap();
+        original.execute_batch(r#"
+            INSERT INTO market_data_custom_providers(id,code,name,config,created_at,updated_at)
+                VALUES('custom','custom','Private source','{"headers":{"Authorization":"synthetic"}}','now','now');
+            UPDATE market_data_providers SET config='{"secret":"synthetic-reference"}', url='https://example.com/custom', enabled=1, priority=42;
+            INSERT INTO assets(id,kind,quote_mode,quote_ccy,provider_config)
+                VALUES('asset','INVESTMENT','MARKET','USD','{"preferred_provider":"CUSTOM_SCRAPER","custom_provider_id":"custom","overrides":{"custom":{"symbol":"TEST"}}}');
+            INSERT INTO accounts(id,name,currency,provider,provider_account_id)
+                VALUES('account','Test','USD','broker','remote-account');
+            INSERT INTO brokers_sync_state(account_id,provider,checkpoint_json,last_successful_at)
+                VALUES('account','broker','{"cursor":"saved"}','2026-01-01');
+            INSERT INTO addon_storage(addon_id,key,value) VALUES('test','preferences','{"userData":"saved"}');
+            INSERT INTO mcp_audit_log(id,session_id,actor_kind,actor_fingerprint,tool,outcome)
+                VALUES('audit','session','pat','fingerprint','test','success');
+            UPDATE personal_access_tokens SET scopes_json='["portfolio:read"]', expires_at='2099-01-01', revoked_at='2026-01-01';
+            INSERT INTO app_settings(setting_key,setting_value) VALUES
+                ('spending.excluded_category_ids','["excluded"]'),
+                ('ai_provider_settings','{"providers":{"test":{"toolsAllowlist":[]}}}'),
+                ('insights_overview_layout','{"custom":true}'),
+                ('future.preference','keep');
+            UPDATE sync_cursor SET cursor=123;
+            UPDATE sync_engine_state SET lock_version=12, last_error='old error';
+            INSERT INTO sync_outbox(event_id,entity,entity_id,op,client_timestamp,payload,payload_key_version,created_at)
+                VALUES('event','account','account','upsert','now','{}',1,'now');
+            INSERT INTO sync_entity_metadata(entity,entity_id,last_event_id,last_client_timestamp,last_seq)
+                VALUES('account','account','event','now',123);
+            INSERT INTO sync_device_config(device_id,key_version,trust_state) VALUES('source',1,'trusted');
+            INSERT INTO sync_applied_events(event_id,seq,entity,entity_id,applied_at)
+                VALUES('applied',122,'account','account','now');
+        "#).unwrap();
+        let tables: Vec<String> = original
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
         let output = export(&source, dir.path(), None).unwrap();
-        let bytes = fs::read(&output.path).unwrap();
-        for sentinel in [
-            "SENTINEL_CUSTOM_SECRET",
-            "SENTINEL_VAULT_REF",
-            "SENTINEL_URL_SECRET",
-            "DO_NOT_EXPORT_TOKEN_HASH",
-        ] {
-            assert!(
-                !bytes
-                    .windows(sentinel.len())
-                    .any(|part| part == sentinel.as_bytes()),
-                "{sentinel}"
+        let exported = DbAccess::plaintext(output.path.to_str().unwrap())
+            .connect_rusqlite()
+            .unwrap();
+        for table in &tables {
+            assert_eq!(
+                table_rows(&original, table),
+                table_rows(&exported, table),
+                "export changed {table}"
             );
         }
         let prepared = prepare_import(&output.path, dir.path(), None, None).unwrap();
-        let conn = prepared.access.connect_rusqlite().unwrap();
+        let restored = prepared.access.connect_rusqlite().unwrap();
+        let sync_tables = [
+            "sync_cursor",
+            "sync_outbox",
+            "sync_entity_metadata",
+            "sync_device_config",
+            "sync_engine_state",
+            "sync_table_state",
+            "sync_applied_events",
+        ];
+        for table in &tables {
+            if table == "app_settings" || sync_tables.contains(&table.as_str()) {
+                continue;
+            }
+            assert_eq!(
+                table_rows(&original, table),
+                table_rows(&restored, table),
+                "restore changed {table}"
+            );
+        }
+        let settings: Vec<(String, String)> = original.prepare("SELECT setting_key,setting_value FROM app_settings WHERE setting_key NOT IN ('instance_id','restore_reconnect_required')")
+            .unwrap().query_map([], |r| Ok((r.get(0)?,r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        for (key, value) in settings {
+            assert_eq!(
+                restored
+                    .query_row(
+                        "SELECT setting_value FROM app_settings WHERE setting_key=?1",
+                        [&key],
+                        |r| r.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                value,
+                "{key}"
+            );
+        }
+        for table in sync_tables {
+            if table == "sync_cursor" || table == "sync_engine_state" {
+                continue;
+            }
+            assert!(table_rows(&restored, table).is_empty(), "{table}");
+        }
         assert_eq!(
-            conn.query_row(
-                "SELECT count(*) FROM market_data_custom_providers",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
+            restored
+                .query_row("SELECT cursor FROM sync_cursor", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
             0
         );
         assert_eq!(
-            conn.query_row(
-                "SELECT count(*) FROM market_data_providers WHERE config IS NOT NULL OR enabled=1",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
+            restored
+                .query_row("SELECT lock_version FROM sync_engine_state", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
             0
         );
+        assert_eq!(
+            restored
+                .query_row("SELECT last_error FROM sync_engine_state", [], |r| r
+                    .get::<_, Option<String>>(0))
+                .unwrap(),
+            None
+        );
+        assert_eq!(restored.query_row("SELECT setting_value FROM app_settings WHERE setting_key='restore_reconnect_required'", [], |r| r.get::<_,String>(0)).unwrap(), "true");
     }
 
     #[test]
@@ -862,7 +861,6 @@ mod tests {
 
     #[test]
     fn portable_spending_settings_survive_roundtrip() {
-        use wealthfolio_spending::settings::{SETTING_KEY_ACCOUNT_IDS, SETTING_KEY_ENABLED};
         for password in [None, Some("synthetic backup password")] {
             let dir = tempfile::tempdir().unwrap();
             let source = seeded(dir.path(), false);
@@ -900,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_builtin_quote_overrides_survive_roundtrip() {
+    fn portable_quote_configuration_survives_roundtrip() {
         for password in [None, Some("synthetic backup password")] {
             let dir = tempfile::tempdir().unwrap();
             let source = seeded(dir.path(), false);
@@ -928,27 +926,9 @@ mod tests {
                 )
                 .unwrap();
             let actual: serde_json::Value =
-                serde_json::from_str(&actual.expect("Built-in overrides must survive")).unwrap();
-            assert_eq!(
-                actual,
-                serde_json::json!({"preferred_provider":"YAHOO", "overrides":{"YAHOO":{"type":"equity_symbol","symbol":"SHOP.TO"}}})
-            );
-            if password.is_none() {
-                let bytes = fs::read(output.path).unwrap();
-                for sentinel in [
-                    "SYNTHETIC_NESTED_SECRET",
-                    "SYNTHETIC_CUSTOM_SYMBOL",
-                    "SYNTHETIC_CUSTOM_REFERENCE",
-                    "SYNTHETIC_AUTHORIZATION",
-                ] {
-                    assert!(
-                        !bytes
-                            .windows(sentinel.len())
-                            .any(|part| part == sentinel.as_bytes()),
-                        "Leaked {sentinel}"
-                    );
-                }
-            }
+                serde_json::from_str(&actual.expect("Provider configuration must survive"))
+                    .unwrap();
+            assert_eq!(actual, config);
         }
     }
 

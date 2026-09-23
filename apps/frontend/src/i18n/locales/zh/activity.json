@@ -627,6 +627,7 @@
     "err_underlying_required": "标的代码为必填项。",
     "err_strike_required": "行权价为必填项。",
     "err_expiration_required": "到期日为必填项。",
+    "err_expiration_invalid": "请输入有效的到期日。",
     "err_option_type_required": "期权类型为必填项。",
     "err_enter_split_ratio": "请输入拆股比例。",
     "err_split_ratio_number": "拆股比例必须为数字。",

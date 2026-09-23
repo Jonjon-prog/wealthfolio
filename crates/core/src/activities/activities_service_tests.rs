@@ -1089,6 +1089,24 @@ mod tests {
             unimplemented!()
         }
 
+        fn get_sparse_quotes_in_range(
+            &self,
+            symbols: &HashSet<String>,
+            _start: NaiveDate,
+            end: NaiveDate,
+        ) -> Result<Vec<Quote>> {
+            // Include earlier quotes for carry-forward, with the latest update
+            // winning for each asset/date as it does in the quote store.
+            let mut quotes = std::collections::BTreeMap::new();
+            for quote in self.updated_quotes.lock().unwrap().iter() {
+                let date = quote.timestamp.date_naive();
+                if symbols.contains(&quote.asset_id) && date <= end {
+                    quotes.insert((quote.asset_id.clone(), date), quote.clone());
+                }
+            }
+            Ok(quotes.into_values().collect())
+        }
+
         fn get_quotes_in_range_filled(
             &self,
             _symbols: &HashSet<String>,
@@ -1845,10 +1863,15 @@ mod tests {
     #[async_trait]
     impl ValuationRepositoryTrait for MockValuationRepository {
         async fn save_valuations(&self, valuation_records: &[DailyAccountValuation]) -> Result<()> {
-            self.valuations
-                .lock()
-                .unwrap()
-                .extend_from_slice(valuation_records);
+            let mut valuations = self.valuations.lock().unwrap();
+            // Match the real repository's upsert behavior for existing dates.
+            for record in valuation_records {
+                valuations.retain(|existing| {
+                    existing.account_id != record.account_id
+                        || existing.valuation_date != record.valuation_date
+                });
+                valuations.push(record.clone());
+            }
             Ok(())
         }
 
@@ -2201,6 +2224,122 @@ mod tests {
             Arc::new(MockQuoteService),
             Arc::new(MockFxService::new()),
         ))
+    }
+
+    async fn assert_incremental_valuation_refresh(last_saved: &str) {
+        // The existing snapshot fixture runs through June 6, with 20 shares
+        // from June 4 onward. June 6 exercises a same-day refresh; June 5
+        // exercises resuming the following day.
+        let account_id = "valuation-parity";
+        let last_saved = NaiveDate::parse_from_str(last_saved, "%Y-%m-%d").unwrap();
+        let repository = Arc::new(MockValuationRepository::new(Vec::new()));
+        let quotes = Arc::new(RecordingQuoteService::default());
+        let activities = Arc::new(MockActivityRepository::new());
+        let mut deposit = create_stored_activity("refresh-deposit", account_id, None);
+        deposit.activity_type = "DEPOSIT".to_string();
+        deposit.activity_date = last_saved.and_hms_opt(12, 0, 0).unwrap().and_utc();
+        deposit.amount = Some(dec!(25));
+        deposit.currency = "USD".to_string();
+        activities.add_activity(deposit);
+        let service = ValuationService::new(
+            Arc::new(RwLock::new("USD".to_string())),
+            repository.clone(),
+            Arc::new(MockSnapshotService),
+            quotes.clone(),
+            Arc::new(MockFxService::new()),
+        )
+        .with_activity_repository(activities, Arc::new(RwLock::new("UTC".to_string())));
+        let timestamp = NaiveDate::from_ymd_opt(2026, 6, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+        let mut quote = Quote {
+            id: "refresh-quote".to_string(),
+            asset_id: "PARITY_ASSET".to_string(),
+            timestamp,
+            open: dec!(100),
+            high: dec!(100),
+            low: dec!(100),
+            close: dec!(100),
+            adjclose: dec!(100),
+            volume: Decimal::ZERO,
+            currency: "USD".to_string(),
+            data_source: "TEST".to_string(),
+            created_at: timestamp,
+            notes: None,
+        };
+        quotes.update_quote(quote.clone()).await.unwrap();
+        service
+            .calculate_valuation_history(account_id, ValuationRecalcMode::Full)
+            .await
+            .unwrap();
+        // Model the history saved at the previous run's cutoff.
+        repository
+            .valuations
+            .lock()
+            .unwrap()
+            .retain(|row| row.valuation_date <= last_saved);
+        let before = repository
+            .get_historical_valuations(account_id, None, None)
+            .unwrap();
+        assert_eq!(before.last().unwrap().investment_market_value, dec!(2000));
+        assert_eq!(before.last().unwrap().external_inflow_base, dec!(25));
+
+        quote.timestamp = last_saved.and_hms_opt(16, 0, 0).unwrap().and_utc();
+        let prices = if last_saved == NaiveDate::from_ymd_opt(2026, 6, 6).unwrap() {
+            vec![dec!(120), dec!(130)]
+        } else {
+            vec![dec!(120)]
+        };
+        for price in prices {
+            quote.close = price;
+            quotes.update_quote(quote.clone()).await.unwrap();
+            service
+                .calculate_valuation_history(account_id, ValuationRecalcMode::IncrementalFromLast)
+                .await
+                .unwrap();
+            let after = repository
+                .get_historical_valuations(account_id, None, None)
+                .unwrap();
+            assert_eq!(
+                after.len(),
+                6,
+                "refresh must update rows without duplicating them"
+            );
+            assert_eq!(
+                after.last().unwrap().investment_market_value,
+                dec!(20) * price
+            );
+            let refreshed = after
+                .iter()
+                .find(|row| row.valuation_date == last_saved)
+                .unwrap();
+            assert_eq!(refreshed.investment_market_value, dec!(20) * price);
+            assert_eq!(refreshed.external_inflow_base, dec!(25));
+            assert_eq!(refreshed.external_outflow_base, Decimal::ZERO);
+            let unchanged: Vec<_> = after
+                .iter()
+                .filter(|row| row.valuation_date < last_saved)
+                .collect();
+            assert_eq!(
+                unchanged,
+                before
+                    .iter()
+                    .filter(|row| row.valuation_date < last_saved)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn incremental_valuation_refresh_updates_saved_today_and_preserves_flows() {
+        assert_incremental_valuation_refresh("2026-06-06").await;
+    }
+
+    #[tokio::test]
+    async fn incremental_valuation_refresh_settles_last_saved_day_and_extends_history() {
+        assert_incremental_valuation_refresh("2026-06-05").await;
     }
 
     #[tokio::test]

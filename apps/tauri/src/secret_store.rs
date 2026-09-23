@@ -14,6 +14,21 @@ const USERNAME: &str = "default";
 pub struct KeyringSecretStore;
 
 impl SecretStore for KeyringSecretStore {
+    fn list_secrets(&self) -> Result<Vec<String>> {
+        let entries = native_store()?
+            .search(&std::collections::HashMap::new())
+            .map_err(|err| Error::Secret(err.to_string()))?;
+        Ok(entries
+            .into_iter()
+            .filter_map(|entry| entry.get_specifiers())
+            .filter(|(_, user)| user == USERNAME)
+            .filter_map(|(service, _)| {
+                service
+                    .strip_prefix(wealthfolio_core::secrets::SERVICE_PREFIX)
+                    .map(str::to_owned)
+            })
+            .collect())
+    }
     fn set_secret(&self, service: &str, secret: &str) -> Result<()> {
         let entry = entry_for(service)?;
         entry

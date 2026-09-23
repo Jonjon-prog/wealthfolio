@@ -627,6 +627,7 @@
     "err_underlying_required": "原資産の銘柄は必須です。",
     "err_strike_required": "権利行使価格は必須です。",
     "err_expiration_required": "満期日は必須です。",
+    "err_expiration_invalid": "有効な満期日を入力してください。",
     "err_option_type_required": "オプションタイプは必須です。",
     "err_enter_split_ratio": "分割比率を入力してください。",
     "err_split_ratio_number": "分割比率は数値である必要があります。",

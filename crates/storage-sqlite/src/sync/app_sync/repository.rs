@@ -26,14 +26,16 @@ use crate::schema::{
 };
 use crate::spending::deterministic_ids::preset_rule_deletion_id;
 use crate::sync::broker_activity_patch::{
-    apply_broker_activity_user_patch_tx, BrokerActivityUserPatchApplyOutcome,
+    apply_broker_activity_user_patch_tx, BrokerActivityPatchQueue,
+    BrokerActivityUserPatchApplyOutcome,
 };
 
 use super::model::{
     SyncAppliedEventDB, SyncCursorDB, SyncDeviceConfigDB, SyncEngineStateDB, SyncEntityMetadataDB,
     SyncOutboxEventDB, SyncTableStateDB,
 };
-use super::outbox_models::is_syncable_spending_setting_key;
+use super::outbox_models::{is_syncable_app_preference_key, is_syncable_spending_setting_key};
+use wealthfolio_core::settings::INSIGHTS_OVERVIEW_LAYOUT_KEY;
 
 fn enum_to_db<T: serde::Serialize>(value: &T) -> Result<String> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_string())
@@ -179,7 +181,7 @@ enum SyncRowFilter {
     ManualQuotes,
     UserImportRuns,
     UserSyncableActivities,
-    SpendingSettings,
+    SyncableSettings,
     UserTaxonomies,
     SyncableTaxonomyCategories,
     UserModifiedBudgetGroups,
@@ -210,7 +212,10 @@ impl SyncRowFilter {
                 "UPPER(run_type) = 'IMPORT' AND UPPER(source_system) IN ('CSV', 'MANUAL')"
             }
             Self::UserSyncableActivities => USER_SYNCABLE_ACTIVITIES_FILTER_SQL,
-            Self::SpendingSettings => "setting_key IN ('spending.enabled', 'spending.account_ids')",
+            Self::SyncableSettings => {
+                static FILTER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!("setting_key IN ('spending.enabled', 'spending.account_ids', 'spending.excluded_category_ids', '{}')", INSIGHTS_OVERVIEW_LAYOUT_KEY));
+                FILTER.as_str()
+            },
             Self::UserTaxonomies => "is_system = 0",
             // Spending/income seed category IDs use the `cat_` prefix; user-created rows use UUIDs.
             Self::SyncableTaxonomyCategories => {
@@ -680,10 +685,10 @@ const SYNC_TABLE_SNAPSHOT_COPY_FILTERS: &[SyncTableFilterSpec] = &[
         table: "spending_activity_events",
         filter: SyncRowFilter::RowsWithUserSyncableActivity,
     },
-    // Only the spending module's app_settings keys participate in sync.
+    // Only explicitly allowlisted settings participate in sync.
     SyncTableFilterSpec {
         table: "app_settings",
-        filter: SyncRowFilter::SpendingSettings,
+        filter: SyncRowFilter::SyncableSettings,
     },
     SyncTableFilterSpec {
         table: "budget_group_assignments",
@@ -744,7 +749,7 @@ const SYNC_TABLE_SNAPSHOT_CLEAR_FILTERS: &[SyncTableFilterSpec] = &[
     },
     SyncTableFilterSpec {
         table: "app_settings",
-        filter: SyncRowFilter::SpendingSettings,
+        filter: SyncRowFilter::SyncableSettings,
     },
     SyncTableFilterSpec {
         table: "budget_group_assignments",
@@ -974,7 +979,9 @@ fn entity_storage_mapping(entity: &SyncEntity) -> Option<(&'static str, &'static
         SyncEntity::AllocationTarget => Some(("allocation_targets", "id")),
         SyncEntity::AllocationTargetWeight => Some(("allocation_target_weights", "id")),
         SyncEntity::AllocationTargetConstraint => Some(("allocation_target_constraints", "id")),
-        SyncEntity::SpendingSetting => Some(("app_settings", "setting_key")),
+        SyncEntity::SpendingSetting | SyncEntity::AppPreference => {
+            Some(("app_settings", "setting_key"))
+        }
         // CustomTaxonomy uses bundle replay — handled by custom branch in apply_remote_event_lww_tx
         SyncEntity::CustomTaxonomy => None,
         // Spending module entities
@@ -1972,6 +1979,7 @@ fn mark_table_incremental_applied_tx(conn: &mut SqliteConnection, table_name: &s
 #[allow(clippy::too_many_arguments)]
 fn apply_remote_event_lww_tx(
     conn: &mut SqliteConnection,
+    pending: &BrokerActivityPatchQueue,
     entity: SyncEntity,
     entity_id_value: String,
     op: SyncOperation,
@@ -2022,6 +2030,7 @@ fn apply_remote_event_lww_tx(
                 SyncOperation::Create | SyncOperation::Update => {
                     match apply_broker_activity_user_patch_tx(
                         conn,
+                        pending,
                         &entity_id_value,
                         &event_id_value,
                         &payload_json,
@@ -2050,6 +2059,14 @@ fn apply_remote_event_lww_tx(
                 entity_id_value
             );
             applied_entity_change = false;
+        } else if entity == SyncEntity::AppPreference
+            && !is_syncable_app_preference_key(&entity_id_value)
+        {
+            log::warn!(
+                "Skipping unsupported synced app preference '{}'",
+                entity_id_value
+            );
+            applied_entity_change = false;
         } else if entity == SyncEntity::SpendingPresetRuleDeletion {
             apply_spending_preset_rule_deletion_event(
                 conn,
@@ -2071,6 +2088,9 @@ fn apply_remote_event_lww_tx(
         } else if let Some((table_name, pk_name)) = entity_storage_mapping(&entity) {
             match op {
                 SyncOperation::Delete => {
+                    if entity == SyncEntity::Account {
+                        crate::accounts::delete_account_references(conn, &entity_id_value)?;
+                    }
                     if entity == SyncEntity::SpendingCategorizationRule {
                         tombstone_remote_preset_rule_delete(
                             conn,
@@ -2394,9 +2414,24 @@ impl AppSyncRepository {
             .await
     }
 
+    /// Detach broker integration state while retaining accounts and financial rows.
+    /// Only used after an explicitly confirmed Connect identity change.
+    pub async fn clear_connect_binding_state(&self) -> Result<()> {
+        self.reset_sync_session(true).await
+    }
+
     pub async fn reset_local_sync_session(&self) -> Result<()> {
+        self.reset_sync_session(false).await
+    }
+
+    async fn reset_sync_session(&self, detach_connect: bool) -> Result<()> {
         self.writer
             .exec(move |conn| {
+                if detach_connect {
+                    diesel::sql_query("DELETE FROM brokers_sync_state").execute(conn).map_err(StorageError::from)?;
+                    diesel::sql_query("UPDATE accounts SET provider=NULL, provider_account_id=NULL WHERE provider IS NOT NULL OR provider_account_id IS NOT NULL").execute(conn).map_err(StorageError::from)?;
+                    diesel::sql_query("INSERT INTO app_settings(setting_key, setting_value) VALUES ('sync_enabled','false') ON CONFLICT(setting_key) DO UPDATE SET setting_value='false'").execute(conn).map_err(StorageError::from)?;
+                }
                 let now = Utc::now().to_rfc3339();
 
                 diesel::delete(sync_outbox::table)
@@ -2715,10 +2750,12 @@ impl AppSyncRepository {
         seq_value: i64,
         payload_json: serde_json::Value,
     ) -> Result<bool> {
+        let sync_state = self.writer.sync_state();
         self.writer
             .exec(move |conn| {
                 apply_remote_event_lww_tx(
                     conn,
+                    &sync_state.broker_activity_patches,
                     entity,
                     entity_id_value.clone(),
                     op,
@@ -2757,6 +2794,7 @@ impl AppSyncRepository {
             return Ok(0);
         }
 
+        let sync_state = self.writer.sync_state();
         self.writer
             .exec(move |conn| {
                 // Defer FK checks during batch replay — events may arrive
@@ -2784,6 +2822,7 @@ impl AppSyncRepository {
                     {
                         if apply_remote_event_lww_tx(
                             conn,
+                            &sync_state.broker_activity_patches,
                             entity,
                             entity_id.clone(),
                             op,
@@ -3502,7 +3541,6 @@ mod tests {
     };
     use crate::sync::broker_activity_patch::{
         broker_activity_identity, broker_activity_user_patch_entity_id,
-        clear_pending_broker_activity_user_patches,
     };
     use wealthfolio_core::accounts::account_types;
     use wealthfolio_core::activities::{ActivityRepositoryTrait, ActivityUpsert};
@@ -3716,7 +3754,7 @@ mod tests {
 
     #[tokio::test]
     async fn broker_activity_user_patch_updates_only_overlay_fields() {
-        let (pool, _writer) = setup_db();
+        let (pool, writer) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         diesel::sql_query(
@@ -3769,6 +3807,7 @@ mod tests {
 
         let applied = apply_remote_event_lww_tx(
             &mut conn,
+            &writer.sync_state().broker_activity_patches,
             SyncEntity::BrokerActivityUserPatch,
             entity_id,
             SyncOperation::Update,
@@ -3833,7 +3872,6 @@ mod tests {
 
     #[tokio::test]
     async fn broker_activity_user_patch_missing_target_defers_until_broker_import() {
-        clear_pending_broker_activity_user_patches();
         let (pool, writer) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -3859,6 +3897,7 @@ mod tests {
 
         let applied = apply_remote_event_lww_tx(
             &mut conn,
+            &writer.sync_state().broker_activity_patches,
             SyncEntity::BrokerActivityUserPatch,
             entity_id.clone(),
             SyncOperation::Update,
@@ -3971,7 +4010,6 @@ mod tests {
             .get_result(&mut conn)
             .expect("applied event count after replay");
         assert_eq!(applied_event_count, 1);
-        clear_pending_broker_activity_user_patches();
     }
 
     fn insert_goal_for_test(conn: &mut SqliteConnection, goal_id: &str) -> Result<()> {
@@ -6053,6 +6091,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_rebind_detaches_brokers_and_preserves_financial_accounts() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        {
+            let mut conn = get_connection(&pool).unwrap();
+            insert_account_for_test(&mut conn, "keep").unwrap();
+            diesel::sql_query("UPDATE accounts SET provider='SNAPTRADE', provider_account_id='old-cloud-account' WHERE id='keep'").execute(&mut conn).unwrap();
+        }
+        {
+            let mut conn = get_connection(&pool).unwrap();
+            diesel::sql_query("CREATE TRIGGER fail_rebind BEFORE INSERT ON sync_cursor BEGIN SELECT RAISE(ABORT, 'test cleanup failure'); END").execute(&mut conn).unwrap();
+        }
+        assert!(repo.clear_connect_binding_state().await.is_err());
+        {
+            let mut conn = get_connection(&pool).unwrap();
+            use crate::schema::accounts;
+            let provider: Option<String> = accounts::table
+                .select(accounts::provider)
+                .filter(accounts::id.eq("keep"))
+                .first(&mut conn)
+                .unwrap();
+            assert_eq!(provider.as_deref(), Some("SNAPTRADE"));
+            diesel::sql_query("DROP TRIGGER fail_rebind")
+                .execute(&mut conn)
+                .unwrap();
+        }
+        repo.clear_connect_binding_state().await.unwrap();
+        let mut conn = get_connection(&pool).unwrap();
+        use crate::schema::accounts;
+        let (id, provider, provider_id): (String, Option<String>, Option<String>) = accounts::table
+            .select((
+                accounts::id,
+                accounts::provider,
+                accounts::provider_account_id,
+            ))
+            .filter(accounts::id.eq("keep"))
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(id, "keep");
+        assert_eq!((provider, provider_id), (None, None));
+        assert_eq!(
+            sync_outbox::table
+                .count()
+                .get_result::<i64>(&mut conn)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn reset_local_sync_session_clears_control_plane_and_zeroes_cursors() {
         let (pool, writer) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
@@ -7765,7 +7853,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snapshot_export_only_includes_spending_settings() {
+    async fn snapshot_export_only_includes_allowlisted_settings() {
         #[derive(diesel::QueryableByName)]
         struct CountRow {
             #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -7785,6 +7873,14 @@ mod tests {
                 (
                     app_settings::setting_key.eq("spending.account_ids"),
                     app_settings::setting_value.eq("[\"acc-1\"]"),
+                ),
+                (
+                    app_settings::setting_key.eq(INSIGHTS_OVERVIEW_LAYOUT_KEY),
+                    app_settings::setting_value.eq(r#"{"version":6,"hiddenWidgets":["regions"]}"#),
+                ),
+                (
+                    app_settings::setting_key.eq("spending.excluded_category_ids"),
+                    app_settings::setting_value.eq("[\"cat-1\"]"),
                 ),
                 (
                     app_settings::setting_key.eq("theme"),
@@ -7809,13 +7905,57 @@ mod tests {
         let settings_count: CountRow = diesel::sql_query("SELECT COUNT(*) AS c FROM app_settings")
             .get_result(&mut exported_conn)
             .expect("count settings");
-        assert_eq!(settings_count.c, 2);
+        assert_eq!(settings_count.c, 4);
 
         let theme_count: CountRow =
             diesel::sql_query("SELECT COUNT(*) AS c FROM app_settings WHERE setting_key = 'theme'")
                 .get_result(&mut exported_conn)
                 .expect("count theme setting");
         assert_eq!(theme_count.c, 0);
+        diesel::insert_into(app_settings::table)
+            .values((
+                app_settings::setting_key.eq("theme"),
+                app_settings::setting_value.eq("malicious-remote-theme"),
+            ))
+            .execute(&mut exported_conn)
+            .unwrap();
+        drop(exported_conn);
+        diesel::update(
+            app_settings::table.filter(app_settings::setting_key.eq(INSIGHTS_OVERVIEW_LAYOUT_KEY)),
+        )
+        .set(app_settings::setting_value.eq(r#"{"version":6,"hiddenWidgets":[]}"#))
+        .execute(&mut conn)
+        .unwrap();
+        repo.restore_snapshot_tables_from_file(
+            exported_path.to_string_lossy().to_string(),
+            vec!["app_settings".to_string()],
+            88,
+            "settings-device".to_string(),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        let restored: String = app_settings::table
+            .filter(app_settings::setting_key.eq(INSIGHTS_OVERVIEW_LAYOUT_KEY))
+            .select(app_settings::setting_value)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(restored, r#"{"version":6,"hiddenWidgets":["regions"]}"#);
+        let excluded_categories: String = app_settings::table
+            .filter(app_settings::setting_key.eq("spending.excluded_category_ids"))
+            .select(app_settings::setting_value)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(excluded_categories, r#"["cat-1"]"#);
+        let theme: String = app_settings::table
+            .filter(app_settings::setting_key.eq("theme"))
+            .select(app_settings::setting_value)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(
+            theme, "dark",
+            "Snapshot restore must keep device-local settings"
+        );
     }
 
     #[test]
@@ -7862,6 +8002,74 @@ mod tests {
             "error should mention the bad column: {}",
             err_msg
         );
+    }
+
+    #[tokio::test]
+    async fn replay_app_preference_is_allowlisted_and_uses_lww_without_echo() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let layout = r#"{"version":6,"hiddenWidgets":["regions"]}"#;
+        let applied = repo.apply_remote_event_lww(SyncEntity::AppPreference, INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(), SyncOperation::Update, "pref-1".to_string(), "2026-09-17T00:00:02Z".to_string(), 2, serde_json::json!({"settingKey": INSIGHTS_OVERVIEW_LAYOUT_KEY, "settingValue": layout})).await.unwrap();
+        assert!(applied);
+        let stale = repo.apply_remote_event_lww(SyncEntity::AppPreference, INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(), SyncOperation::Update, "pref-stale".to_string(), "2026-09-17T00:00:01Z".to_string(), 3, serde_json::json!({"settingKey": INSIGHTS_OVERVIEW_LAYOUT_KEY, "settingValue": "{}"})).await.unwrap();
+        assert!(!stale);
+        for key in ["theme", "sync_enabled", "spending.enabled"] {
+            assert!(!repo
+                .apply_remote_event_lww(
+                    SyncEntity::AppPreference,
+                    key.to_string(),
+                    SyncOperation::Update,
+                    format!("bad-{key}"),
+                    "2026-09-17T00:00:04Z".to_string(),
+                    4,
+                    serde_json::json!({"settingKey": key, "settingValue": "false"})
+                )
+                .await
+                .unwrap());
+        }
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::AppPreference,
+                INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(),
+                SyncOperation::Update,
+                "mismatch".to_string(),
+                "2026-09-17T00:00:05Z".to_string(),
+                5,
+                serde_json::json!({"settingKey": "theme", "settingValue": "dark"})
+            )
+            .await
+            .is_err());
+        let mut conn = get_connection(&pool).unwrap();
+        let stored: String = app_settings::table
+            .filter(app_settings::setting_key.eq(INSIGHTS_OVERVIEW_LAYOUT_KEY))
+            .select(app_settings::setting_value)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(stored, layout);
+        let outbox_count: i64 = sync_outbox::table.count().get_result(&mut conn).unwrap();
+        assert_eq!(
+            outbox_count, 0,
+            "Remote preferences must not echo to the outbox"
+        );
+        let deleted = repo
+            .apply_remote_event_lww(
+                SyncEntity::AppPreference,
+                INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(),
+                SyncOperation::Delete,
+                "pref-delete".to_string(),
+                "2026-09-17T00:00:06Z".to_string(),
+                6,
+                serde_json::json!({"settingKey": INSIGHTS_OVERVIEW_LAYOUT_KEY}),
+            )
+            .await
+            .unwrap();
+        assert!(deleted);
+        let remaining: i64 = app_settings::table
+            .filter(app_settings::setting_key.eq(INSIGHTS_OVERVIEW_LAYOUT_KEY))
+            .count()
+            .get_result(&mut conn)
+            .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     #[tokio::test]

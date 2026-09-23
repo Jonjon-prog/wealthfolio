@@ -1,7 +1,5 @@
-use crate::database::DatabaseRuntime;
+use crate::profiles::ProfileAccess;
 use std::sync::Arc;
-
-use tauri::State;
 
 use wealthfolio_core::{
     accounts::AccountPurpose,
@@ -48,7 +46,7 @@ fn account_scope_for_target(target: &AllocationTarget) -> Result<AccountScope, S
 
 #[tauri::command]
 pub async fn list_allocation_targets(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
 ) -> Result<Vec<AllocationTarget>, String> {
     let context = state.context()?;
     context
@@ -59,7 +57,7 @@ pub async fn list_allocation_targets(
 
 #[tauri::command]
 pub async fn get_allocation_target(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     id: String,
 ) -> Result<Option<AllocationTarget>, String> {
     let context = state.context()?;
@@ -71,7 +69,7 @@ pub async fn get_allocation_target(
 
 #[tauri::command]
 pub async fn create_allocation_target(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     input: NewAllocationTarget,
 ) -> Result<AllocationTarget, String> {
     let context = state.context()?;
@@ -84,7 +82,7 @@ pub async fn create_allocation_target(
 
 #[tauri::command]
 pub async fn update_allocation_target(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     id: String,
     input: NewAllocationTarget,
 ) -> Result<AllocationTarget, String> {
@@ -98,7 +96,7 @@ pub async fn update_allocation_target(
 
 #[tauri::command]
 pub async fn archive_allocation_target(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     id: String,
 ) -> Result<AllocationTarget, String> {
     let context = state.context()?;
@@ -110,10 +108,7 @@ pub async fn archive_allocation_target(
 }
 
 #[tauri::command]
-pub async fn delete_allocation_target(
-    state: State<'_, DatabaseRuntime>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_allocation_target(state: ProfileAccess, id: String) -> Result<(), String> {
     let context = state.context()?;
     context
         .allocation_target_service()
@@ -126,7 +121,7 @@ pub async fn delete_allocation_target(
 
 #[tauri::command]
 pub async fn list_allocation_target_weights(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
 ) -> Result<Vec<AllocationTargetWeight>, String> {
     let context = state.context()?;
@@ -138,7 +133,7 @@ pub async fn list_allocation_target_weights(
 
 #[tauri::command]
 pub async fn save_allocation_target_weights(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
     weights: Vec<NewAllocationTargetWeight>,
 ) -> Result<Vec<AllocationTargetWeight>, String> {
@@ -152,7 +147,7 @@ pub async fn save_allocation_target_weights(
 
 #[tauri::command]
 pub async fn save_allocation_target_with_weights(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     id: Option<String>,
     input: NewAllocationTarget,
     weights: Vec<NewAllocationTargetWeight>,
@@ -169,7 +164,7 @@ pub async fn save_allocation_target_with_weights(
 
 #[tauri::command]
 pub async fn list_target_constraints(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
 ) -> Result<Vec<AllocationTargetConstraint>, String> {
     let context = state.context()?;
@@ -181,7 +176,7 @@ pub async fn list_target_constraints(
 
 #[tauri::command]
 pub async fn save_target_constraints(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
     constraints: Vec<AllocationTargetConstraint>,
 ) -> Result<Vec<AllocationTargetConstraint>, String> {
@@ -197,7 +192,7 @@ pub async fn save_target_constraints(
 
 #[tauri::command]
 pub async fn get_allocation_target_drift(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
     filter: AccountScopeInput,
     include_holdings: Option<bool>,
@@ -305,7 +300,7 @@ fn resolve_worksheet_scope(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_calculated_adjustments(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
     mode: WorksheetMode,
     rule: AllocationRule,
@@ -335,7 +330,7 @@ pub async fn generate_calculated_adjustments(
 
 #[tauri::command]
 pub async fn calculate_allocation_worksheet(
-    state: State<'_, DatabaseRuntime>,
+    state: ProfileAccess,
     target_id: String,
     cash: WorksheetCashInput,
     lines: Vec<AllocationWorksheetLineInput>,

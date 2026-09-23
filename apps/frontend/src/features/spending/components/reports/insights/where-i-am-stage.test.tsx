@@ -11,9 +11,14 @@ vi.mock("@/hooks/use-balance-privacy", () => ({
   useBalancePrivacy: () => ({ isBalanceHidden: false }),
 }));
 
+vi.mock("../../../hooks/use-spending-settings", () => ({
+  useSpendingSettings: () => ({ excludedCategoryIds: [] }),
+}));
+
 function report(outflow: number): MonthlyReport {
   const summary = { income: 0, outflow, saved: 0, net: -outflow, count: 1 };
   return {
+    baseCurrency: "USD",
     current: summary,
     prior: summary,
     spendingBreakdown: [],

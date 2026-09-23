@@ -13,6 +13,11 @@ pub mod models;
 pub mod oidc;
 pub mod scheduler;
 mod secrets;
+pub mod static_files;
 
 pub use ai_environment::ServerAiEnvironment;
-pub use main_lib::{build_state, init_tracing, run_database_maintenance, AppState};
+pub use main_lib::{
+    build_state, init_tracing, run_database_maintenance, run_profile_database_maintenance, AppState,
+};
+
+pub mod profiles;

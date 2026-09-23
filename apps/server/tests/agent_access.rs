@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use reqwest::header;
 use tempfile::TempDir;
-use wealthfolio_server::{api::app_router, build_state, config::Config};
+use wealthfolio_server::{api::app_router_from_config, config::Config};
 
 const PASSWORD: &str = "super-secret";
 
@@ -65,8 +65,7 @@ async fn spawn_server(mcp_enabled: bool, audit_enabled: bool) -> TestServer {
         }
 
         let config = Config::from_env().unwrap();
-        let state = build_state(&config).await.unwrap();
-        app_router(state, &config).unwrap()
+        app_router_from_config(&config).await.unwrap()
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -489,14 +488,18 @@ async fn mcp_write_scoped_token_sees_write_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         tools.len(),
-        27,
-        "full-scope token must see all 27 tools: {names:?}"
+        28,
+        "full-scope token must see all 28 tools: {names:?}"
     );
     assert!(
         names.contains(&"commit_activity_import"),
         "import tool visible"
     );
     assert!(names.contains(&"record_activity"), "draft tool visible");
+    assert!(
+        names.contains(&"commit_categorization_rule"),
+        "categorization rule commit tool visible"
+    );
     assert!(
         names.contains(&"prepare_asset_classification"),
         "suggest tool visible"
@@ -600,4 +603,54 @@ async fn mcp_disabled_returns_404() {
         .await
         .unwrap();
     assert_eq!(status_json["mcpEnabled"], false);
+}
+
+#[tokio::test]
+async fn profile_deletion_closes_initialized_mcp_sessions() {
+    let server = spawn_server(true, true).await;
+    let cookie = login(&server).await;
+    let (status, token) = create_pat(
+        &server,
+        &cookie,
+        serde_json::json!({"name":"deletion test", "scopes":READ_ONLY_SCOPES}),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let pat = token["token"].as_str().unwrap();
+    let session = mcp_initialize(&server, pat).await;
+    let state: serde_json::Value = server
+        .client
+        .post(format!("{}/api/v1/profiles/get_profile_state", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let profile = &state["profiles"][0];
+    let response = server
+        .client
+        .post(format!("{}/api/v1/profiles/delete_profile", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .header(
+            "x-wf-profile-scope",
+            state["session"]["scopeId"].as_str().unwrap(),
+        )
+        .json(&serde_json::json!({"profileId":profile["id"],"confirmation":profile["name"]}))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    assert_eq!(status, 200, "{}", response.text().await.unwrap());
+    let response = mcp_post(
+        &server,
+        Some(pat),
+        Some(&session),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert!(!response.status().is_success());
 }

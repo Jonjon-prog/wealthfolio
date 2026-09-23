@@ -1,3 +1,4 @@
+import { ConnectSessionUnavailable } from "../components/connect-session-unavailable";
 import { openUrlInBrowser, syncTriggerCycle } from "@/adapters";
 import { Page, PageContent, PageHeader } from "@/components/page";
 import { useDevices, useSyncStatus } from "@/features/devices-sync/hooks";
@@ -52,7 +53,8 @@ export default function ConnectPage() {
   const localizationSettings = useLocalizationSettings();
 
   const { t } = useTranslation();
-  const { isEnabled, isConnected, isInitializing, userInfo } = useWealthfolioConnect();
+  const { isEnabled, isConnected, isInitializing, isSessionUnavailable, userInfo } =
+    useWealthfolioConnect();
   const { status, lastSyncTime, syncStates } = useAggregatedSyncStatus();
   const showBrokerSync = hasBrokerSync(userInfo);
   const { data: brokerAccounts = [] } = useBrokerAccounts({ enabled: showBrokerSync });
@@ -222,7 +224,13 @@ export default function ConnectPage() {
       <Page>
         <PageHeader heading={t("connect:page.title")} />
         <PageContent>
-          {isEnabled && isConnected ? <ConnectedView /> : <ConnectEmptyState />}
+          {isSessionUnavailable ? (
+            <ConnectSessionUnavailable />
+          ) : isEnabled && isConnected ? (
+            <ConnectedView />
+          ) : (
+            <ConnectEmptyState />
+          )}
         </PageContent>
       </Page>
     );

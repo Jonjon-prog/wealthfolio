@@ -525,6 +525,7 @@
     "err_underlying_required": "Das Basiswert-Symbol ist erforderlich.",
     "err_strike_required": "Der Ausübungspreis ist erforderlich.",
     "err_expiration_required": "Das Verfallsdatum ist erforderlich.",
+    "err_expiration_invalid": "Gib ein gültiges Verfallsdatum ein.",
     "err_option_type_required": "Der Optionstyp ist erforderlich.",
     "err_enter_split_ratio": "Bitte geben Sie ein Split-Verhältnis ein.",
     "err_split_ratio_number": "Das Split-Verhältnis muss eine Zahl sein.",

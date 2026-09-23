@@ -635,6 +635,7 @@
     "err_underlying_required": "Le symbole sous-jacent est requis.",
     "err_strike_required": "Le prix d'exercice est requis.",
     "err_expiration_required": "La date d'échéance est requise.",
+    "err_expiration_invalid": "Saisissez une date d’expiration valide.",
     "err_option_type_required": "Le type d'option est requis.",
     "err_enter_split_ratio": "Veuillez saisir un ratio de fractionnement.",
     "err_split_ratio_number": "Le ratio de fractionnement doit être un nombre.",
