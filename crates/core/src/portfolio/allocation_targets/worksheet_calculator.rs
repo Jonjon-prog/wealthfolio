@@ -804,10 +804,29 @@ pub fn assign_accounts(
                 .unwrap_or_default();
             eligible.sort();
             eligible.dedup();
+            // Which accounts record the security is a fact, the same fact a
+            // reduction is drawn from. When exactly one eligible account holds
+            // it, placing the increase there states that fact rather than
+            // choosing between accounts; a second holder hands the choice back
+            // to the user.
+            let mut holders: Vec<String> = security
+                .map(|security| {
+                    security
+                        .positions
+                        .iter()
+                        .filter(|position| position.quantity > Decimal::ZERO)
+                        .map(|position| position.account_id.clone())
+                        .filter(|account_id| eligible.contains(account_id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            holders.sort();
+            holders.dedup();
             assigned.push(AssignedLine {
                 asset_id: line.asset_id.clone(),
-                account_id: match eligible.as_slice() {
-                    [only] => Some(only.clone()),
+                account_id: match (eligible.as_slice(), holders.as_slice()) {
+                    ([only], _) => Some(only.clone()),
+                    (_, [sole_holder]) => Some(sole_holder.clone()),
                     _ => None,
                 },
                 amount: line.amount,
@@ -1686,7 +1705,9 @@ mod tests {
 
     #[test]
     fn an_increase_with_several_eligible_accounts_stays_unallocated() {
-        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+        let mut security = holding("vti", &[("EQUITY", dec!(1000))]);
+        in_accounts(&mut security, &[("acc-1", dec!(5)), ("acc-2", dec!(5))]);
+        let securities = vec![security];
         let eligible = HashMap::from([(
             "vti".to_string(),
             vec!["acc-1".to_string(), "acc-2".to_string()],
@@ -1703,6 +1724,29 @@ mod tests {
         // No default, no tiebreak, no largest-position heuristic.
         assert_eq!(assigned.len(), 1);
         assert_eq!(assigned[0].account_id, None);
+        assert_eq!(assigned[0].amount, dec!(500));
+    }
+
+    #[test]
+    fn an_increase_goes_to_the_only_eligible_account_recording_the_security() {
+        // Which accounts hold a security is a fact, the same fact a reduction
+        // is drawn from, so a single holder is not a choice between accounts.
+        let securities = vec![holding("vti", &[("EQUITY", dec!(1000))])];
+        let eligible = HashMap::from([(
+            "vti".to_string(),
+            vec!["acc-1".to_string(), "acc-2".to_string()],
+        )]);
+
+        let assigned = assign_accounts(
+            &[line("vti", dec!(500))],
+            &securities,
+            &eligible,
+            false,
+            Decimal::ZERO,
+        );
+
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].account_id.as_deref(), Some("acc-1"));
         assert_eq!(assigned[0].amount, dec!(500));
     }
 

@@ -17,10 +17,12 @@ import { render, screen, waitFor, within } from "@/test/render";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
 
-const { generateMock, previewMock, accountsRef } = vi.hoisted(() => ({
+const { generateMock, previewMock, accountsRef, heldAccountIds } = vi.hoisted(() => ({
   generateMock: vi.fn(),
   previewMock: vi.fn(),
   accountsRef: { current: [] as Account[] },
+  /** Which accounts record VTI, which decides whether an increase is placed for the user (§6). */
+  heldAccountIds: { current: ["acc-1"] as string[] },
 }));
 
 vi.mock("../hooks/use-calculated-adjustments", () => ({
@@ -82,10 +84,10 @@ function account(id: string, name: string): Account {
 }
 
 function holdingsFor(accountId: string): Holding[] {
-  if (accountId !== "acc-1") return [];
+  if (!heldAccountIds.current.includes(accountId)) return [];
   return [
     {
-      id: "acc-1-vti",
+      id: `${accountId}-vti`,
       accountId,
       holdingType: HoldingType.SECURITY,
       instrument: { id: "vti", symbol: "VTI", name: "Total market", currency: "USD" },
@@ -222,6 +224,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
   beforeEach(() => {
     acknowledgeDisclosure();
     accountsRef.current = [account("acc-1", "Brokerage")];
+    heldAccountIds.current = ["acc-1"];
     generateMock.mockReset().mockResolvedValue(calculated);
     previewMock.mockReset().mockResolvedValue(previewResult);
   });
@@ -301,6 +304,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
 describe("AllocationWorksheetTab account allocation (§6)", () => {
   beforeEach(() => {
     acknowledgeDisclosure();
+    heldAccountIds.current = ["acc-1"];
     generateMock.mockReset().mockResolvedValue(calculated);
     previewMock.mockReset().mockResolvedValue(previewResult);
   });
@@ -311,6 +315,8 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
   it("leaves an increase unallocated when several accounts could receive it", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    // Both record the security, so placing it would be a choice between them.
+    heldAccountIds.current = ["acc-1", "acc-2"];
     const user = await renderWorksheet();
 
     await calculateFromTarget(user);
@@ -322,6 +328,22 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("");
     expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("");
     expect(previewMock).not.toHaveBeenCalled();
+  });
+
+  it("places an increase in the only account recording the security", async () => {
+    // A fact about where the security sits, not a choice between accounts (§6).
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    const user = await renderWorksheet();
+
+    await calculateFromTarget(user);
+
+    const allocation = screen
+      .getByText("Account allocation")
+      .closest<HTMLElement>("[data-account-allocation]")!;
+    expect(within(allocation).getByText("Fully allocated")).toBeInTheDocument();
+    expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("1200");
+    expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("");
   });
 
   it("previews a worksheet with no adjustments instead of refusing it", async () => {

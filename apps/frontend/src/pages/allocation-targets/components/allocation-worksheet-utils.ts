@@ -88,6 +88,23 @@ export function eligibleAccountIdsForChange(
 }
 
 /**
+ * The account an increase lands in without the user placing it (§6).
+ *
+ * Which accounts record the security is a fact, the same fact a reduction is
+ * drawn from. When exactly one eligible account already holds it, the increase
+ * states that fact rather than choosing between accounts. A second holder hands
+ * the choice back to the user.
+ */
+export function soleHoldingAccountId(
+  heldAccountIds: readonly string[],
+  eligibleAccountIds: readonly string[],
+): string | undefined {
+  const eligible = new Set(eligibleAccountIds);
+  const holders = [...new Set(heldAccountIds)].filter((accountId) => eligible.has(accountId));
+  return holders.length === 1 ? holders[0] : undefined;
+}
+
+/**
  * The worksheet the calculated adjustments prefill (§5): one signed amount per
  * security, and the accounts the calculation placed it in. An increase the
  * calculation left unallocated arrives without account amounts, so the user

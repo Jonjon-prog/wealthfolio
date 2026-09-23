@@ -491,6 +491,7 @@
     "selectAccountIssue": "Select at least one account the worksheet may change.",
     "selectAllAccounts": "Select all",
     "singleAccountAllocationHint": "The only account in scope receives this change.",
+    "soleHolderAllocationHint": "Placed in the only account that records this security. Enter amounts yourself to split it.",
     "target": "Target",
     "toggleAccountAllocation": "Edit account allocation",
     "totalAdjusted": "{{amount}} adjusted",

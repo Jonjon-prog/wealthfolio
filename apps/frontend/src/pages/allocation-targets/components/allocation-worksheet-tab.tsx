@@ -78,6 +78,7 @@ import {
   generationInputsKey,
   parseDecimalInput,
   planningTotal,
+  soleHoldingAccountId,
   type PositionAdjustment,
   type PositionAdjustments,
   type WorksheetEditMode,
@@ -1063,6 +1064,8 @@ interface AccountAllocationProps {
   /** Resolved in the base currency, when the position records one. */
   unitPrice: number | undefined;
   wholeSharesOnly: boolean;
+  /** The sole eligible account recording this security, which takes the change until the user splits it (§6). */
+  impliedAccountId: string | undefined;
   onAmountChange: (accountId: string, value: string) => void;
 }
 
@@ -1079,20 +1082,25 @@ function AccountAllocation({
   fundingByAccount,
   unitPrice,
   wholeSharesOnly,
+  impliedAccountId,
   onAmountChange,
 }: AccountAllocationProps) {
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
   const { formatQuantity } = useNumberFormatting();
   const requested = Math.abs(changeAmount);
+  const hasEnteredAmount = accounts.some(
+    (account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "",
+  );
+  const impliedHolder = hasEnteredAmount ? undefined : impliedAccountId;
+  const amountFor = (accountId: string) =>
+    impliedHolder === accountId
+      ? requested
+      : Math.max(0, decimalInputOrZero(adjustment.accountAmounts[accountId] ?? ""));
   const assigned =
     accounts.length === 1
       ? requested
-      : accounts.reduce(
-          (sum, account) =>
-            sum + Math.max(0, decimalInputOrZero(adjustment.accountAmounts[account.id] ?? "")),
-          0,
-        );
+      : accounts.reduce((sum, account) => sum + amountFor(account.id), 0);
   const { remaining, overallocated, isFullyAllocated } = allocationProgress(
     requested,
     assigned,
@@ -1101,9 +1109,11 @@ function AccountAllocation({
   const isReduce = changeAmount < 0;
   const hint = isReduce
     ? "allocation:worksheet.reductionAccountAllocationHint"
-    : accounts.length > 1
-      ? "allocation:worksheet.increaseAccountAllocationHint"
-      : "allocation:worksheet.singleAccountAllocationHint";
+    : accounts.length === 1
+      ? "allocation:worksheet.singleAccountAllocationHint"
+      : impliedHolder
+        ? "allocation:worksheet.soleHolderAllocationHint"
+        : "allocation:worksheet.increaseAccountAllocationHint";
 
   return (
     <div
@@ -1148,17 +1158,19 @@ function AccountAllocation({
         {accounts.map((account) => {
           const holding = position.accountHoldings.find((item) => item.accountId === account.id);
           const funding = fundingByAccount.get(account.id);
-          const currentAmount = Math.max(
-            0,
-            decimalInputOrZero(adjustment.accountAmounts[account.id] ?? ""),
-          );
+          const currentAmount = amountFor(account.id);
           const rowRemaining = Math.max(0, requested - (assigned - currentAmount));
-          // Offering a remainder that buys less than one unit only produces a
-          // line the core has to report as placing nothing.
-          const placeableRemaining =
+          // The unit price is derived from the recorded holding rather than the
+          // quote the core resolves against, so the floor gets a tolerance and
+          // never drops a unit over the last decimal. A remainder that buys
+          // nothing is still offered: the core reports such a line now, and
+          // withholding the button only forces the same amount in by hand.
+          const wholeUnitRemaining =
             wholeSharesOnly && unitPrice
-              ? Math.floor(rowRemaining / unitPrice) * unitPrice
+              ? Math.floor(rowRemaining / unitPrice + 1e-9) * unitPrice
               : rowRemaining;
+          const remainingToUse =
+            wholeUnitRemaining > AMOUNT_EPSILON ? wholeUnitRemaining : rowRemaining;
           const currentUnits = unitPrice ? currentAmount / unitPrice : undefined;
           return (
             <div
@@ -1201,20 +1213,24 @@ function AccountAllocation({
                           aria-label={t("allocation:worksheet.accountAmountLabel", {
                             account: account.name,
                           })}
-                          value={adjustment.accountAmounts[account.id] ?? ""}
+                          value={
+                            impliedHolder === account.id
+                              ? formatDecimalInput(requested, 6)
+                              : (adjustment.accountAmounts[account.id] ?? "")
+                          }
                           onChange={(event) => onAmountChange(account.id, event.target.value)}
                           inputMode="decimal"
                           placeholder="0"
                           className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
                         />
                       </div>
-                      {placeableRemaining > AMOUNT_EPSILON && (
+                      {rowRemaining > AMOUNT_EPSILON && (
                         <Button
                           size="sm"
                           variant="ghost"
                           className="h-8 px-2 text-[11px]"
                           onClick={() =>
-                            onAmountChange(account.id, formatDecimalInput(placeableRemaining, 6))
+                            onAmountChange(account.id, formatDecimalInput(remainingToUse, 6))
                           }
                         >
                           {t("allocation:worksheet.useRemaining")}
@@ -2133,6 +2149,24 @@ export function AllocationWorksheetTab({
     (position) => categoryFilter === "all" || position.categoryIds.includes(categoryFilter),
   );
 
+  /**
+   * The account an increase lands in without the user placing it (§6): the one
+   * eligible account that already records the security. A second holder hands
+   * the choice back.
+   */
+  function impliedAccountIdFor(
+    position: WorksheetPosition,
+    changeAmount: number,
+  ): string | undefined {
+    if (changeAmount <= 0) return undefined;
+    return soleHoldingAccountId(
+      position.accountHoldings
+        .filter((holding) => holding.quantity > 0)
+        .map((holding) => holding.accountId),
+      accountsForChange(position, changeAmount).map((account) => account.id),
+    );
+  }
+
   function accountsForChange(position: WorksheetPosition, changeAmount: number): Account[] {
     return eligibleAccountIdsForChange(
       changeAmount,
@@ -2212,18 +2246,24 @@ export function AllocationWorksheetTab({
         continue;
       }
 
+      const impliedAccountId = impliedAccountIdFor(position, changeAmount);
+      const hasEnteredAllocation = eligibleAccounts.some(
+        (account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "",
+      );
       const allocations =
         eligibleAccounts.length === 1
           ? [{ accountId: eligibleAccounts[0].id, amount: requestedAmount }]
-          : eligibleAccounts
-              .map((account) => ({
-                accountId: account.id,
-                amount: Math.max(
-                  0,
-                  decimalInputOrZero(adjustment.accountAmounts[account.id] ?? ""),
-                ),
-              }))
-              .filter((allocation) => allocation.amount >= AMOUNT_EPSILON);
+          : impliedAccountId && !hasEnteredAllocation
+            ? [{ accountId: impliedAccountId, amount: requestedAmount }]
+            : eligibleAccounts
+                .map((account) => ({
+                  accountId: account.id,
+                  amount: Math.max(
+                    0,
+                    decimalInputOrZero(adjustment.accountAmounts[account.id] ?? ""),
+                  ),
+                }))
+                .filter((allocation) => allocation.amount >= AMOUNT_EPSILON);
       const allocatedAmount = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
       // Under a whole-unit policy the last fraction of a unit buys nothing, so
       // no account can take it. Demanding it be placed would leave the
@@ -2929,6 +2969,7 @@ export function AllocationWorksheetTab({
                               fundingByAccount={fundingByAccount}
                               unitPrice={unitPriceFor(position)}
                               wholeSharesOnly={profile.wholeSharesOnly}
+                              impliedAccountId={impliedAccountIdFor(position, changeAmount)}
                               onAmountChange={(accountId, value) =>
                                 updateAccountAmount(position.assetId, accountId, value)
                               }
