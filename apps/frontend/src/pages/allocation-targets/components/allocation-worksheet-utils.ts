@@ -1,6 +1,61 @@
-import type { AllocationRule, CalculatedAdjustments, WorksheetMode } from "@/lib/types";
+import type { useAmountFormatting } from "@wealthfolio/ui";
+
+import type {
+  AllocationRule,
+  CalculatedAdjustments,
+  UnresolvedReason,
+  WorksheetMode,
+} from "@/lib/types";
+
+export const AMOUNT_EPSILON = 0.01;
+
+/** The drift report's category for value no asset class covers. */
+export const UNCLASSIFIED_CATEGORY_ID = "__UNKNOWN__";
+
+export const UNRESOLVED_REASON_KEYS: Record<UnresolvedReason, string> = {
+  no_recorded_security: "allocation:worksheet.unresolvedNoRecordedSecurity",
+  no_eligible_security: "allocation:worksheet.unresolvedNoEligibleSecurity",
+  no_usable_price: "allocation:worksheet.unresolvedNoUsablePrice",
+};
 
 export type WorksheetEditMode = "amount" | "after_percentage";
+
+export interface PositionAccountHolding {
+  accountId: string;
+  value: number;
+  quantity: number;
+}
+
+export interface PositionCategoryExposure {
+  categoryId: string;
+  categoryName: string;
+  weightBps: number;
+}
+
+export interface WorksheetPosition {
+  assetId: string;
+  symbol: string;
+  name: string;
+  value: number;
+  quantity: number;
+  currentPct: number;
+  categoryIds: string[];
+  categoryNames: string[];
+  categoryExposures: PositionCategoryExposure[];
+  accountHoldings: PositionAccountHolding[];
+  isAdded: boolean;
+}
+
+type FormatAmount = ReturnType<typeof useAmountFormatting>["formatAmount"];
+
+export function formatSignedAmount(
+  value: number,
+  currency: string,
+  formatAmount: FormatAmount,
+): string {
+  if (!Number.isFinite(value) || Math.abs(value) < AMOUNT_EPSILON) return "—";
+  return `${value > 0 ? "+" : "−"}${formatAmount(Math.abs(value), currency)}`;
+}
 
 export interface PositionAdjustment {
   inputMode: WorksheetEditMode;

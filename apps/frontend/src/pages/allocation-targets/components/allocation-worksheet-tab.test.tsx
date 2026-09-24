@@ -17,13 +17,18 @@ import { render, screen, waitFor, within } from "@/test/render";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
 
-const { generateMock, previewMock, accountsRef, heldAccountIds } = vi.hoisted(() => ({
-  generateMock: vi.fn(),
-  previewMock: vi.fn(),
-  accountsRef: { current: [] as Account[] },
-  /** Which accounts record VTI, which decides whether an increase is placed for the user (§6). */
-  heldAccountIds: { current: ["acc-1"] as string[] },
-}));
+const { generateMock, previewMock, useAccountsMock, accountsRef, heldAccountIds, holdingsRef } =
+  vi.hoisted(() => ({
+    generateMock: vi.fn(),
+    previewMock: vi.fn(),
+    // Called once per render of the worksheet, which is how the tests count them.
+    useAccountsMock: vi.fn(),
+    accountsRef: { current: [] as Account[] },
+    /** Holdings by account, when a test needs more than one security. */
+    holdingsRef: { current: null as Record<string, Holding[]> | null },
+    /** Which accounts record VTI, which decides whether an increase is placed for the user (§6). */
+    heldAccountIds: { current: ["acc-1"] as string[] },
+  }));
 
 vi.mock("../hooks/use-calculated-adjustments", () => ({
   useCalculatedAdjustments: () => ({ mutateAsync: generateMock, isPending: false }),
@@ -40,7 +45,10 @@ vi.mock("@/adapters", () => ({
     ids === undefined ? undefined : [...new Set(ids)].sort(),
 }));
 vi.mock("@/hooks/use-accounts", () => ({
-  useAccounts: () => ({ accounts: accountsRef.current, isLoading: false }),
+  useAccounts: () => {
+    useAccountsMock();
+    return { accounts: accountsRef.current, isLoading: false };
+  },
 }));
 vi.mock("@/hooks/use-portfolios", () => ({ usePortfolios: () => ({ data: [] }) }));
 vi.mock("@/hooks/use-sync-market-data", () => ({
@@ -84,6 +92,7 @@ function account(id: string, name: string): Account {
 }
 
 function holdingsFor(accountId: string): Holding[] {
+  if (holdingsRef.current) return holdingsRef.current[accountId] ?? [];
   if (!heldAccountIds.current.includes(accountId)) return [];
   return [
     {
@@ -192,7 +201,7 @@ const previewResult: AllocationWorksheetResult = {
   sourceRecords: [],
 };
 
-async function renderWorksheet() {
+async function renderWorksheet(report: DriftReport = driftReport) {
   const user = userEvent.setup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const Providers = ({ children }: { children: ReactNode }) => (
@@ -203,7 +212,7 @@ async function renderWorksheet() {
   render(
     <AllocationWorksheetTab
       profile={profile}
-      driftReport={driftReport}
+      driftReport={report}
       accountScope={{ type: "all" }}
       sourceVersion="source-1"
       isSourceLoading={false}
@@ -399,5 +408,263 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await renderWorksheet();
     expect(screen.getByRole("textbox", { name: "Cash not yet recorded" })).toBeInTheDocument();
     expect(screen.queryByLabelText(/Cash not yet recorded in/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AllocationWorksheetTab Amounts panel", () => {
+  // VBIAX is a 60/40 fund: 60% US equity, 40% Bonds.
+  const securities = [
+    { id: "vti", symbol: "VTI", value: 900, classes: [["us", "US equity", 900]] },
+    {
+      id: "vbiax",
+      symbol: "VBIAX",
+      value: 600,
+      classes: [
+        ["us", "US equity", 360],
+        ["bond", "Bonds", 240],
+      ],
+    },
+    { id: "bnd", symbol: "BND", value: 300, classes: [["bond", "Bonds", 300]] },
+    { id: "iau", symbol: "IAU", value: 200, classes: [["gold", "Gold", 200]] },
+  ] as const;
+
+  const classes = [
+    { categoryId: "us", categoryName: "US equity", currentBps: 6300, targetBps: 6000 },
+    { categoryId: "bond", categoryName: "Bonds", currentBps: 2700, targetBps: 3000 },
+    { categoryId: "gold", categoryName: "Gold", currentBps: 1000, targetBps: 1000 },
+  ];
+
+  const report = {
+    ...driftReport,
+    totalValue: 2000,
+    rows: classes.map((row) => ({
+      ...row,
+      color: "",
+      driftBps: row.currentBps - row.targetBps,
+      currentValue: row.currentBps / 5,
+      targetValue: row.targetBps / 5,
+      valueDelta: 0,
+      effectiveBandBps: 500,
+      status: "in_band",
+      isRequired: false,
+      isZeroCurrent: false,
+      isCash: false,
+    })),
+    holdings: {
+      targetId: profile.id,
+      totalValue: 2000,
+      baseCurrency: "USD",
+      rows: securities.flatMap((security) =>
+        security.classes.map(([categoryId, categoryName, value]) => ({
+          id: `${security.id}-${categoryId}`,
+          holdingId: security.id,
+          assetId: security.id,
+          accountId: "acc-1",
+          symbol: security.symbol,
+          name: security.symbol,
+          categoryId,
+          categoryName,
+          value,
+          currentPct: value / 20,
+          isUnknownCategory: false,
+          isCash: false,
+        })),
+      ),
+    },
+  } as DriftReport;
+
+  const preview: AllocationWorksheetResult = {
+    ...previewResult,
+    categories: classes.map((row) => ({
+      ...row,
+      color: "",
+      currentValue: 0,
+      projectedValue: 0,
+      projectedBps: row.currentBps,
+      currentDifferenceBps: row.currentBps - row.targetBps,
+      projectedDifferenceBps: row.currentBps - row.targetBps,
+      isCash: false,
+      isUnclassified: false,
+    })) as AllocationWorksheetResult["categories"],
+  };
+
+  const rowOrder = () =>
+    [...document.querySelectorAll("[data-amounts-row]")].map((row) =>
+      row.getAttribute("data-amounts-row"),
+    );
+  const row = (assetId: string) =>
+    document.querySelector<HTMLElement>(`[data-amounts-row="${assetId}"]`)!;
+  const railClass = (categoryId: string) =>
+    document.querySelector<HTMLElement>(`[data-impact-class="${categoryId}"]`)!;
+  const collapsedLine = () => document.querySelector<HTMLElement>("[data-collapsed-rows]")!;
+
+  beforeEach(() => {
+    acknowledgeDisclosure();
+    accountsRef.current = [account("acc-1", "Brokerage")];
+    holdingsRef.current = {
+      "acc-1": securities.map(
+        (security) =>
+          ({
+            id: `acc-1-${security.id}`,
+            accountId: "acc-1",
+            holdingType: HoldingType.SECURITY,
+            instrument: {
+              id: security.id,
+              symbol: security.symbol,
+              name: security.symbol,
+              currency: "USD",
+            },
+            quantity: 10,
+            marketValue: { local: security.value, base: security.value },
+          }) as Holding,
+      ),
+    };
+    generateMock.mockReset();
+    previewMock.mockReset().mockResolvedValue(preview);
+    useAccountsMock.mockClear();
+  });
+
+  afterEach(() => {
+    holdingsRef.current = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("opens short: rows with no change sit behind one counted line", async () => {
+    const user = await renderWorksheet(report);
+
+    expect(collapsedLine()).toHaveTextContent("4 securities with no change");
+    expect(collapsedLine()).toHaveTextContent("$2,000.00");
+    expect(rowOrder()).toEqual([]);
+
+    await user.click(collapsedLine());
+    // Opened below the line, in the list's own order.
+    expect(rowOrder()).toEqual(["vti", "vbiax", "bnd", "iau"]);
+  });
+
+  it("brings a typed row out at once, keeps its focus, and keeps it out until the list is left", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+
+    const input = screen.getByLabelText("Change for BND");
+    await user.type(input, "100");
+    // Moved out of the group while typing, without losing a keystroke.
+    expect(screen.getByLabelText("Change for BND")).toHaveValue("100");
+    expect(screen.getByLabelText("Change for BND")).toHaveFocus();
+
+    await user.click(collapsedLine());
+    expect(rowOrder()).toEqual(["bnd"]);
+
+    // Cleared back to zero: it stays under the cursor for this visit.
+    await user.clear(screen.getByLabelText("Change for BND"));
+    expect(rowOrder()).toEqual(["bnd"]);
+
+    await user.click(screen.getByRole("button", { name: "Review adjustments" }));
+    await user.click(screen.getByRole("button", { name: "Adjust positions" }));
+    expect(rowOrder()).toEqual([]);
+    expect(collapsedLine()).toHaveTextContent("4 securities with no change");
+  });
+
+  it("keeps rows open in a class the calculation left an amount unresolved in", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], lineId: "calc:vti", accountId: "acc-1" }],
+      unresolved: [
+        { categoryId: "gold", categoryName: "Gold", amount: 50, reason: "no_eligible_security" },
+      ],
+    });
+    const user = await renderWorksheet(report);
+
+    await calculateFromTarget(user);
+
+    // VTI has a change; IAU has none but is how the Gold amount gets resolved.
+    expect(rowOrder()).toEqual(["vti", "iau"]);
+    expect(collapsedLine()).toHaveTextContent("2 securities with no change");
+    expect(railClass("gold")).toHaveTextContent(
+      "+$50.00 unresolved: no eligible security selected",
+    );
+  });
+
+  it("lights both classes of a mixed fund with its share of the change", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+    await user.type(screen.getByLabelText("Change for VBIAX"), "1200");
+
+    await user.hover(row("vbiax"));
+
+    expect(railClass("us")).toHaveAttribute("data-emphasis", "lit");
+    expect(railClass("bond")).toHaveAttribute("data-emphasis", "lit");
+    expect(railClass("gold")).toHaveAttribute("data-emphasis", "dim");
+    expect(railClass("us")).toHaveTextContent("60% of VBIAX");
+    expect(railClass("us")).toHaveTextContent("+$720.00");
+    expect(railClass("bond")).toHaveTextContent("40% of VBIAX");
+    expect(railClass("bond")).toHaveTextContent("+$480.00");
+
+    await user.unhover(row("vbiax"));
+    expect(railClass("gold")).toHaveAttribute("data-emphasis", "none");
+  });
+
+  it("lights the rows touching a class, and says how many sit in the collapsed group", async () => {
+    const user = await renderWorksheet(report);
+
+    await user.hover(railClass("bond"));
+    expect(collapsedLine()).toHaveTextContent("2 of them touch Bonds");
+
+    await user.click(collapsedLine());
+    await user.hover(railClass("bond"));
+    expect(row("vbiax")).toHaveAttribute("data-emphasis", "lit");
+    expect(row("bnd")).toHaveAttribute("data-emphasis", "lit");
+    expect(row("vti")).toHaveAttribute("data-emphasis", "dim");
+    // A 60/40 fund shows it is only partly in Bonds; a pure bond fund does not.
+    expect(within(row("vbiax")).getByText("40%")).toBeInTheDocument();
+    expect(within(row("bnd")).queryByText("100%")).not.toBeInTheDocument();
+  });
+
+  it("keeps a selection without filtering or reordering the list", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+    const order = rowOrder();
+
+    await user.click(within(row("vbiax")).getAllByText("VBIAX")[0]);
+    expect(row("vbiax")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText("Selected:")).toHaveTextContent("Selected: VBIAX");
+    expect(rowOrder()).toEqual(order);
+
+    // Pointing at a class previews it; the selection waits underneath.
+    await user.hover(railClass("gold"));
+    expect(row("iau")).toHaveAttribute("data-emphasis", "lit");
+    await user.unhover(railClass("gold"));
+    expect(row("vbiax")).toHaveAttribute("data-emphasis", "active");
+    expect(railClass("bond")).toHaveAttribute("data-emphasis", "lit");
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(row("vbiax")).not.toHaveAttribute("aria-current");
+    expect(rowOrder()).toEqual(order);
+  });
+
+  it("selects the row when its amount field is tapped", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+
+    await user.pointer({ keys: "[TouchA]", target: screen.getByLabelText("Change for BND") });
+
+    expect(row("bnd")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("does not render the worksheet again while pointing", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+    // Let the preview of the worksheet as it stands land first.
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(screen.queryByText("Updating…")).not.toBeInTheDocument());
+    const renders = useAccountsMock.mock.calls.length;
+
+    await user.hover(row("vbiax"));
+    expect(railClass("bond")).toHaveAttribute("data-emphasis", "lit");
+    await user.hover(railClass("gold"));
+    expect(row("iau")).toHaveAttribute("data-emphasis", "lit");
+    await user.unhover(railClass("gold"));
+
+    expect(row("vbiax")).toHaveAttribute("data-emphasis", "none");
+    expect(useAccountsMock.mock.calls.length).toBe(renders);
   });
 });

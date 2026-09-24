@@ -52,8 +52,6 @@ import type {
   DriftReport,
   Holding,
   TaxonomyCategory,
-  UnresolvedReason,
-  WorksheetAccountFunding,
   WorksheetMode,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -64,25 +62,29 @@ import { useExchangeRates } from "@/pages/settings/general/exchange-rates/use-ex
 import { useAllocationWorksheet } from "../hooks/use-allocation-worksheet";
 import { useCalculatedAdjustments } from "../hooks/use-calculated-adjustments";
 import { useEligibleHoldingsSelection } from "../hooks/use-eligible-holdings";
-import {
-  allocationTargetColorForRow,
-  buildAllocationTargetColorMap,
-} from "./allocation-target-colors";
+import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amounts-list";
+import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
+import { ImpactRail } from "./allocation-worksheet-impact-rail";
 import {
   adjustmentsFromCalculated,
-  allocationProgress,
+  AMOUNT_EPSILON,
   decimalInputOrZero,
   eligibleAccountIdsForChange,
   externalContributionFor,
   formatDecimalInput,
+  formatSignedAmount,
   generationInputsKey,
   parseDecimalInput,
   planningTotal,
   soleHoldingAccountId,
+  UNCLASSIFIED_CATEGORY_ID,
+  UNRESOLVED_REASON_KEYS,
   type PositionAdjustment,
   type PositionAdjustments,
+  type PositionCategoryExposure,
   type WorksheetEditMode,
   type WorksheetGenerationInputs,
+  type WorksheetPosition,
 } from "./allocation-worksheet-utils";
 import { EligibleHoldingsSelector } from "./eligible-holdings-selector";
 import { accountScopeKey } from "./target-scope";
@@ -92,17 +94,9 @@ const DRAFT_STORAGE_PREFIX = "wealthfolio:rebalancing-worksheet-draft:v3";
 const DISCLOSURE_VERSION = 2;
 const DRAFT_VERSION = 4;
 const CASH_PRESETS = [0.25, 0.5, 0.75, 1] as const;
-const AMOUNT_EPSILON = 0.01;
 const AUTO_CALCULATE_DEBOUNCE_MS = 500;
 
-const UNRESOLVED_REASON_KEYS: Record<UnresolvedReason, string> = {
-  no_recorded_security: "allocation:worksheet.unresolvedNoRecordedSecurity",
-  no_eligible_security: "allocation:worksheet.unresolvedNoEligibleSecurity",
-  no_usable_price: "allocation:worksheet.unresolvedNoUsablePrice",
-};
-
 type WorksheetView = "position" | "review";
-type FormatAmount = ReturnType<typeof useAmountFormatting>["formatAmount"];
 
 interface AllocationWorksheetTabProps {
   profile: AllocationTarget | null;
@@ -110,32 +104,6 @@ interface AllocationWorksheetTabProps {
   accountScope: AccountScope;
   sourceVersion: string;
   isSourceLoading: boolean;
-}
-
-interface PositionAccountHolding {
-  accountId: string;
-  value: number;
-  quantity: number;
-}
-
-interface PositionCategoryExposure {
-  categoryId: string;
-  categoryName: string;
-  weightBps: number;
-}
-
-interface WorksheetPosition {
-  assetId: string;
-  symbol: string;
-  name: string;
-  value: number;
-  quantity: number;
-  currentPct: number;
-  categoryIds: string[];
-  categoryNames: string[];
-  categoryExposures: PositionCategoryExposure[];
-  accountHoldings: PositionAccountHolding[];
-  isAdded: boolean;
 }
 
 /** The last calculated adjustments, and the inputs they were calculated from. */
@@ -175,11 +143,6 @@ interface PreparedWorksheetIssue {
 interface WorksheetCalculationError {
   title: string;
   description?: string;
-}
-
-function formatSignedAmount(value: number, currency: string, formatAmount: FormatAmount): string {
-  if (!Number.isFinite(value) || Math.abs(value) < AMOUNT_EPSILON) return "—";
-  return `${value > 0 ? "+" : "−"}${formatAmount(Math.abs(value), currency)}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -356,7 +319,7 @@ function buildPositions(
     }));
     if (assignedWeight < 10_000) {
       categoryExposures.push({
-        categoryId: "__UNKNOWN__",
+        categoryId: UNCLASSIFIED_CATEGORY_ID,
         categoryName: "Unclassified",
         weightBps: 10_000 - assignedWeight,
       });
@@ -393,7 +356,7 @@ function buildPositions(
               }))
             : [
                 {
-                  categoryId: "__UNKNOWN__",
+                  categoryId: UNCLASSIFIED_CATEGORY_ID,
                   categoryName: "Unclassified",
                   weightBps: 10_000,
                 },
@@ -1054,275 +1017,6 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
   );
 }
 
-interface AccountAllocationProps {
-  position: WorksheetPosition;
-  changeAmount: number;
-  accounts: Account[];
-  adjustment: PositionAdjustment;
-  currency: string;
-  fundingByAccount: Map<string, WorksheetAccountFunding>;
-  /** Resolved in the base currency, when the position records one. */
-  unitPrice: number | undefined;
-  wholeSharesOnly: boolean;
-  /** The sole eligible account recording this security, which takes the change until the user splits it (§6). */
-  impliedAccountId: string | undefined;
-  onAmountChange: (accountId: string, value: string) => void;
-}
-
-/**
- * Where a change sits (§6). A single eligible account takes the whole change;
- * with several, the user places it and nothing is assigned by default.
- */
-function AccountAllocation({
-  position,
-  changeAmount,
-  accounts,
-  adjustment,
-  currency,
-  fundingByAccount,
-  unitPrice,
-  wholeSharesOnly,
-  impliedAccountId,
-  onAmountChange,
-}: AccountAllocationProps) {
-  const { t } = useTranslation();
-  const { formatAmount } = useAmountFormatting();
-  const { formatQuantity } = useNumberFormatting();
-  const requested = Math.abs(changeAmount);
-  const hasEnteredAmount = accounts.some(
-    (account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "",
-  );
-  const impliedHolder = hasEnteredAmount ? undefined : impliedAccountId;
-  const amountFor = (accountId: string) =>
-    impliedHolder === accountId
-      ? requested
-      : Math.max(0, decimalInputOrZero(adjustment.accountAmounts[accountId] ?? ""));
-  const assigned =
-    accounts.length === 1
-      ? requested
-      : accounts.reduce((sum, account) => sum + amountFor(account.id), 0);
-  const { remaining, overallocated, isFullyAllocated } = allocationProgress(
-    requested,
-    assigned,
-    AMOUNT_EPSILON,
-  );
-  const isReduce = changeAmount < 0;
-  // Which accounts record the security is a fact about the portfolio, so it is
-  // stated whether or not the user has since placed the change by hand. Only
-  // the first sentence — that the app placed it — depends on that.
-  const holderName = accounts.find((account) => account.id === impliedAccountId)?.name;
-  const hint = isReduce
-    ? "allocation:worksheet.reductionAccountAllocationHint"
-    : accounts.length === 1
-      ? "allocation:worksheet.singleAccountAllocationHint"
-      : impliedHolder
-        ? "allocation:worksheet.soleHolderAllocationHint"
-        : impliedAccountId
-          ? "allocation:worksheet.soleHolderSplitHint"
-          : "allocation:worksheet.increaseAccountAllocationHint";
-
-  return (
-    <div
-      data-account-allocation
-      className="border-border/60 bg-muted/20 mt-3 rounded-xl border p-4"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em]">
-            {t("allocation:worksheet.accountAllocation")}
-          </p>
-          <p className="text-muted-foreground mt-1 text-xs">{t(hint, { account: holderName })}</p>
-        </div>
-        <span
-          className={cn(
-            "rounded-full px-2.5 py-1 font-mono text-[11px]",
-            isFullyAllocated
-              ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/35 dark:text-emerald-200"
-              : overallocated > AMOUNT_EPSILON
-                ? "bg-red-100 text-red-900 dark:bg-red-950/35 dark:text-red-200"
-                : "bg-amber-100 text-amber-900 dark:bg-amber-950/35 dark:text-amber-200",
-          )}
-        >
-          {isFullyAllocated
-            ? t("allocation:worksheet.fullyAllocated")
-            : overallocated > AMOUNT_EPSILON
-              ? t("allocation:worksheet.overAllocatedBy", {
-                  amount: formatAmount(overallocated, currency),
-                })
-              : t("allocation:worksheet.remainingToAllocate", {
-                  amount: formatAmount(remaining, currency),
-                })}
-        </span>
-      </div>
-
-      <div className="mt-3 divide-y">
-        {accounts.length === 0 && (
-          <p className="text-muted-foreground py-3 text-xs leading-relaxed">
-            {t("allocation:worksheet.noEligibleAccounts")}
-          </p>
-        )}
-        {accounts.map((account) => {
-          const holding = position.accountHoldings.find((item) => item.accountId === account.id);
-          const funding = fundingByAccount.get(account.id);
-          const currentAmount = amountFor(account.id);
-          const rowRemaining = Math.max(0, requested - (assigned - currentAmount));
-          // The unit price is derived from the recorded holding rather than the
-          // quote the core resolves against, so the floor gets a tolerance and
-          // never drops a unit over the last decimal. A remainder that buys
-          // nothing is still offered: the core reports such a line now, and
-          // withholding the button only forces the same amount in by hand.
-          const wholeUnitRemaining =
-            wholeSharesOnly && unitPrice
-              ? Math.floor(rowRemaining / unitPrice + 1e-9) * unitPrice
-              : rowRemaining;
-          const remainingToUse =
-            wholeUnitRemaining > AMOUNT_EPSILON ? wholeUnitRemaining : rowRemaining;
-          const currentUnits = unitPrice ? currentAmount / unitPrice : undefined;
-          return (
-            <div
-              key={account.id}
-              className="grid gap-2 py-3 first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-            >
-              <div className="min-w-0">
-                <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
-                  <span className="truncate">{account.name}</span>
-                  {impliedHolder === account.id && (
-                    <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-normal">
-                      <Icons.Check className="h-2.5 w-2.5" />
-                      {t("allocation:worksheet.holdsThisSecurity")}
-                    </span>
-                  )}
-                </p>
-                <p className="text-muted-foreground mt-0.5 text-[11px]">
-                  {holding &&
-                    t("allocation:worksheet.accountHoldingSummary", {
-                      amount: formatAmount(holding.value, currency),
-                      quantity: formatQuantity(holding.quantity),
-                    })}
-                  {holding && !isReduce && " · "}
-                  {!isReduce &&
-                    t("allocation:worksheet.accountCashSummary", {
-                      amount: formatAmount(funding?.availableCash ?? 0, currency),
-                    })}
-                </p>
-                {funding && funding.remaining < -AMOUNT_EPSILON && (
-                  <p className="mt-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                    {t("allocation:worksheet.fundingNeeded", {
-                      amount: formatAmount(-funding.remaining, currency),
-                    })}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <div className="flex items-center gap-2">
-                  {accounts.length === 1 ? (
-                    <span className="font-mono text-sm font-semibold tabular-nums">
-                      {formatAmount(requested, currency)}
-                    </span>
-                  ) : (
-                    <>
-                      <div className="border-input bg-background focus-within:ring-ring flex h-9 w-40 items-center rounded-md border px-2.5 focus-within:ring-1">
-                        <span className="text-muted-foreground mr-1.5 text-xs">{currency}</span>
-                        <input
-                          aria-label={t("allocation:worksheet.accountAmountLabel", {
-                            account: account.name,
-                          })}
-                          value={
-                            impliedHolder === account.id
-                              ? formatDecimalInput(requested, 6)
-                              : (adjustment.accountAmounts[account.id] ?? "")
-                          }
-                          onChange={(event) => onAmountChange(account.id, event.target.value)}
-                          inputMode="decimal"
-                          placeholder="0"
-                          className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
-                        />
-                      </div>
-                      {rowRemaining > AMOUNT_EPSILON && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 px-2 text-[11px]"
-                          onClick={() =>
-                            onAmountChange(account.id, formatDecimalInput(remainingToUse, 6))
-                          }
-                        >
-                          {t("allocation:worksheet.useRemaining")}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-                {currentUnits !== undefined && currentAmount > AMOUNT_EPSILON && (
-                  <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
-                    {t("allocation:worksheet.accountUnitsSummary", {
-                      quantity: formatQuantity(
-                        wholeSharesOnly ? Math.floor(currentUnits) : currentUnits,
-                      ),
-                    })}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-interface ImpactCategory {
-  categoryId: string;
-  categoryName: string;
-  color: string;
-  currentBps: number;
-  projectedBps: number;
-  targetBps: number;
-  projectedDifferenceBps: number;
-  effectiveBandBps: number;
-}
-
-function ImpactBar({
-  label,
-  categories,
-  value,
-  emphasis,
-}: {
-  label: string;
-  categories: ImpactCategory[];
-  value: (category: ImpactCategory) => number;
-  emphasis?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <span
-        className={cn(
-          "w-16 shrink-0 font-mono text-[11px]",
-          emphasis ? "text-foreground font-semibold" : "text-muted-foreground",
-        )}
-      >
-        {label}
-      </span>
-      <div className="bg-muted/35 flex h-7 min-w-0 flex-1 overflow-hidden rounded-md">
-        {categories.map((category) => {
-          const width = value(category) / 100;
-          if (width <= 0) return null;
-          return (
-            <div
-              key={category.categoryId}
-              className="flex min-w-0 items-center overflow-hidden pl-2 font-mono text-[10px] font-medium text-white/95"
-              style={{ width: `${width}%`, background: category.color }}
-              title={`${category.categoryName}: ${width.toFixed(1)}%`}
-            >
-              {width >= 14 ? `${width.toFixed(0)}%` : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 interface ReviewChangesProps {
   result: AllocationWorksheetResult | null;
   isStale: boolean;
@@ -1505,262 +1199,6 @@ function ReviewChanges({
   );
 }
 
-interface ImpactRailProps {
-  report: DriftReport;
-  result: AllocationWorksheetResult | null;
-  isStale: boolean;
-  prepared: PreparedWorksheet;
-  profile: AllocationTarget;
-  calculationError: WorksheetCalculationError | null;
-  isCalculating: boolean;
-  firstUseOpen: boolean;
-  onCalculate: () => void;
-  onReviewIssue: () => void;
-  onClassifySecurity: (lineId: string) => void;
-}
-
-function ImpactRail({
-  report,
-  result,
-  isStale,
-  prepared,
-  profile,
-  calculationError,
-  isCalculating,
-  firstUseOpen,
-  onCalculate,
-  onReviewIssue,
-  onClassifySecurity,
-}: ImpactRailProps) {
-  const { t } = useTranslation();
-  const { formatAmount } = useAmountFormatting();
-  const driftByCategory = new Map(report.rows.map((row) => [row.categoryId, row]));
-  const sourceRows =
-    result?.categories ??
-    report.rows.map((row) => ({
-      categoryId: row.categoryId,
-      categoryName: row.categoryName,
-      currentBps: row.currentBps,
-      projectedBps: row.currentBps,
-      targetBps: row.targetBps,
-      projectedDifferenceBps: row.driftBps,
-    }));
-  const visibleRows = sourceRows.filter(
-    (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
-  );
-  const colorMap = buildAllocationTargetColorMap(visibleRows);
-  const categories: ImpactCategory[] = visibleRows.map((row, index) => ({
-    ...row,
-    color: allocationTargetColorForRow(row, colorMap, index),
-    effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? profile.driftBandBps,
-  }));
-  const outsideRange = categories.filter(
-    (category) => Math.abs(category.projectedDifferenceBps) > category.effectiveBandBps,
-  );
-  const largestDifference = result?.maxDifferenceBpsAfter ?? report.maxDriftBps;
-  const totalMoved = result ? result.increaseTotal + result.reductionTotal : 0;
-
-  return (
-    <Card className="overflow-hidden lg:sticky lg:top-4">
-      <CardContent className="p-0">
-        <div
-          className={cn("p-5 transition-opacity sm:p-6", result && isStale && "opacity-50")}
-          aria-busy={isCalculating}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Eyebrow>{t("allocation:worksheet.portfolioImpact")}</Eyebrow>
-            {(isCalculating || (result && isStale)) && (
-              <span className="rounded-full bg-[#557866]/10 px-2 py-1 font-mono text-[10px] text-[#365747] dark:text-[#9fc0ae]">
-                {isCalculating
-                  ? t("allocation:worksheet.updatingPreview")
-                  : t("allocation:worksheet.previewOutOfDate")}
-              </span>
-            )}
-          </div>
-
-          <p className="mt-4 font-mono text-xl font-semibold leading-tight">
-            {t("allocation:worksheet.outsideRangeImpact", {
-              before: report.outOfBandCount,
-              after: outsideRange.length,
-            })}
-          </p>
-          <div className="text-muted-foreground mt-2 space-y-1 font-mono text-xs">
-            <p>
-              {t("allocation:worksheet.largestDifference", {
-                amount: `${(largestDifference / 100).toFixed(1)}pp`,
-              })}
-            </p>
-            {result && (
-              <p>
-                {t("allocation:worksheet.totalAdjusted", {
-                  amount: formatAmount(totalMoved, report.baseCurrency),
-                })}
-              </p>
-            )}
-          </div>
-
-          <div className="mt-5 space-y-2">
-            <ImpactBar
-              label={t("allocation:worksheet.currentLabel")}
-              categories={categories}
-              value={(category) => category.currentBps}
-            />
-            <ImpactBar
-              label={t("allocation:worksheet.projectedLabel")}
-              categories={categories}
-              value={(category) => category.projectedBps}
-              emphasis
-            />
-            <ImpactBar
-              label={t("allocation:worksheet.target")}
-              categories={categories}
-              value={(category) => category.targetBps}
-            />
-          </div>
-        </div>
-
-        <div
-          className={cn(
-            "border-t px-5 py-4 transition-opacity sm:px-6",
-            result && isStale && "opacity-55",
-          )}
-        >
-          <p className="text-muted-foreground font-mono text-[11px] uppercase tracking-[0.14em]">
-            {outsideRange.length > 0
-              ? t("allocation:worksheet.outsideRange")
-              : t("allocation:worksheet.withinRange")}
-          </p>
-          <div className="mt-2 divide-y">
-            {outsideRange.slice(0, 5).map((category) => {
-              const current = category.currentBps / 100;
-              const projected = category.projectedBps / 100;
-              const target = category.targetBps / 100;
-              const bandStart = Math.max(0, target - category.effectiveBandBps / 100);
-              const bandWidth = Math.min(100 - bandStart, category.effectiveBandBps / 50);
-              return (
-                <div key={category.categoryId} className="py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-2 text-xs font-medium">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ background: category.color }}
-                      />
-                      <span className="truncate">{category.categoryName}</span>
-                    </span>
-                    <span className="shrink-0 font-mono text-xs tabular-nums">
-                      {category.projectedDifferenceBps > 0 ? "+" : "−"}
-                      {Math.abs(category.projectedDifferenceBps / 100).toFixed(1)}pp
-                    </span>
-                  </div>
-                  <div className="relative mt-3 h-4">
-                    <div className="bg-border absolute left-0 right-0 top-1.5 h-px" />
-                    <div
-                      className="dark:bg-muted absolute top-0 h-3 rounded-sm bg-[#e9e2c9]"
-                      style={{ left: `${bandStart}%`, width: `${Math.max(2, bandWidth)}%` }}
-                    />
-                    <div
-                      className="bg-foreground absolute top-0 h-3 w-0.5"
-                      style={{ left: `${Math.min(100, target)}%` }}
-                    />
-                    <div
-                      className="border-muted-foreground bg-background absolute top-1 h-2 w-2 -translate-x-1/2 rounded-full border"
-                      style={{ left: `${Math.min(100, current)}%` }}
-                    />
-                    <div
-                      className="absolute top-1 h-2 w-2 -translate-x-1/2 rounded-full"
-                      style={{ left: `${Math.min(100, projected)}%`, background: category.color }}
-                    />
-                  </div>
-                  <p className="text-muted-foreground mt-1 font-mono text-[10px]">
-                    {current.toFixed(1)}% → {projected.toFixed(1)}% ·{" "}
-                    {t("allocation:worksheet.target")} {target.toFixed(1)}%
-                  </p>
-                </div>
-              );
-            })}
-            {outsideRange.length === 0 && (
-              <p className="text-muted-foreground py-3 text-xs leading-relaxed">
-                {t("allocation:worksheet.noOutsideRange")}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-3 border-t p-5 sm:p-6">
-          {calculationError && (
-            <div
-              role="alert"
-              className="border-destructive/30 bg-destructive/5 rounded-lg border p-3"
-            >
-              <p className="text-destructive text-xs font-semibold">{calculationError.title}</p>
-              {calculationError.description && (
-                <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-                  {calculationError.description}
-                </p>
-              )}
-            </div>
-          )}
-          {!calculationError && prepared.issue && (
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              {prepared.issue.message}
-            </p>
-          )}
-          {(prepared.issue || calculationError) && (
-            <Button
-              className="w-full"
-              disabled={isCalculating || firstUseOpen}
-              onClick={prepared.issue ? onReviewIssue : onCalculate}
-            >
-              {prepared.issue ? (
-                <Icons.AlertCircle className="mr-1.5 h-4 w-4" />
-              ) : (
-                <Icons.BarChart className="mr-1.5 h-4 w-4" />
-              )}
-              {prepared.issue
-                ? t("allocation:worksheet.reviewWorksheet")
-                : t("allocation:worksheet.retryPreview")}
-            </Button>
-          )}
-
-          {isCalculating && !prepared.issue && (
-            <p className="text-muted-foreground flex items-center text-xs">
-              <Icons.Spinner className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              {t("allocation:worksheet.updatingFromSources")}
-            </p>
-          )}
-
-          {result && !isStale && result.warnings.length > 0 && (
-            <details className="rounded-lg border border-amber-400/50 bg-amber-50/50 px-3 py-2 dark:bg-amber-950/15">
-              <summary className="cursor-pointer text-xs font-medium text-amber-950 dark:text-amber-200">
-                {t("allocation:worksheet.warningCount", { count: result.warnings.length })}
-              </summary>
-              <ul className="mt-2 space-y-2 text-xs text-amber-950/75 dark:text-amber-100/75">
-                {result.warnings.map((warning) => (
-                  <li key={warning.id}>
-                    • {warning.message}
-                    {(warning.kind === "partial_classification" ||
-                      warning.kind === "unclassified_asset") &&
-                      warning.lineId && (
-                        <Button
-                          variant="link"
-                          size="sm"
-                          className="ml-1 h-auto p-0 text-xs text-amber-900 underline dark:text-amber-200"
-                          onClick={() => onClassifySecurity(warning.lineId!)}
-                        >
-                          {t("allocation:worksheet.classifySecurity")}
-                        </Button>
-                      )}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export function AllocationWorksheetTab({
   profile,
   driftReport,
@@ -1806,10 +1244,11 @@ export function AllocationWorksheetTab({
   const [generated, setGenerated] = useState<GeneratedAdjustments | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [expandedAssetIds, setExpandedAssetIds] = useState<Set<string>>(new Set());
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [result, setResult] = useState<AllocationWorksheetResult | null>(null);
   const [isResultStale, setIsResultStale] = useState(false);
   const [calculationError, setCalculationError] = useState<WorksheetCalculationError | null>(null);
+  // Read by the list and the rail only: pointing never renders the worksheet.
+  const [highlightStore] = useState(createHighlightStore);
   const calculationVersionRef = useRef(0);
   const calculateRef = useRef<(() => Promise<void>) | null>(null);
   const autoCalculateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2001,7 +1440,6 @@ export function AllocationWorksheetTab({
     setExpandedAssetIds(new Set(Object.keys(restoredAdjustments)));
     setResult(null);
     setCalculationError(null);
-    setCategoryFilter("all");
     setView("position");
   }, [
     accountsLoading,
@@ -2152,16 +1590,6 @@ export function AllocationWorksheetTab({
     : changeAccountIds.length === 0
       ? t("allocation:worksheet.selectAccountIssue")
       : cashIssue?.message;
-
-  const categories = driftReport.rows.filter(
-    (row) => !row.isCash && row.categoryId !== "__UNKNOWN__",
-  );
-  const unresolvedByCategory = new Map(
-    (generated?.calculated.unresolved ?? []).map((item) => [item.categoryId, item.amount]),
-  );
-  const visiblePositions = positions.filter(
-    (position) => categoryFilter === "all" || position.categoryIds.includes(categoryFilter),
-  );
 
   /**
    * The account an increase lands in without the user placing it (§6): the one
@@ -2338,6 +1766,50 @@ export function AllocationWorksheetTab({
     }
   }
 
+  const amountsRows: AmountsRowModel[] = positions.map((position) => {
+    const adjustment = adjustments[position.assetId];
+    const rawChangeAmount = positionChangeAmount(adjustment, position, basis);
+    const changeAmount = Number.isFinite(rawChangeAmount) ? rawChangeAmount : 0;
+    const resolved = resultByAsset.get(position.assetId);
+    return {
+      position,
+      adjustment,
+      displayInput: adjustment
+        ? adjustment.inputValue
+        : editMode === "amount"
+          ? ""
+          : formatDecimalInput(position.currentPct, 4),
+      changeAmount,
+      isChanged:
+        adjustment !== undefined &&
+        (!Number.isFinite(rawChangeAmount) || Math.abs(rawChangeAmount) >= AMOUNT_EPSILON),
+      // The core resolves an amount into whole units when the target asks for
+      // them, so the row projects what it resolved rather than what was typed.
+      projectedValue: Math.max(0, position.value + (resolved ? resolved.amount : changeAmount)),
+      resolved,
+      quote: latestQuotes.data?.[position.assetId],
+      asset: eligibleAssets.find((item) => item.id === position.assetId),
+      isExpanded: expandedAssetIds.has(position.assetId),
+      placement:
+        Math.abs(changeAmount) >= AMOUNT_EPSILON
+          ? {
+              accounts: accountsForChange(position, changeAmount),
+              impliedAccountId: impliedAccountIdFor(position, changeAmount),
+              unitPrice: unitPriceFor(position),
+            }
+          : undefined,
+    };
+  });
+  const lineAssetIds = new Map((result?.lines ?? []).map((line) => [line.lineId, line.assetId]));
+  const flaggedAssetIds = new Set<string>(
+    (result && !isResultStale ? result.warnings : []).flatMap((warning) => {
+      const assetId = warning.lineId ? lineAssetIds.get(warning.lineId) : undefined;
+      return assetId ? [assetId] : [];
+    }),
+  );
+  if (prepared.issue?.assetId) flaggedAssetIds.add(prepared.issue.assetId);
+  const unresolvedAmounts = generated?.calculated.unresolved ?? [];
+
   function updateAdjustment(assetId: string, next: PositionAdjustment | null) {
     setAdjustments((current) => {
       const updated = { ...current };
@@ -2410,6 +1882,7 @@ export function AllocationWorksheetTab({
   function removeAddedPosition(assetId: string) {
     setAddedAssetIds((current) => current.filter((id) => id !== assetId));
     updateAdjustment(assetId, null);
+    highlightStore.getState().forgetRow(assetId);
     setExpandedAssetIds((current) => {
       const next = new Set(current);
       next.delete(assetId);
@@ -2605,442 +2078,182 @@ export function AllocationWorksheetTab({
         </CardContent>
       </Card>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_23rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
-        <Card id="worksheet-positions" className="min-w-0 overflow-hidden">
-          <CardContent className="p-0">
-            <div className="space-y-3 border-b p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="border-border bg-muted/20 flex rounded-full border p-1">
-                    {(["position", "review"] as const).map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => setView(option)}
-                        className={cn(
-                          "rounded-full px-4 py-1.5 font-mono text-xs transition-colors",
-                          view === option
-                            ? "bg-foreground text-background"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {option === "position"
-                          ? t("allocation:worksheet.byPosition")
-                          : t("allocation:worksheet.reviewChanges")}
-                      </button>
-                    ))}
-                  </div>
-                  {view === "position" && (
+      <HighlightStoreContext.Provider value={highlightStore}>
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_23rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
+          <Card id="worksheet-positions" className="min-w-0 overflow-hidden">
+            <CardContent className="p-0">
+              <div className="space-y-3 border-b p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     <div className="border-border bg-muted/20 flex rounded-full border p-1">
-                      {(["amount", "after_percentage"] as const).map((option) => (
+                      {(["position", "review"] as const).map((option) => (
                         <button
                           key={option}
                           type="button"
-                          onClick={() => switchEditMode(option)}
+                          onClick={() => setView(option)}
                           className={cn(
-                            "rounded-full px-3.5 py-1.5 font-mono text-xs transition-colors",
-                            editMode === option
+                            "rounded-full px-4 py-1.5 font-mono text-xs transition-colors",
+                            view === option
                               ? "bg-foreground text-background"
                               : "text-muted-foreground hover:text-foreground",
                           )}
                         >
-                          {option === "amount"
-                            ? t("allocation:worksheet.changeAmount")
-                            : t("allocation:worksheet.afterPercentage")}
+                          {option === "position"
+                            ? t("allocation:worksheet.byPosition")
+                            : t("allocation:worksheet.reviewChanges")}
                         </button>
                       ))}
                     </div>
-                  )}
+                    {view === "position" && (
+                      <div className="border-border bg-muted/20 flex rounded-full border p-1">
+                        {(["amount", "after_percentage"] as const).map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => switchEditMode(option)}
+                            className={cn(
+                              "rounded-full px-3.5 py-1.5 font-mono text-xs transition-colors",
+                              editMode === option
+                                ? "bg-foreground text-background"
+                                : "text-muted-foreground hover:text-foreground",
+                            )}
+                          >
+                            {option === "amount"
+                              ? t("allocation:worksheet.changeAmount")
+                              : t("allocation:worksheet.afterPercentage")}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <AddPositionButton
+                    assets={eligibleAssets}
+                    excludedAssetIds={new Set(positions.map((position) => position.assetId))}
+                    onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
+                  />
                 </div>
-                <AddPositionButton
-                  assets={eligibleAssets}
-                  excludedAssetIds={new Set(positions.map((position) => position.assetId))}
-                  onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
-                />
               </div>
 
-              {view === "position" && categories.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-muted-foreground mr-1 font-mono text-[10px] uppercase tracking-[0.14em]">
-                    {t("allocation:worksheet.allocationFocus")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setCategoryFilter("all")}
-                    className={cn(
-                      "rounded-full border px-3 py-1 font-mono text-[11px]",
-                      categoryFilter === "all"
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-border text-muted-foreground",
-                    )}
-                  >
-                    {t("allocation:worksheet.allCategories")}
-                  </button>
-                  {categories.map((category) => {
-                    const unresolved = unresolvedByCategory.get(category.categoryId);
-                    return (
-                      <button
-                        key={category.categoryId}
-                        type="button"
-                        onClick={() => setCategoryFilter(category.categoryId)}
-                        className={cn(
-                          "rounded-full border px-3 py-1 font-mono text-[11px]",
-                          categoryFilter === category.categoryId
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-border text-muted-foreground",
-                        )}
-                      >
-                        {category.categoryName}
-                        {unresolved !== undefined && (
-                          <span
-                            className="ml-1.5 text-amber-700 dark:text-amber-300"
-                            title={t("allocation:worksheet.unresolvedTitle")}
-                          >
-                            {formatSignedAmount(unresolved, currency, formatAmount)}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Visible in both views: what the calculation could not place is
+              {/* Visible in both views: what the calculation could not place is
                 exactly what the review is missing, and hiding it there leaves
                 the leftover cash unexplained. */}
-            {generated && (
-              <CalculatedSummary
-                calculated={generated.calculated}
-                currency={currency}
-                accountNames={accountNames}
-              />
-            )}
+              {generated && (
+                <CalculatedSummary
+                  calculated={generated.calculated}
+                  currency={currency}
+                  accountNames={accountNames}
+                />
+              )}
 
-            {view === "position" ? (
-              <div>
-                <div className="text-muted-foreground bg-muted/15 hidden grid-cols-[minmax(12rem,1.6fr)_7rem_4rem_8.5rem_8.5rem_2rem] gap-3 border-b px-5 py-3 font-mono text-[10px] uppercase tracking-[0.14em] xl:grid">
-                  <span>{t("allocation:worksheet.position")}</span>
-                  <span className="text-right">{t("allocation:worksheet.currentValue")}</span>
-                  <span className="text-right">{t("allocation:worksheet.now")}</span>
-                  <span className="text-right">
-                    {editMode === "amount"
-                      ? t("allocation:worksheet.changeAmount")
-                      : t("allocation:worksheet.projectedPercent")}
-                  </span>
-                  <span className="text-right">{t("allocation:worksheet.projectedChange")}</span>
-                  <span />
+              {view === "position" ? (
+                <div>
+                  <div className="text-muted-foreground bg-muted/15 hidden grid-cols-[minmax(12rem,1.6fr)_7rem_4rem_8.5rem_8.5rem_2rem] gap-3 border-b px-5 py-3 font-mono text-[10px] uppercase tracking-[0.14em] xl:grid">
+                    <span>{t("allocation:worksheet.position")}</span>
+                    <span className="text-right">{t("allocation:worksheet.currentValue")}</span>
+                    <span className="text-right">{t("allocation:worksheet.now")}</span>
+                    <span className="text-right">
+                      {editMode === "amount"
+                        ? t("allocation:worksheet.changeAmount")
+                        : t("allocation:worksheet.projectedPercent")}
+                    </span>
+                    <span className="text-right">{t("allocation:worksheet.projectedChange")}</span>
+                    <span />
+                  </div>
+
+                  {positions.length === 0 ? (
+                    <div className="px-5 py-14 text-center">
+                      <p className="text-sm font-medium">
+                        {t("allocation:worksheet.noPositionsTitle")}
+                      </p>
+                      <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
+                        {t("allocation:worksheet.noPositionsDescription")}
+                      </p>
+                    </div>
+                  ) : (
+                    <AmountsList
+                      rows={amountsRows}
+                      flaggedAssetIds={flaggedAssetIds}
+                      unresolvedCategoryIds={
+                        new Set(unresolvedAmounts.map((item) => item.categoryId))
+                      }
+                      editMode={editMode}
+                      currency={currency}
+                      allowSells={profile.allowSells}
+                      wholeSharesOnly={profile.wholeSharesOnly}
+                      fundingByAccount={fundingByAccount}
+                      isPriceSyncing={syncPrice.isPending}
+                      quotesFetched={latestQuotes.isFetched}
+                      actions={{
+                        onInputChange: updatePositionInput,
+                        onReduceToZero: reducePositionToZero,
+                        onRemove: removeAddedPosition,
+                        onToggleExpanded: (assetId) =>
+                          setExpandedAssetIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(assetId)) next.delete(assetId);
+                            else next.add(assetId);
+                            return next;
+                          }),
+                        onAccountAmountChange: updateAccountAmount,
+                        onPriceAction: (assetId, asset) => {
+                          if (asset?.quoteMode === "MARKET") syncPrice.mutate([asset.id]);
+                          else navigate(`/holdings/${assetId}`);
+                        },
+                      }}
+                    />
+                  )}
                 </div>
+              ) : (
+                <ReviewChanges
+                  result={result}
+                  isStale={isResultStale}
+                  isCalculating={isPreviewUpdating}
+                  issue={prepared.issue}
+                  calculationError={calculationError}
+                  accountNames={accountNames}
+                  currency={currency}
+                  onReviewIssue={reviewPreparedIssue}
+                />
+              )}
 
-                {visiblePositions.length === 0 ? (
-                  <div className="px-5 py-14 text-center">
-                    <p className="text-sm font-medium">
-                      {t("allocation:worksheet.noPositionsTitle")}
-                    </p>
-                    <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
-                      {t("allocation:worksheet.noPositionsDescription")}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {visiblePositions.map((position) => {
-                      const adjustment = adjustments[position.assetId];
-                      const resolvedChangeAmount = positionChangeAmount(
-                        adjustment,
-                        position,
-                        basis,
-                      );
-                      const changeAmount = Number.isFinite(resolvedChangeAmount)
-                        ? resolvedChangeAmount
-                        : 0;
-                      const resolved = resultByAsset.get(position.assetId);
-                      // The core resolves an amount into whole units when the
-                      // target asks for them, so the row projects what it
-                      // resolved rather than what was typed.
-                      const projectedValue = Math.max(
-                        0,
-                        position.value + (resolved ? resolved.amount : changeAmount),
-                      );
-                      const isExpanded = expandedAssetIds.has(position.assetId);
-                      const quote = latestQuotes.data?.[position.assetId];
-                      const asset = eligibleAssets.find((item) => item.id === position.assetId);
-                      const displayInput = adjustment
-                        ? adjustment.inputValue
-                        : editMode === "amount"
-                          ? ""
-                          : formatDecimalInput(position.currentPct, 4);
-                      return (
-                        <div
-                          id={`worksheet-position-${position.assetId}`}
-                          key={position.assetId}
-                          className="px-4 py-4 sm:px-5"
-                        >
-                          <div className="grid gap-3 xl:grid-cols-[minmax(12rem,1.6fr)_7rem_4rem_8.5rem_8.5rem_2rem] xl:items-center">
-                            <div className="min-w-0">
-                              <div className="flex min-w-0 items-baseline gap-2">
-                                <span className="shrink-0 font-mono text-sm font-semibold">
-                                  {position.symbol}
-                                </span>
-                                <span className="text-muted-foreground truncate text-xs">
-                                  {position.name}
-                                </span>
-                              </div>
-                              <p className="text-muted-foreground mt-1 truncate text-[11px]">
-                                {position.categoryNames.length > 0
-                                  ? position.categoryNames.join(" · ")
-                                  : t("allocation:worksheet.unclassified")}
-                                {position.accountHoldings.length > 0 &&
-                                  ` · ${t("allocation:worksheet.accountCount", { count: position.accountHoldings.length })}`}
-                              </p>
-                              {resolved && (
-                                <p className="text-muted-foreground mt-1 font-mono text-[10px]">
-                                  {t("allocation:worksheet.resolvedPositionSummary", {
-                                    value: formatAmount(projectedValue, currency),
-                                    quantity: `${resolved.quantity > 0 ? "+" : "−"}${formatDecimalInput(Math.abs(resolved.quantity), 6)}`,
-                                  })}
-                                </p>
-                              )}
-                              {resolved &&
-                                profile.wholeSharesOnly &&
-                                Math.abs(resolved.amount - changeAmount) >= AMOUNT_EPSILON && (
-                                  <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-200">
-                                    {t("allocation:worksheet.roundedToWholeShares", {
-                                      amount: formatAmount(Math.abs(resolved.amount), currency),
-                                      requested: formatAmount(Math.abs(changeAmount), currency),
-                                    })}
-                                  </p>
-                                )}
-                            </div>
-
-                            <div className="flex items-center justify-between xl:block xl:text-right">
-                              <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-                                {t("allocation:worksheet.currentValue")}
-                              </span>
-                              <span className="font-mono text-xs tabular-nums">
-                                {formatAmount(position.value, currency)}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between xl:block xl:text-right">
-                              <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-                                {t("allocation:worksheet.now")}
-                              </span>
-                              <span className="font-mono text-xs tabular-nums">
-                                {position.currentPct.toFixed(1)}%
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 xl:justify-end">
-                              <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-                                {editMode === "amount"
-                                  ? t("allocation:worksheet.changeAmount")
-                                  : t("allocation:worksheet.projectedPercent")}
-                              </span>
-                              <div className="flex w-44 items-center gap-1 xl:w-full">
-                                <div className="border-input bg-background flex h-9 min-w-0 flex-1 items-center rounded-md border px-2.5 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
-                                  <span className="text-muted-foreground mr-1.5 text-xs">
-                                    {editMode === "amount" ? currency : ""}
-                                  </span>
-                                  <input
-                                    aria-label={t("allocation:worksheet.positionInputLabel", {
-                                      symbol: position.symbol,
-                                    })}
-                                    value={displayInput}
-                                    onChange={(event) =>
-                                      updatePositionInput(position, event.target.value)
-                                    }
-                                    onKeyDown={(event) => {
-                                      if (
-                                        editMode !== "after_percentage" ||
-                                        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
-                                      ) {
-                                        return;
-                                      }
-                                      event.preventDefault();
-                                      const current = decimalInputOrZero(displayInput);
-                                      const step = event.shiftKey ? 1 : 0.5;
-                                      const next = Math.min(
-                                        100,
-                                        Math.max(
-                                          0,
-                                          current + (event.key === "ArrowUp" ? step : -step),
-                                        ),
-                                      );
-                                      updatePositionInput(position, formatDecimalInput(next, 4));
-                                    }}
-                                    inputMode="decimal"
-                                    placeholder={editMode === "amount" ? "±0" : undefined}
-                                    className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
-                                  />
-                                  {editMode === "after_percentage" && (
-                                    <span className="text-muted-foreground ml-1 text-xs">%</span>
-                                  )}
-                                </div>
-                                {position.value > AMOUNT_EPSILON && profile.allowSells && (
-                                  <TooltipProvider delayDuration={150}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8 shrink-0"
-                                          disabled={projectedValue <= AMOUNT_EPSILON}
-                                          aria-label={t(
-                                            "allocation:worksheet.reducePositionToZero",
-                                          )}
-                                          onClick={() => reducePositionToZero(position)}
-                                        >
-                                          <Icons.MinusCircle className="h-4 w-4" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        {t("allocation:worksheet.reducePositionToZero")}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between xl:block xl:text-right">
-                              <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-                                {t("allocation:worksheet.projectedChange")}
-                              </span>
-                              <span className="font-mono text-xs font-medium tabular-nums">
-                                {formatSignedAmount(changeAmount, currency, formatAmount)}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-end gap-1">
-                              {Math.abs(changeAmount) >= AMOUNT_EPSILON && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  aria-label={t("allocation:worksheet.toggleAccountAllocation")}
-                                  onClick={() =>
-                                    setExpandedAssetIds((current) => {
-                                      const next = new Set(current);
-                                      if (next.has(position.assetId)) next.delete(position.assetId);
-                                      else next.add(position.assetId);
-                                      return next;
-                                    })
-                                  }
-                                >
-                                  <Icons.ChevronDown
-                                    className={cn(
-                                      "h-4 w-4 transition-transform",
-                                      isExpanded && "rotate-180",
-                                    )}
-                                  />
-                                </Button>
-                              )}
-                              {position.isAdded && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  aria-label={t("allocation:worksheet.removePosition")}
-                                  onClick={() => removeAddedPosition(position.assetId)}
-                                >
-                                  <Icons.X className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {quote?.quote ? (
-                            <p className="text-muted-foreground mt-2 text-[10px]">
-                              {t("allocation:worksheet.priceSourceInline", {
-                                price: formatAmount(quote.quote.close, quote.quote.currency),
-                                date: quote.quoteDate ?? quote.quote.timestamp,
-                              })}
-                              {quote.isStale ? ` · ${t("allocation:worksheet.dated")}` : ""}
-                            </p>
-                          ) : position.isAdded && latestQuotes.isFetched ? (
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <span className="text-destructive text-xs">
-                                {t("allocation:worksheet.noQuoteShort")}
-                              </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs"
-                                disabled={syncPrice.isPending}
-                                onClick={() => {
-                                  if (asset?.quoteMode === "MARKET") syncPrice.mutate([asset.id]);
-                                  else navigate(`/holdings/${position.assetId}`);
-                                }}
-                              >
-                                {asset?.quoteMode === "MARKET"
-                                  ? t("allocation:worksheet.refreshPrice")
-                                  : t("allocation:worksheet.addManualPrice")}
-                              </Button>
-                            </div>
-                          ) : null}
-
-                          {adjustment && isExpanded && Math.abs(changeAmount) >= AMOUNT_EPSILON && (
-                            <AccountAllocation
-                              position={position}
-                              changeAmount={changeAmount}
-                              accounts={accountsForChange(position, changeAmount)}
-                              adjustment={adjustment}
-                              currency={currency}
-                              fundingByAccount={fundingByAccount}
-                              unitPrice={unitPriceFor(position)}
-                              wholeSharesOnly={profile.wholeSharesOnly}
-                              impliedAccountId={impliedAccountIdFor(position, changeAmount)}
-                              onAmountChange={(accountId, value) =>
-                                updateAccountAmount(position.assetId, accountId, value)
-                              }
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div className="border-t px-4 py-3 sm:px-5">
+                <details>
+                  <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium">
+                    {t("allocation:worksheet.limitationsTitle")}
+                  </summary>
+                  <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+                    {t("allocation:worksheet.fullDisclosure")}
+                  </p>
+                </details>
               </div>
-            ) : (
-              <ReviewChanges
-                result={result}
-                isStale={isResultStale}
-                isCalculating={isPreviewUpdating}
-                issue={prepared.issue}
-                calculationError={calculationError}
-                accountNames={accountNames}
-                currency={currency}
-                onReviewIssue={reviewPreparedIssue}
-              />
-            )}
+            </CardContent>
+          </Card>
 
-            <div className="border-t px-4 py-3 sm:px-5">
-              <details>
-                <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium">
-                  {t("allocation:worksheet.limitationsTitle")}
-                </summary>
-                <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
-                  {t("allocation:worksheet.fullDisclosure")}
-                </p>
-              </details>
-            </div>
-          </CardContent>
-        </Card>
-
-        <ImpactRail
-          report={driftReport}
-          result={result}
-          isStale={isResultStale}
-          prepared={prepared}
-          profile={profile}
-          calculationError={calculationError}
-          isCalculating={isPreviewUpdating}
-          firstUseOpen={firstUseOpen}
-          onCalculate={() => void calculate()}
-          onReviewIssue={reviewPreparedIssue}
-          onClassifySecurity={(lineId) => {
-            const assetId = result?.lines.find((line) => line.lineId === lineId)?.assetId;
-            if (assetId) navigate(`/holdings/${assetId}`);
-          }}
-        />
-      </div>
+          <ImpactRail
+            report={driftReport}
+            result={result}
+            isStale={isResultStale}
+            profile={profile}
+            rows={amountsRows.map((row) => ({
+              assetId: row.position.assetId,
+              symbol: row.position.symbol,
+              shares: row.position.categoryExposures,
+              change: row.changeAmount,
+            }))}
+            unresolved={unresolvedAmounts}
+            issueMessage={prepared.issue?.message}
+            calculationError={calculationError}
+            isCalculating={isPreviewUpdating}
+            firstUseOpen={firstUseOpen}
+            onCalculate={() => void calculate()}
+            onReviewIssue={reviewPreparedIssue}
+            onClassifySecurity={(lineId) => {
+              const assetId = result?.lines.find((line) => line.lineId === lineId)?.assetId;
+              if (assetId) navigate(`/holdings/${assetId}`);
+            }}
+          />
+        </div>
+      </HighlightStoreContext.Provider>
     </div>
   );
 }
