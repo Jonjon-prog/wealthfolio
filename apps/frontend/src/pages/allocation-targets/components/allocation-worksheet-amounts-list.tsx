@@ -10,7 +10,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Account, Asset, LatestQuoteSnapshot, WorksheetAccountFunding } from "@/lib/types";
+import type { Account, Asset, WorksheetAccountFunding } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { AccountAllocation } from "./allocation-worksheet-account-allocation";
@@ -20,6 +20,7 @@ import {
   partitionAmountsRows,
   rowEmphasis,
   type HighlightTarget,
+  type RowStatus,
 } from "./allocation-worksheet-amounts";
 import { useHighlight, useHighlightActions } from "./allocation-worksheet-highlight";
 import {
@@ -27,6 +28,7 @@ import {
   decimalInputOrZero,
   formatDecimalInput,
   formatSignedAmount,
+  UNCLASSIFIED_CATEGORY_ID,
   type PositionAdjustment,
   type WorksheetEditMode,
   type WorksheetPosition,
@@ -42,8 +44,9 @@ export interface AmountsRowModel {
   /** A change is entered, including one that cannot be read yet. */
   isChanged: boolean;
   projectedValue: number;
-  resolved: { amount: number; quantity: number } | undefined;
-  quote: LatestQuoteSnapshot | undefined;
+  /** The weight after the change, against the planning total. */
+  projectedPct: number;
+  status: RowStatus | null;
   asset: Asset | undefined;
   isExpanded: boolean;
   /** Where the change may be placed, while there is one. */
@@ -67,15 +70,21 @@ interface AmountsListProps {
   flaggedAssetIds: ReadonlySet<string>;
   /** Classes the calculation left an amount unresolved in. */
   unresolvedCategoryIds: ReadonlySet<string>;
+  /** The colour each class has in Portfolio impact. */
+  classColors: ReadonlyMap<string, string>;
+  accountNames: ReadonlyMap<string, string>;
   editMode: WorksheetEditMode;
   currency: string;
   allowSells: boolean;
   wholeSharesOnly: boolean;
   fundingByAccount: Map<string, WorksheetAccountFunding>;
   isPriceSyncing: boolean;
-  quotesFetched: boolean;
   actions: AmountsRowActions;
 }
+
+/** The grid shared by the header and every row: Position · Weight · Change · Status. */
+const AMOUNTS_GRID =
+  "grid grid-cols-[minmax(0,1fr)_9.5rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_10rem_9rem] sm:items-center";
 
 /**
  * The list of securities, opened short: rows with nothing to decide collapse
@@ -89,6 +98,7 @@ export function AmountsList({
   actions,
   ...shared
 }: AmountsListProps) {
+  const { t } = useTranslation();
   const [touchedAssetIds, setTouchedAssetIds] = useState<ReadonlySet<string>>(() => new Set());
   const [showCollapsed, setShowCollapsed] = useState(false);
   const { reset } = useHighlightActions();
@@ -152,7 +162,26 @@ export function AmountsList({
     );
     if (showCollapsed) items.push(...collapsed.map(renderRow));
   }
-  return <div className="divide-y">{items}</div>;
+  return (
+    <div>
+      <div
+        className={cn(
+          AMOUNTS_GRID,
+          "text-muted-foreground bg-muted/15 hidden border-b px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] sm:grid",
+        )}
+      >
+        <span>{t("allocation:worksheet.position")}</span>
+        <span className="text-right">{t("allocation:worksheet.weight")}</span>
+        <span>
+          {shared.editMode === "amount"
+            ? t("allocation:worksheet.changeAmount")
+            : t("allocation:worksheet.afterPercentage")}
+        </span>
+        <span>{t("allocation:worksheet.status")}</span>
+      </div>
+      <div className="divide-y">{items}</div>
+    </div>
+  );
 }
 
 interface CollapsedLineProps {
@@ -227,13 +256,14 @@ interface AmountRowProps extends Omit<
 function AmountRow({
   model,
   actions,
+  classColors,
+  accountNames,
   editMode,
   currency,
   allowSells,
   wholeSharesOnly,
   fundingByAccount,
   isPriceSyncing,
-  quotesFetched,
 }: AmountRowProps) {
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
@@ -242,9 +272,10 @@ function AmountRow({
     adjustment,
     displayInput,
     changeAmount,
+    isChanged,
     projectedValue,
-    resolved,
-    quote,
+    projectedPct,
+    status,
     asset,
     isExpanded,
     placement,
@@ -260,6 +291,16 @@ function AmountRow({
   );
   const { point, unpoint, select, toggleSelected } = useHighlightActions();
   const target: HighlightTarget = { kind: "row", assetId: position.assetId };
+  // Said in words as well as colour: "US equity 60%, Bonds 40%".
+  const classNames = position.categoryExposures.map((exposure) =>
+    exposure.categoryId === UNCLASSIFIED_CATEGORY_ID
+      ? t("allocation:worksheet.unclassified")
+      : exposure.categoryName,
+  );
+  const classesText = position.categoryExposures
+    .map((exposure, index) => `${classNames[index]} ${Math.round(exposure.weightBps / 100)}%`)
+    .join(", ");
+  const classesId = `worksheet-classes-${position.assetId}`;
 
   return (
     <div
@@ -279,79 +320,59 @@ function AmountRow({
         toggleSelected(target);
       }}
       className={cn(
-        "cursor-pointer px-4 py-4 transition-[opacity,background-color] sm:px-5",
+        "cursor-pointer px-4 py-2.5 transition-[opacity,background-color] sm:px-5",
         (emphasis === "active" || emphasis === "lit") && "bg-muted/60",
         emphasis === "dim" && "opacity-40",
         isSelected && "ring-foreground ring-[1.5px] ring-inset",
       )}
     >
-      <div className="grid gap-3 xl:grid-cols-[minmax(12rem,1.6fr)_7rem_4rem_8.5rem_8.5rem_2rem] xl:items-center">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 font-mono text-sm font-semibold">{position.symbol}</span>
-            {shareBps !== null && (
-              <span className="border-foreground shrink-0 rounded border px-1 font-mono text-[11px]">
-                {Math.round(shareBps / 100)}%
-              </span>
+      <div className={AMOUNTS_GRID}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex w-7 shrink-0 gap-[3px]" title={classesText}>
+            {position.categoryExposures.map((exposure) =>
+              exposure.categoryId === UNCLASSIFIED_CATEGORY_ID ? (
+                <span
+                  key={exposure.categoryId}
+                  className="border-muted-foreground h-[7px] w-[7px] rounded-full border border-dashed"
+                />
+              ) : (
+                <span
+                  key={exposure.categoryId}
+                  className="bg-muted-foreground h-[7px] w-[7px] rounded-full"
+                  style={{ background: classColors.get(exposure.categoryId) }}
+                />
+              ),
             )}
-            <span className="text-muted-foreground truncate text-xs">{position.name}</span>
-          </div>
-          <p className="text-muted-foreground mt-1 truncate text-[11px]">
-            {position.categoryNames.length > 0
-              ? position.categoryNames.join(" · ")
-              : t("allocation:worksheet.unclassified")}
-            {position.accountHoldings.length > 0 &&
-              ` · ${t("allocation:worksheet.accountCount", { count: position.accountHoldings.length })}`}
-          </p>
-          {resolved && (
-            <p className="text-muted-foreground mt-1 font-mono text-[10px]">
-              {t("allocation:worksheet.resolvedPositionSummary", {
-                value: formatAmount(projectedValue, currency),
-                quantity: `${resolved.quantity > 0 ? "+" : "−"}${formatDecimalInput(Math.abs(resolved.quantity), 6)}`,
-              })}
-            </p>
+          </span>
+          <span className="shrink-0 font-mono text-sm font-semibold">{position.symbol}</span>
+          {shareBps !== null && (
+            <span className="border-foreground shrink-0 rounded border px-1 font-mono text-[11px]">
+              {Math.round(shareBps / 100)}%
+            </span>
           )}
-          {resolved &&
-            wholeSharesOnly &&
-            Math.abs(resolved.amount - changeAmount) >= AMOUNT_EPSILON && (
-              <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-200">
-                {t("allocation:worksheet.roundedToWholeShares", {
-                  amount: formatAmount(Math.abs(resolved.amount), currency),
-                  requested: formatAmount(Math.abs(changeAmount), currency),
-                })}
-              </p>
-            )}
+          <span className="text-muted-foreground truncate text-xs">{position.name}</span>
+          <span id={classesId} className="sr-only">
+            {classesText}
+          </span>
         </div>
 
-        <div className="flex items-center justify-between xl:block xl:text-right">
-          <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-            {t("allocation:worksheet.currentValue")}
-          </span>
-          <span className="font-mono text-xs tabular-nums">
-            {formatAmount(position.value, currency)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between xl:block xl:text-right">
-          <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-            {t("allocation:worksheet.now")}
-          </span>
-          <span className="font-mono text-xs tabular-nums">{position.currentPct.toFixed(1)}%</span>
-        </div>
-        <div className="flex items-center justify-between gap-3 xl:justify-end">
-          <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-            {editMode === "amount"
-              ? t("allocation:worksheet.changeAmount")
-              : t("allocation:worksheet.projectedPercent")}
-          </span>
-          <div className="flex w-44 items-center gap-1 xl:w-full">
-            <div className="border-input bg-background flex h-9 min-w-0 flex-1 items-center rounded-md border px-2.5 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
-              <span className="text-muted-foreground mr-1.5 text-xs">
-                {editMode === "amount" ? currency : ""}
-              </span>
+        <span className="text-muted-foreground order-3 font-mono text-[11px] tabular-nums sm:order-none sm:text-right">
+          {isChanged
+            ? `${position.currentPct.toFixed(1)} → ${projectedPct.toFixed(1)}%`
+            : `${position.currentPct.toFixed(1)}%`}
+        </span>
+
+        <div className="min-w-0">
+          <div className="flex items-center gap-1">
+            <div className="border-input bg-background flex h-8 min-w-0 flex-1 items-center rounded-md border px-2 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
+              {editMode === "amount" && (
+                <span className="text-muted-foreground mr-1.5 text-[11px]">{currency}</span>
+              )}
               <input
                 aria-label={t("allocation:worksheet.positionInputLabel", {
                   symbol: position.symbol,
                 })}
+                aria-describedby={classesId}
                 value={displayInput}
                 onChange={(event) => actions.onInputChange(position, event.target.value)}
                 // A tap on the amount field selects the row too, so its classes
@@ -385,88 +406,67 @@ function AmountRow({
                 <span className="text-muted-foreground ml-1 text-xs">%</span>
               )}
             </div>
-            {position.value > AMOUNT_EPSILON && allowSells && (
-              <TooltipProvider delayDuration={150}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      disabled={projectedValue <= AMOUNT_EPSILON}
-                      aria-label={t("allocation:worksheet.reducePositionToZero")}
-                      onClick={() => actions.onReduceToZero(position)}
-                    >
-                      <Icons.MinusCircle className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{t("allocation:worksheet.reducePositionToZero")}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+            {position.isAdded ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                aria-label={t("allocation:worksheet.removePosition")}
+                onClick={() => actions.onRemove(position.assetId)}
+              >
+                <Icons.X className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              position.value > AMOUNT_EPSILON &&
+              allowSells && (
+                <TooltipProvider delayDuration={150}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        disabled={projectedValue <= AMOUNT_EPSILON}
+                        aria-label={t("allocation:worksheet.reducePositionToZero")}
+                        onClick={() => actions.onReduceToZero(position)}
+                      >
+                        <Icons.MinusCircle className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t("allocation:worksheet.reducePositionToZero")}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )
             )}
           </div>
-        </div>
-        <div className="flex items-center justify-between xl:block xl:text-right">
-          <span className="text-muted-foreground text-[10px] uppercase xl:hidden">
-            {t("allocation:worksheet.projectedChange")}
-          </span>
-          <span className="font-mono text-xs font-medium tabular-nums">
-            {formatSignedAmount(changeAmount, currency, formatAmount)}
-          </span>
-        </div>
-        <div className="flex items-center justify-end gap-1">
-          {Math.abs(changeAmount) >= AMOUNT_EPSILON && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label={t("allocation:worksheet.toggleAccountAllocation")}
-              onClick={() => actions.onToggleExpanded(position.assetId)}
-            >
-              <Icons.ChevronDown
-                className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")}
-              />
-            </Button>
+          {/* A final percentage is typed; the amount it comes to stays in view. */}
+          {editMode === "after_percentage" && isChanged && (
+            <p className="text-muted-foreground mt-0.5 text-right font-mono text-[10px] tabular-nums">
+              ≈ {formatSignedAmount(changeAmount, currency, formatAmount)}
+            </p>
           )}
-          {position.isAdded && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label={t("allocation:worksheet.removePosition")}
-              onClick={() => actions.onRemove(position.assetId)}
-            >
-              <Icons.X className="h-4 w-4" />
-            </Button>
-          )}
+        </div>
+
+        <div className="order-4 min-w-0 text-xs sm:order-none">
+          <RowStatusCell
+            status={status}
+            accountNames={accountNames}
+            currency={currency}
+            isExpanded={isExpanded}
+            onToggleExpanded={() => actions.onToggleExpanded(position.assetId)}
+            onPriceAction={() => actions.onPriceAction(position.assetId, asset)}
+            priceActionLabel={
+              asset?.quoteMode === "MARKET"
+                ? t("allocation:worksheet.refreshPrice")
+                : t("allocation:worksheet.addManualPrice")
+            }
+            isPriceSyncing={isPriceSyncing}
+          />
         </div>
       </div>
-
-      {quote?.quote ? (
-        <p className="text-muted-foreground mt-2 text-[10px]">
-          {t("allocation:worksheet.priceSourceInline", {
-            price: formatAmount(quote.quote.close, quote.quote.currency),
-            date: quote.quoteDate ?? quote.quote.timestamp,
-          })}
-          {quote.isStale ? ` · ${t("allocation:worksheet.dated")}` : ""}
-        </p>
-      ) : position.isAdded && quotesFetched ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="text-destructive text-xs">{t("allocation:worksheet.noQuoteShort")}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2 text-xs"
-            disabled={isPriceSyncing}
-            onClick={() => actions.onPriceAction(position.assetId, asset)}
-          >
-            {asset?.quoteMode === "MARKET"
-              ? t("allocation:worksheet.refreshPrice")
-              : t("allocation:worksheet.addManualPrice")}
-          </Button>
-        </div>
-      ) : null}
 
       {adjustment && isExpanded && placement && (
         <AccountAllocation
@@ -486,4 +486,104 @@ function AmountRow({
       )}
     </div>
   );
+}
+
+interface RowStatusCellProps {
+  status: RowStatus | null;
+  accountNames: ReadonlyMap<string, string>;
+  currency: string;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+  onPriceAction: () => void;
+  priceActionLabel: string;
+  isPriceSyncing: boolean;
+}
+
+function RowStatusCell({
+  status,
+  accountNames,
+  currency,
+  isExpanded,
+  onToggleExpanded,
+  onPriceAction,
+  priceActionLabel,
+  isPriceSyncing,
+}: RowStatusCellProps) {
+  const { t } = useTranslation();
+  const { formatAmount } = useAmountFormatting();
+  if (!status) return null;
+
+  const warning = "text-amber-800 dark:text-amber-200";
+  const linkClass = "max-w-full truncate text-left underline-offset-4 hover:underline";
+  switch (status.kind) {
+    case "needs_account":
+      // The account allocation opens from here until Placement has its own panel.
+      return (
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={onToggleExpanded}
+          className={cn(linkClass, "font-medium", warning)}
+        >
+          {t("allocation:worksheet.needsAccount")}
+        </button>
+      );
+    case "check_amount":
+      return (
+        <span className={cn("block truncate", warning)} title={status.message}>
+          {t("allocation:worksheet.checkAmount")}
+        </span>
+      );
+    case "price_required":
+      return (
+        <button
+          type="button"
+          title={priceActionLabel}
+          disabled={isPriceSyncing}
+          onClick={onPriceAction}
+          className={cn(linkClass, "text-destructive")}
+        >
+          {t("allocation:worksheet.noQuoteShort")}
+        </button>
+      );
+    case "warnings":
+      return (
+        <span className={cn("block truncate", warning)} title={status.messages.join("\n")}>
+          {t("allocation:worksheet.lineWarningCount", { count: status.messages.length })}
+        </span>
+      );
+    case "rounded":
+      return (
+        <span className={cn("block truncate", warning)}>
+          {t("allocation:worksheet.roundedTo", {
+            amount: formatSignedAmount(status.amount, currency, formatAmount),
+          })}
+        </span>
+      );
+    case "stale_price":
+      return (
+        <span className={cn("block truncate", warning)}>
+          {t("allocation:worksheet.priceFrom", { date: status.date })}
+        </span>
+      );
+    case "not_eligible":
+      return (
+        <span className="text-muted-foreground block truncate">
+          {t("allocation:worksheet.notEligible")}
+        </span>
+      );
+    case "placed":
+      return (
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={onToggleExpanded}
+          className={cn(linkClass, "text-muted-foreground")}
+        >
+          {status.accountIds.length === 1
+            ? (accountNames.get(status.accountIds[0]) ?? t("allocation:worksheet.unknownAccount"))
+            : t("allocation:worksheet.accountCount", { count: status.accountIds.length })}
+        </button>
+      );
+  }
 }

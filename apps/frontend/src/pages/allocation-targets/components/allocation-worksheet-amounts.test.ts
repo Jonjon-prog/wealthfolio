@@ -8,9 +8,11 @@ import {
   partitionAmountsRows,
   rowEmphasis,
   rowStaysOpen,
+  rowStatus,
   sameTarget,
   type HighlightTarget,
   type OpenRowFacts,
+  type RowStatusFacts,
 } from "./allocation-worksheet-amounts";
 import { createHighlightStore } from "./allocation-worksheet-highlight";
 
@@ -104,6 +106,61 @@ describe("Amounts highlight store", () => {
     store.getState().point(row("vt"));
     store.getState().forgetRow("vt");
     expect(store.getState()).toMatchObject({ pointed: null, selected: null });
+  });
+});
+
+describe("Amounts row status", () => {
+  const quiet: RowStatusFacts = {
+    needsPrice: false,
+    warnings: [],
+    isExcluded: false,
+    placedAccountIds: [],
+  };
+
+  it("states nothing for a row with nothing to say", () => {
+    expect(rowStatus(quiet)).toBeNull();
+  });
+
+  it("puts what blocks the worksheet before anything the preview says", () => {
+    const facts: RowStatusFacts = {
+      ...quiet,
+      needsPrice: true,
+      warnings: ["Dated quote"],
+      isExcluded: true,
+      placedAccountIds: ["acc-1"],
+    };
+    expect(
+      rowStatus({ ...facts, issue: { kind: "allocation", message: "Allocate the full change" } }),
+    ).toEqual({ kind: "needs_account" });
+    expect(
+      rowStatus({ ...facts, issue: { kind: "position", message: "Enter a valid change" } }),
+    ).toEqual({ kind: "check_amount", message: "Enter a valid change" });
+    expect(rowStatus(facts)).toEqual({ kind: "price_required" });
+  });
+
+  it("then the preview's warnings, rounding and dated prices, in that order", () => {
+    expect(rowStatus({ ...quiet, warnings: ["a", "b"], roundedAmount: 1180 })).toEqual({
+      kind: "warnings",
+      messages: ["a", "b"],
+    });
+    expect(rowStatus({ ...quiet, roundedAmount: 1180, stalePriceDate: "2026-09-03" })).toEqual({
+      kind: "rounded",
+      amount: 1180,
+    });
+    expect(rowStatus({ ...quiet, stalePriceDate: "2026-09-03", isExcluded: true })).toEqual({
+      kind: "stale_price",
+      date: "2026-09-03",
+    });
+  });
+
+  it("says where a change sits only after everything else", () => {
+    expect(rowStatus({ ...quiet, isExcluded: true, placedAccountIds: ["acc-1"] })).toEqual({
+      kind: "not_eligible",
+    });
+    expect(rowStatus({ ...quiet, placedAccountIds: ["acc-1", "acc-2"] })).toEqual({
+      kind: "placed",
+      accountIds: ["acc-1", "acc-2"],
+    });
   });
 });
 

@@ -94,6 +94,52 @@ export function changeInCategory(change: number, weightBps: number): number {
   return (change * weightBps) / 10_000;
 }
 
+/** The one fact a row's Status cell states, most pressing first. */
+export type RowStatus =
+  | { kind: "needs_account" }
+  | { kind: "check_amount"; message: string }
+  | { kind: "price_required" }
+  | { kind: "warnings"; messages: readonly string[] }
+  | { kind: "rounded"; amount: number }
+  | { kind: "stale_price"; date: string }
+  | { kind: "not_eligible" }
+  | { kind: "placed"; accountIds: readonly string[] };
+
+export interface RowStatusFacts {
+  /** What keeps this row out of the preview, if anything. */
+  issue?: { kind: "cash" | "position" | "allocation"; message: string };
+  /** An added security with no price to size it at. */
+  needsPrice: boolean;
+  /** The preview's warnings about this row's lines. */
+  warnings: readonly string[];
+  /** The amount the preview placed, when whole units moved it off the entered one. */
+  roundedAmount?: number;
+  /** The date of a price the preview marks as dated. */
+  stalePriceDate?: string;
+  /** Left out of the eligible securities: the calculation will not increase it. */
+  isExcluded: boolean;
+  /** Where the change sits when more than one account could take it. */
+  placedAccountIds: readonly string[];
+}
+
+/**
+ * One fact per row, so the list stays readable: what blocks the worksheet
+ * first, then what the preview says, then where the change sits.
+ */
+export function rowStatus(facts: RowStatusFacts): RowStatus | null {
+  if (facts.issue?.kind === "allocation") return { kind: "needs_account" };
+  if (facts.issue) return { kind: "check_amount", message: facts.issue.message };
+  if (facts.needsPrice) return { kind: "price_required" };
+  if (facts.warnings.length > 0) return { kind: "warnings", messages: facts.warnings };
+  if (facts.roundedAmount !== undefined) return { kind: "rounded", amount: facts.roundedAmount };
+  if (facts.stalePriceDate) return { kind: "stale_price", date: facts.stalePriceDate };
+  if (facts.isExcluded) return { kind: "not_eligible" };
+  if (facts.placedAccountIds.length > 0) {
+    return { kind: "placed", accountIds: facts.placedAccountIds };
+  }
+  return null;
+}
+
 export interface AmountsRow {
   assetId: string;
   value: number;

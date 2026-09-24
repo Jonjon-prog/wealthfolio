@@ -1,12 +1,7 @@
 import { Button, Card, CardContent, Icons, useAmountFormatting } from "@wealthfolio/ui";
 import { useTranslation } from "react-i18next";
 
-import type {
-  AllocationTarget,
-  AllocationWorksheetResult,
-  CalculatedAdjustments,
-  DriftReport,
-} from "@/lib/types";
+import type { AllocationWorksheetResult, CalculatedAdjustments, DriftReport } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -39,7 +34,7 @@ export interface ImpactRailRow {
   change: number;
 }
 
-interface ImpactClass {
+export interface ImpactClass {
   categoryId: string;
   categoryName: string;
   color: string;
@@ -56,7 +51,7 @@ interface ImpactRailProps {
   report: DriftReport;
   result: AllocationWorksheetResult | null;
   isStale: boolean;
-  profile: AllocationTarget;
+  classes: readonly ImpactClass[];
   rows: readonly ImpactRailRow[];
   unresolved: readonly UnresolvedAmount[];
   issueMessage: string | undefined;
@@ -66,6 +61,42 @@ interface ImpactRailProps {
   onCalculate: () => void;
   onReviewIssue: () => void;
   onClassifySecurity: (lineId: string) => void;
+}
+
+/**
+ * Every class the worksheet can move, in the preview's figures once there is
+ * one. The rows' class dots take their colours from the same list.
+ */
+export function impactClasses(
+  report: DriftReport,
+  result: AllocationWorksheetResult | null,
+  defaultBandBps: number,
+): ImpactClass[] {
+  const driftByCategory = new Map(report.rows.map((row) => [row.categoryId, row]));
+  const sourceRows =
+    result?.categories ??
+    report.rows.map((row) => ({
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      currentBps: row.currentBps,
+      projectedBps: row.currentBps,
+      targetBps: row.targetBps,
+      projectedDifferenceBps: row.driftBps,
+    }));
+  const visibleRows = sourceRows.filter(
+    (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
+  );
+  const colorMap = buildAllocationTargetColorMap(visibleRows);
+  return visibleRows.map((row, index) => ({
+    categoryId: row.categoryId,
+    categoryName: row.categoryName,
+    currentBps: row.currentBps,
+    projectedBps: row.projectedBps,
+    targetBps: row.targetBps,
+    projectedDifferenceBps: row.projectedDifferenceBps,
+    color: allocationTargetColorForRow(row, colorMap, index),
+    effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? defaultBandBps,
+  }));
 }
 
 function formatWeight(bps: number): string {
@@ -80,7 +111,7 @@ export function ImpactRail({
   report,
   result,
   isStale,
-  profile,
+  classes,
   rows,
   unresolved,
   issueMessage,
@@ -97,31 +128,6 @@ export function ImpactRail({
   const selected = useHighlight((state) => state.selected);
   const { clearSelection } = useHighlightActions();
 
-  const driftByCategory = new Map(report.rows.map((row) => [row.categoryId, row]));
-  const sourceRows =
-    result?.categories ??
-    report.rows.map((row) => ({
-      categoryId: row.categoryId,
-      categoryName: row.categoryName,
-      currentBps: row.currentBps,
-      projectedBps: row.currentBps,
-      targetBps: row.targetBps,
-      projectedDifferenceBps: row.driftBps,
-    }));
-  const visibleRows = sourceRows.filter(
-    (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
-  );
-  const colorMap = buildAllocationTargetColorMap(visibleRows);
-  const classes: ImpactClass[] = visibleRows.map((row, index) => ({
-    categoryId: row.categoryId,
-    categoryName: row.categoryName,
-    currentBps: row.currentBps,
-    projectedBps: row.projectedBps,
-    targetBps: row.targetBps,
-    projectedDifferenceBps: row.projectedDifferenceBps,
-    color: allocationTargetColorForRow(row, colorMap, index),
-    effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? profile.driftBandBps,
-  }));
   const outsideRangeCount = classes.filter(
     (item) => Math.abs(item.projectedDifferenceBps) > item.effectiveBandBps,
   ).length;

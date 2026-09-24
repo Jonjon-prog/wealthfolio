@@ -64,7 +64,8 @@ import { useCalculatedAdjustments } from "../hooks/use-calculated-adjustments";
 import { useEligibleHoldingsSelection } from "../hooks/use-eligible-holdings";
 import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amounts-list";
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
-import { ImpactRail } from "./allocation-worksheet-impact-rail";
+import { rowStatus } from "./allocation-worksheet-amounts";
+import { impactClasses, ImpactRail } from "./allocation-worksheet-impact-rail";
 import {
   adjustmentsFromCalculated,
   AMOUNT_EPSILON,
@@ -130,6 +131,10 @@ interface WorksheetDraft {
 interface PreparedWorksheet {
   lines: AllocationWorksheetLineInput[];
   issue?: PreparedWorksheetIssue;
+  /** Every row's own issue, keyed by asset. */
+  rowIssues: Map<string, PreparedWorksheetIssue>;
+  /** Where each change with a choice of accounts sits, keyed by asset. */
+  placedAccountIds: Map<string, string[]>;
   increaseTotal: number;
   reductionTotal: number;
 }
@@ -981,12 +986,12 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="outline">
+        <Button size="sm" variant="ghost">
           <Icons.Plus className="mr-1.5 h-4 w-4" />
           {t("allocation:worksheet.addPosition")}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[340px] max-w-[calc(100vw-2rem)] p-0" align="end">
+      <PopoverContent className="w-[340px] max-w-[calc(100vw-2rem)] p-0" align="start">
         <Command>
           <CommandInput placeholder={t("allocation:worksheet.searchSecurities")} />
           <CommandList>
@@ -1437,7 +1442,7 @@ export function AllocationWorksheetTab({
     setAdjustments(restoredAdjustments);
     setGenerated(draft?.generated ?? null);
     setGenerateError(null);
-    setExpandedAssetIds(new Set(Object.keys(restoredAdjustments)));
+    setExpandedAssetIds(new Set());
     setResult(null);
     setCalculationError(null);
     setView("position");
@@ -1625,37 +1630,44 @@ export function AllocationWorksheetTab({
     let increaseTotal = 0;
     let reductionTotal = 0;
     let issue: PreparedWorksheetIssue | undefined = cashIssue;
+    const rowIssues = new Map<string, PreparedWorksheetIssue>();
+    const placedAccountIds = new Map<string, string[]>();
+    // The first issue blocks the preview; every row keeps its own for its status.
+    const flag = (rowIssue: PreparedWorksheetIssue) => {
+      issue ??= rowIssue;
+      if (rowIssue.assetId) rowIssues.set(rowIssue.assetId, rowIssue);
+    };
 
     for (const position of positions) {
       const adjustment = adjustments[position.assetId];
       if (adjustment && !Number.isFinite(parseDecimalInput(adjustment.inputValue))) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.invalidPositionInput", { symbol: position.symbol }),
           kind: "position",
           assetId: position.assetId,
-        };
+        });
         continue;
       }
       const changeAmount = positionChangeAmount(adjustment, position, basis);
       if (!adjustment || Math.abs(changeAmount) < AMOUNT_EPSILON) continue;
 
       if (changeAmount < 0 && !profile.allowSells) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.reductionsDisabledIssue", { symbol: position.symbol }),
           kind: "position",
           assetId: position.assetId,
-        };
+        });
         continue;
       }
       if (changeAmount < 0 && Math.abs(changeAmount) > position.value + AMOUNT_EPSILON) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.reductionExceedsPositionIssue", {
             symbol: position.symbol,
             amount: formatAmount(position.value, currency),
           }),
           kind: "position",
           assetId: position.assetId,
-        };
+        });
         continue;
       }
 
@@ -1665,11 +1677,11 @@ export function AllocationWorksheetTab({
 
       const eligibleAccounts = accountsForChange(position, changeAmount);
       if (eligibleAccounts.length === 0) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.noEligibleAccountIssue", { symbol: position.symbol }),
           kind: "allocation",
           assetId: position.assetId,
-        };
+        });
         continue;
       }
 
@@ -1680,11 +1692,11 @@ export function AllocationWorksheetTab({
           return value.trim() !== "" && !Number.isFinite(parseDecimalInput(value));
         });
       if (hasInvalidAccountAmount) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.invalidAccountAmount", { symbol: position.symbol }),
           kind: "allocation",
           assetId: position.assetId,
-        };
+        });
         continue;
       }
 
@@ -1719,15 +1731,21 @@ export function AllocationWorksheetTab({
         (requestedAmount - allocatedAmount > unplaceable ||
           allocatedAmount - requestedAmount > 0.02)
       ) {
-        issue ??= {
+        flag({
           message: t("allocation:worksheet.allocateAccountsIssue", {
             symbol: position.symbol,
             amount: formatAmount(requestedAmount, currency),
           }),
           kind: "allocation",
           assetId: position.assetId,
-        };
+        });
         continue;
+      }
+      if (eligibleAccounts.length > 1) {
+        placedAccountIds.set(
+          position.assetId,
+          allocations.map((allocation) => allocation.accountId),
+        );
       }
 
       for (const allocation of allocations) {
@@ -1751,7 +1769,7 @@ export function AllocationWorksheetTab({
       }
     }
 
-    return { lines, issue, increaseTotal, reductionTotal };
+    return { lines, issue, rowIssues, placedAccountIds, increaseTotal, reductionTotal };
   })();
   const isPreviewUpdating =
     worksheet.isPending || (isResultStale && !prepared.issue && calculationError === null);
@@ -1766,11 +1784,25 @@ export function AllocationWorksheetTab({
     }
   }
 
+  const lineAssetIds = new Map((result?.lines ?? []).map((line) => [line.lineId, line.assetId]));
+  const warningsByAsset = new Map<string, string[]>();
+  for (const warning of result && !isResultStale ? result.warnings : []) {
+    const assetId = warning.lineId ? lineAssetIds.get(warning.lineId) : undefined;
+    if (assetId)
+      warningsByAsset.set(assetId, [...(warningsByAsset.get(assetId) ?? []), warning.message]);
+  }
   const amountsRows: AmountsRowModel[] = positions.map((position) => {
     const adjustment = adjustments[position.assetId];
     const rawChangeAmount = positionChangeAmount(adjustment, position, basis);
     const changeAmount = Number.isFinite(rawChangeAmount) ? rawChangeAmount : 0;
     const resolved = resultByAsset.get(position.assetId);
+    const quote = latestQuotes.data?.[position.assetId];
+    // The core resolves an amount into whole units when the target asks for them,
+    // so the row projects what it resolved rather than what was typed.
+    const projectedValue = Math.max(
+      0,
+      position.value + (resolved ? resolved.amount : changeAmount),
+    );
     return {
       position,
       adjustment,
@@ -1783,11 +1815,23 @@ export function AllocationWorksheetTab({
       isChanged:
         adjustment !== undefined &&
         (!Number.isFinite(rawChangeAmount) || Math.abs(rawChangeAmount) >= AMOUNT_EPSILON),
-      // The core resolves an amount into whole units when the target asks for
-      // them, so the row projects what it resolved rather than what was typed.
-      projectedValue: Math.max(0, position.value + (resolved ? resolved.amount : changeAmount)),
-      resolved,
-      quote: latestQuotes.data?.[position.assetId],
+      projectedValue,
+      projectedPct: basis > 0 ? (projectedValue / basis) * 100 : 0,
+      status: rowStatus({
+        issue: prepared.rowIssues.get(position.assetId),
+        needsPrice: position.isAdded && latestQuotes.isFetched && !quote?.quote,
+        warnings: warningsByAsset.get(position.assetId) ?? [],
+        roundedAmount:
+          resolved &&
+          profile.wholeSharesOnly &&
+          Math.abs(resolved.amount - changeAmount) >= AMOUNT_EPSILON
+            ? resolved.amount
+            : undefined,
+        stalePriceDate:
+          quote?.quote && quote.isStale ? (quote.quoteDate ?? quote.quote.timestamp) : undefined,
+        isExcluded: eligibility.excludedAssetIds.has(position.assetId),
+        placedAccountIds: prepared.placedAccountIds.get(position.assetId) ?? [],
+      }),
       asset: eligibleAssets.find((item) => item.id === position.assetId),
       isExpanded: expandedAssetIds.has(position.assetId),
       placement:
@@ -1800,15 +1844,9 @@ export function AllocationWorksheetTab({
           : undefined,
     };
   });
-  const lineAssetIds = new Map((result?.lines ?? []).map((line) => [line.lineId, line.assetId]));
-  const flaggedAssetIds = new Set<string>(
-    (result && !isResultStale ? result.warnings : []).flatMap((warning) => {
-      const assetId = warning.lineId ? lineAssetIds.get(warning.lineId) : undefined;
-      return assetId ? [assetId] : [];
-    }),
-  );
-  if (prepared.issue?.assetId) flaggedAssetIds.add(prepared.issue.assetId);
+  const flaggedAssetIds = new Set([...warningsByAsset.keys(), ...prepared.rowIssues.keys()]);
   const unresolvedAmounts = generated?.calculated.unresolved ?? [];
+  const classes = impactClasses(driftReport, result, profile.driftBandBps);
 
   function updateAdjustment(assetId: string, next: PositionAdjustment | null) {
     setAdjustments((current) => {
@@ -1825,13 +1863,6 @@ export function AllocationWorksheetTab({
       inputValue: value,
       accountAmounts: {},
     });
-    const nextChange =
-      editMode === "amount"
-        ? parseDecimalInput(value)
-        : (parseDecimalInput(value) / 100) * basis - position.value;
-    if (Math.abs(nextChange) >= AMOUNT_EPSILON) {
-      setExpandedAssetIds((current) => new Set(current).add(position.assetId));
-    }
   }
 
   function reducePositionToZero(position: WorksheetPosition) {
@@ -1845,7 +1876,6 @@ export function AllocationWorksheetTab({
         ]),
       ),
     });
-    setExpandedAssetIds((current) => new Set(current).add(position.assetId));
   }
 
   function switchEditMode(nextMode: WorksheetEditMode) {
@@ -1896,7 +1926,7 @@ export function AllocationWorksheetTab({
     setEditMode("amount");
     setAdjustments(prefilled);
     setAddedAssetIds([]);
-    setExpandedAssetIds(new Set(Object.keys(prefilled)));
+    setExpandedAssetIds(new Set());
     setResult(null);
     setCalculationError(null);
     setView("position");
@@ -2126,11 +2156,6 @@ export function AllocationWorksheetTab({
                       </div>
                     )}
                   </div>
-                  <AddPositionButton
-                    assets={eligibleAssets}
-                    excludedAssetIds={new Set(positions.map((position) => position.assetId))}
-                    onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
-                  />
                 </div>
               </div>
 
@@ -2147,19 +2172,6 @@ export function AllocationWorksheetTab({
 
               {view === "position" ? (
                 <div>
-                  <div className="text-muted-foreground bg-muted/15 hidden grid-cols-[minmax(12rem,1.6fr)_7rem_4rem_8.5rem_8.5rem_2rem] gap-3 border-b px-5 py-3 font-mono text-[10px] uppercase tracking-[0.14em] xl:grid">
-                    <span>{t("allocation:worksheet.position")}</span>
-                    <span className="text-right">{t("allocation:worksheet.currentValue")}</span>
-                    <span className="text-right">{t("allocation:worksheet.now")}</span>
-                    <span className="text-right">
-                      {editMode === "amount"
-                        ? t("allocation:worksheet.changeAmount")
-                        : t("allocation:worksheet.projectedPercent")}
-                    </span>
-                    <span className="text-right">{t("allocation:worksheet.projectedChange")}</span>
-                    <span />
-                  </div>
-
                   {positions.length === 0 ? (
                     <div className="px-5 py-14 text-center">
                       <p className="text-sm font-medium">
@@ -2173,6 +2185,8 @@ export function AllocationWorksheetTab({
                     <AmountsList
                       rows={amountsRows}
                       flaggedAssetIds={flaggedAssetIds}
+                      classColors={new Map(classes.map((item) => [item.categoryId, item.color]))}
+                      accountNames={accountNames}
                       unresolvedCategoryIds={
                         new Set(unresolvedAmounts.map((item) => item.categoryId))
                       }
@@ -2182,7 +2196,6 @@ export function AllocationWorksheetTab({
                       wholeSharesOnly={profile.wholeSharesOnly}
                       fundingByAccount={fundingByAccount}
                       isPriceSyncing={syncPrice.isPending}
-                      quotesFetched={latestQuotes.isFetched}
                       actions={{
                         onInputChange: updatePositionInput,
                         onReduceToZero: reducePositionToZero,
@@ -2202,6 +2215,13 @@ export function AllocationWorksheetTab({
                       }}
                     />
                   )}
+                  <div className="border-t px-2 py-1.5 sm:px-3">
+                    <AddPositionButton
+                      assets={eligibleAssets}
+                      excludedAssetIds={new Set(positions.map((position) => position.assetId))}
+                      onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
+                    />
+                  </div>
                 </div>
               ) : (
                 <ReviewChanges
@@ -2233,7 +2253,7 @@ export function AllocationWorksheetTab({
             report={driftReport}
             result={result}
             isStale={isResultStale}
-            profile={profile}
+            classes={classes}
             rows={amountsRows.map((row) => ({
               assetId: row.position.assetId,
               symbol: row.position.symbol,

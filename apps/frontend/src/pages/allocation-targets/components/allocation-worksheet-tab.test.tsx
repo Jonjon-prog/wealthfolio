@@ -332,6 +332,9 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     // The empty worksheet may be previewed on mount, before the calculation.
     previewMock.mockClear();
 
+    // The row states the fact, and opens the account allocation from there.
+    expect(screen.queryByText("Account allocation")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Needs an account" }));
     const allocation = screen
       .getByText("Account allocation")
       .closest<HTMLElement>("[data-account-allocation]")!;
@@ -351,6 +354,8 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
     await calculateFromTarget(user);
 
+    // Placed without a choice being made: the row names where it went.
+    await user.click(screen.getByRole("button", { name: "Brokerage", expanded: false }));
     const allocation = screen
       .getByText("Account allocation")
       .closest<HTMLElement>("[data-account-allocation]")!;
@@ -648,6 +653,41 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     await user.pointer({ keys: "[TouchA]", target: screen.getByLabelText("Change for BND") });
 
     expect(row("bnd")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("shows the weight a changed row reaches against the planning total", async () => {
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+    expect(row("bnd")).toHaveTextContent("15.0%");
+
+    await user.type(screen.getByLabelText("Change for BND"), "100");
+
+    // 400 of 2,000 held plus the 2,000 of cash the accounts record.
+    await waitFor(() => expect(row("bnd")).toHaveTextContent("15.0 → 10.0%"));
+  });
+
+  it("states the preview's warnings on the row whose line they are about", async () => {
+    previewMock.mockResolvedValue({
+      ...preview,
+      lines: [{ lineId: "position:bnd:acc-1:increase", assetId: "bnd" }],
+      warnings: [
+        {
+          id: "w1",
+          kind: "stale_quote",
+          lineId: "position:bnd:acc-1:increase",
+          message: "BND is priced from a quote dated 3 Sep.",
+          acknowledgementRequired: false,
+        },
+      ],
+    } as unknown as AllocationWorksheetResult);
+    const user = await renderWorksheet(report);
+    await user.click(collapsedLine());
+
+    await user.type(screen.getByLabelText("Change for BND"), "100");
+
+    const status = await within(row("bnd")).findByText("1 warning", {}, { timeout: 2000 });
+    expect(status).toHaveAttribute("title", "BND is priced from a quote dated 3 Sep.");
+    expect(within(row("vti")).queryByText(/warning/)).not.toBeInTheDocument();
   });
 
   it("does not render the worksheet again while pointing", async () => {
