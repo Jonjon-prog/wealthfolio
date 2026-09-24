@@ -59,7 +59,17 @@ vi.mock("@/hooks/use-taxonomies", () => ({
 }));
 vi.mock("@/pages/asset/hooks/use-assets", () => ({
   useAssets: () => ({
-    assets: [{ id: "vti", kind: "INVESTMENT", isActive: true, displayCode: "VTI", name: "VTI" }],
+    assets: [
+      { id: "vti", kind: "INVESTMENT", isActive: true, displayCode: "VTI", name: "VTI" },
+      // Held in no account: only reachable through Add position.
+      {
+        id: "vxus",
+        kind: "INVESTMENT",
+        isActive: true,
+        displayCode: "VXUS",
+        name: "Total International",
+      },
+    ],
     isLoading: false,
   }),
 }));
@@ -605,6 +615,31 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(
       screen.getByText("Export is available once every change is in the review."),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a security added by hand in view, and lets any account take it", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+
+    await user.click(screen.getByRole("button", { name: "Add position" }));
+    await user.click(await screen.findByRole("option", { name: /VXUS/ }));
+
+    // Held nowhere and not sized yet: it still stays in view to be sized.
+    await user.type(await screen.findByLabelText("Change for VXUS"), "500");
+    const added = document.querySelector<HTMLElement>('[data-amounts-row="vxus"]')!;
+    await user.click(within(added).getByRole("button", { name: "Edit account allocation" }));
+
+    // No account holds it, so every account is offered at once.
+    const allocation = within(added)
+      .getByText("Account allocation")
+      .closest<HTMLElement>("[data-account-allocation]")!;
+    expect(within(allocation).getByLabelText("Amount for Brokerage")).toBeInTheDocument();
+    expect(within(allocation).getByLabelText("Amount for Retirement")).toBeInTheDocument();
+    expect(
+      within(allocation).queryByRole("button", { name: "Place in another account" }),
+    ).not.toBeInTheDocument();
   });
 
   it("previews a worksheet with no adjustments instead of refusing it", async () => {

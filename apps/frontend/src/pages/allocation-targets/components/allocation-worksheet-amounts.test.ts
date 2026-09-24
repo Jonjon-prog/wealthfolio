@@ -30,6 +30,7 @@ function facts(overrides: Partial<OpenRowFacts> = {}): OpenRowFacts {
     flaggedAssetIds: new Set(),
     unresolvedCategoryIds: new Set(),
     touchedAssetIds: new Set(),
+    addedAssetIds: new Set(),
     ...overrides,
   };
 }
@@ -169,13 +170,15 @@ describe("Amounts collapsed rows", () => {
   const iau = { assetId: "iau", value: 300, categoryIds: ["gold"] };
   const bnd = { assetId: "bnd", value: 200, categoryIds: ["bond"] };
 
-  it("keeps out a row with a change, a warning, an unresolved class or a touch", () => {
+  it("keeps out a row with a change, a warning, an unresolved class, a touch or an addition", () => {
     expect(rowStaysOpen(vti, facts())).toBe(false);
     expect(rowStaysOpen(vti, facts({ changedAssetIds: new Set(["vti"]) }))).toBe(true);
     expect(rowStaysOpen(vti, facts({ flaggedAssetIds: new Set(["vti"]) }))).toBe(true);
     expect(rowStaysOpen(iau, facts({ unresolvedCategoryIds: new Set(["gold"]) }))).toBe(true);
     // Cleared back to zero during the visit: still out until the panel is left.
     expect(rowStaysOpen(vti, facts({ touchedAssetIds: new Set(["vti"]) }))).toBe(true);
+    // Added by hand and not sized yet: it would otherwise vanish as it is added.
+    expect(rowStaysOpen(vti, facts({ addedAssetIds: new Set(["vti"]) }))).toBe(true);
   });
 
   it("collapses the rest without reordering either part, and totals its value", () => {

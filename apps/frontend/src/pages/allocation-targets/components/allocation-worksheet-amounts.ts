@@ -155,6 +155,8 @@ export interface OpenRowFacts {
   unresolvedCategoryIds: ReadonlySet<string>;
   /** Rows touched during this visit to the panel. */
   touchedAssetIds: ReadonlySet<string>;
+  /** Securities the user added by hand, which no account may hold yet. */
+  addedAssetIds: ReadonlySet<string>;
 }
 
 /**
@@ -163,13 +165,16 @@ export interface OpenRowFacts {
  * A row in a class with an unresolved amount stays out because making one of
  * its securities eligible is how that amount gets resolved. A row touched
  * during the visit stays out even when cleared back to zero, so it never
- * vanishes under the cursor.
+ * vanishes under the cursor. A security added by hand stays out too: adding it
+ * is the decision to size it, and it would otherwise vanish the moment it is
+ * added.
  */
 export function rowStaysOpen(row: AmountsRow, facts: OpenRowFacts): boolean {
   return (
     facts.changedAssetIds.has(row.assetId) ||
     facts.flaggedAssetIds.has(row.assetId) ||
     facts.touchedAssetIds.has(row.assetId) ||
+    facts.addedAssetIds.has(row.assetId) ||
     row.categoryIds.some((categoryId) => facts.unresolvedCategoryIds.has(categoryId))
   );
 }

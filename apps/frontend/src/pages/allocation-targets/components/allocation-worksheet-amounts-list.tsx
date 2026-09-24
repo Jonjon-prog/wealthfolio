@@ -103,6 +103,9 @@ export function AmountsList({
   const changedAssetIds = new Set(
     rows.filter((row) => row.isChanged).map((row) => row.position.assetId),
   );
+  const addedAssetIds = new Set(
+    rows.filter((row) => row.position.isAdded).map((row) => row.position.assetId),
+  );
   const [touchedAssetIds, setTouchedAssetIds] = useState<ReadonlySet<string>>(() => new Set());
   // With nothing to decide yet, before a calculation or any typing, the whole
   // list is the work: it opens rather than hiding every row behind one line.
@@ -114,6 +117,7 @@ export function AmountsList({
           flaggedAssetIds,
           unresolvedCategoryIds,
           touchedAssetIds: new Set(),
+          addedAssetIds,
         }),
       ),
   );
@@ -149,6 +153,7 @@ export function AmountsList({
       flaggedAssetIds,
       unresolvedCategoryIds,
       touchedAssetIds,
+      addedAssetIds,
     },
   );
   const renderRow = (position: WorksheetPosition) => (
