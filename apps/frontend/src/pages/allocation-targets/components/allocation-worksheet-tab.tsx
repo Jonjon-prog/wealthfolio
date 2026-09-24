@@ -1385,8 +1385,8 @@ export function AllocationWorksheetTab({
     setExpandedAssetIds(new Set());
     setResult(null);
     setCalculationError(null);
-    // A worksheet already calculated reopens on its amounts.
-    setPanel(draft?.generated ? "amounts" : "setup");
+    // Every visit starts on Setup, where the worksheet's inputs are read first.
+    setPanel("setup");
   }, [
     accountsLoading,
     assetsLoading,
@@ -1978,6 +1978,21 @@ export function AllocationWorksheetTab({
   }
 
   const changedCount = amountsRows.filter((row) => row.isChanged).length;
+  const recalculateButton = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={!!generationIssue || calculator.isPending}
+      onClick={() => void recalculateFromTarget()}
+    >
+      {calculator.isPending ? (
+        <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
+      ) : (
+        <Icons.RefreshCw className="mr-1.5 h-4 w-4" />
+      )}
+      {t("allocation:worksheet.recalculateFromTarget")}
+    </Button>
+  );
   const disclosure = (
     <div className="border-t px-4 py-3 sm:px-5">
       <details>
@@ -2016,8 +2031,9 @@ export function AllocationWorksheetTab({
         isOutOfDate={isOutOfDate}
       />
 
-      {/* On every panel: only the two explicit actions regenerate (§5). */}
-      {isOutOfDate && (
+      {/* Where amounts are read, a stale worksheet says so first. Setup offers the
+          same action at the bottom, after the inputs that changed. */}
+      {isOutOfDate && panel !== "setup" && (
         <div
           role="status"
           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-50/60 px-4 py-2.5 dark:bg-amber-950/15"
@@ -2025,19 +2041,7 @@ export function AllocationWorksheetTab({
           <p className="min-w-0 flex-1 text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
             {t("allocation:worksheet.inputsChanged")}
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!!generationIssue || calculator.isPending}
-            onClick={() => void recalculateFromTarget()}
-          >
-            {calculator.isPending ? (
-              <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Icons.RefreshCw className="mr-1.5 h-4 w-4" />
-            )}
-            {t("allocation:worksheet.recalculateFromTarget")}
-          </Button>
+          {recalculateButton}
         </div>
       )}
 
@@ -2098,21 +2102,30 @@ export function AllocationWorksheetTab({
                       </p>
                     </div>
                   )}
-                  {!generated && (
+                  {!generated ? (
                     <p className="text-muted-foreground text-xs leading-relaxed">
                       {generationIssue ?? t("allocation:worksheet.notCalculatedDescription")}
                     </p>
+                  ) : (
+                    isOutOfDate && (
+                      <p className="text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
+                        {generationIssue ?? t("allocation:worksheet.inputsChanged")}
+                      </p>
+                    )
                   )}
                 </div>
-                {/* Calculating is offered here until it has run once; after that
-                    only the out-of-date banner offers it again. */}
+                {/* Top to bottom: the inputs, then recalculating when they changed,
+                    then moving on. Calculating never happens on the way. */}
                 {generated ? (
-                  <Button onClick={() => setPanel("amounts")}>
-                    {t("allocation:worksheet.nextPanel", {
-                      panel: t("allocation:worksheet.stepAmounts"),
-                    })}
-                    <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isOutOfDate && recalculateButton}
+                    <Button onClick={() => setPanel("amounts")}>
+                      {t("allocation:worksheet.nextPanel", {
+                        panel: t("allocation:worksheet.stepAmounts"),
+                      })}
+                      <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     disabled={!!generationIssue || calculator.isPending}

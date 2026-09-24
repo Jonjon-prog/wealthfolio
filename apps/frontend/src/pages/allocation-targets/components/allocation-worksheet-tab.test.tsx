@@ -13,7 +13,7 @@ import type {
   DriftReport,
   Holding,
 } from "@/lib/types";
-import { render, screen, waitFor, within } from "@/test/render";
+import { cleanup, render, screen, waitFor, within } from "@/test/render";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
 
@@ -321,6 +321,19 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
   });
 
+  it("opens on Setup on every visit, even once the worksheet is calculated", async () => {
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    // The draft is saved shortly after the change.
+    await waitFor(() => expect(localStorage.length).toBeGreaterThan(1));
+    cleanup();
+
+    const again = await renderWorksheet();
+    expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toBeInTheDocument();
+    await goTo(again, "Amounts");
+    expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
+  });
+
   it("opens any panel from the stepper before a calculation, and calculates nothing", async () => {
     const user = await renderWorksheet();
 
@@ -343,7 +356,17 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     await user.type(cashInput, "100");
 
     expect(await screen.findByText(/Inputs changed since these adjustments/)).toBeInTheDocument();
-    // The banner follows to every panel, and the amounts are left alone.
+    // On Setup it is offered at the bottom, after the inputs and before Next.
+    const recalculate = screen.getByRole("button", { name: "Recalculate from target" });
+    const next = screen.getByRole("button", { name: "Next: Amounts" });
+    expect(
+      recalculate.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      recalculate.compareDocumentPosition(cashInput) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
+
+    // Where the amounts are read, the banner says so first; they are left alone.
     await goTo(user, "Amounts");
     expect(screen.getByText(/Inputs changed since these adjustments/)).toBeInTheDocument();
     expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
