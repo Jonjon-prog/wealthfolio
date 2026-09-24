@@ -393,7 +393,6 @@
     "afterPercentage": "% final",
     "allCash": "Todo",
     "allocateAccountsIssue": "Reparte el cambio completo de {{amount}} de {{symbol}} entre las cuentas elegibles.",
-    "byPosition": "Ajustar posiciones",
     "calculatedSummary": "Del último cálculo",
     "cashAvailablePending": "leyendo las cuentas elegidas…",
     "cashMustBePositive": "El efectivo a desplegar no puede ser negativo.",
@@ -450,7 +449,7 @@
     "noPositionsDescription": "Las cuentas elegidas no tienen ningún valor. Añade un valor seguido para modelar una nueva posición.",
     "noPositionsTitle": "No hay posiciones en esta vista",
     "noQuoteShort": "Precio necesario",
-    "notCalculatedDescription": "Elige un modo, una regla de reparto y valores elegibles, y luego recalcula desde el objetivo. También puedes introducir los cambios tú mismo.",
+    "notCalculatedDescription": "Elige un modo, una regla de reparto y valores elegibles, y luego calcula desde el objetivo. También puedes ir a Importes e introducir los cambios tú mismo.",
     "ofObservedCash": "de {{amount}} en las cuentas elegidas",
     "outsideRangeImpact": "{{before}} → {{after}} asignaciones fuera de rango",
     "overAllocatedBy": "{{amount}} asignados de más",
@@ -530,6 +529,12 @@
     "checkAmount": "Revisa el importe",
     "roundedTo": "Redondeado a {{amount}}",
     "priceFrom": "Precio del {{date}}",
-    "notEligible": "No elegible"
+    "notEligible": "No elegible",
+    "stepSetup": "Configuración",
+    "stepAmounts": "Importes",
+    "stepReview": "Revisión",
+    "previousPanel": "Anterior: {{panel}}",
+    "nextPanel": "Siguiente: {{panel}}",
+    "calculateFromTarget": "Calcular desde el objetivo"
   }
 }

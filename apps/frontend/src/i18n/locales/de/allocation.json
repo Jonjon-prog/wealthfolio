@@ -382,7 +382,6 @@
     "afterPercentage": "Endgültige %",
     "allCash": "Alles",
     "allocateAccountsIssue": "Verteilen Sie die gesamte Änderung von {{amount}} für {{symbol}} auf geeignete Konten.",
-    "byPosition": "Positionen anpassen",
     "calculatedSummary": "Aus der letzten Berechnung",
     "cashAvailablePending": "gewählte Konten werden gelesen…",
     "cashMustBePositive": "Das einzusetzende Bargeld darf nicht negativ sein.",
@@ -437,7 +436,7 @@
     "noPositionsDescription": "Die gewählten Konten halten kein Wertpapier. Fügen Sie ein verfolgtes Wertpapier hinzu, um eine neue Position zu modellieren.",
     "noPositionsTitle": "Keine Positionen in dieser Ansicht",
     "noQuoteShort": "Preis erforderlich",
-    "notCalculatedDescription": "Wählen Sie einen Modus, eine Verteilungsregel und geeignete Wertpapiere und berechnen Sie dann vom Ziel neu. Sie können Änderungen auch selbst eingeben.",
+    "notCalculatedDescription": "Wählen Sie einen Modus, eine Verteilungsregel und geeignete Wertpapiere und berechnen Sie dann vom Ziel. Sie können auch zu den Beträgen wechseln und Änderungen selbst eingeben.",
     "ofObservedCash": "von {{amount}} in den gewählten Konten",
     "outsideRangeImpact": "{{before}} → {{after}} Allokationen außerhalb der Bandbreite",
     "overAllocatedBy": "{{amount}} zu viel verteilt",
@@ -514,6 +513,12 @@
     "checkAmount": "Betrag prüfen",
     "roundedTo": "Gerundet auf {{amount}}",
     "priceFrom": "Preis vom {{date}}",
-    "notEligible": "Nicht geeignet"
+    "notEligible": "Nicht geeignet",
+    "stepSetup": "Einrichtung",
+    "stepAmounts": "Beträge",
+    "stepReview": "Prüfung",
+    "previousPanel": "Zurück: {{panel}}",
+    "nextPanel": "Weiter: {{panel}}",
+    "calculateFromTarget": "Vom Ziel berechnen"
   }
 }

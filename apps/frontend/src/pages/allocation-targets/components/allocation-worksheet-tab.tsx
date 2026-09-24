@@ -28,7 +28,7 @@ import {
   useDateFormatting,
   useNumberFormatting,
 } from "@wealthfolio/ui";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
@@ -97,7 +97,7 @@ const DRAFT_VERSION = 4;
 const CASH_PRESETS = [0.25, 0.5, 0.75, 1] as const;
 const AUTO_CALCULATE_DEBOUNCE_MS = 500;
 
-type WorksheetView = "position" | "review";
+type WorksheetPanel = "setup" | "amounts" | "review";
 
 interface AllocationWorksheetTabProps {
   profile: AllocationTarget | null;
@@ -400,13 +400,6 @@ interface CalculationControlProps {
   onSelectAllAssets: () => void;
   onClearAssets: () => void;
   accountNames: ReadonlyMap<string, string>;
-  blockingIssue?: string;
-  isCalculating: boolean;
-  hasGenerated: boolean;
-  isOutOfDate: boolean;
-  error: string | null;
-  onRecalculate: () => void;
-  onReset: () => void;
 }
 
 function CalculationControl({
@@ -421,13 +414,6 @@ function CalculationControl({
   onSelectAllAssets,
   onClearAssets,
   accountNames,
-  blockingIssue,
-  isCalculating,
-  hasGenerated,
-  isOutOfDate,
-  error,
-  onRecalculate,
-  onReset,
 }: CalculationControlProps) {
   const { t } = useTranslation();
   const modes: { value: WorksheetMode; label: string; hint: string }[] = [
@@ -445,7 +431,7 @@ function CalculationControl({
   const activeMode = modes.find((option) => option.value === mode);
 
   return (
-    <div id="worksheet-calculation" className="min-w-0 space-y-5 p-5 sm:p-6 lg:border-r">
+    <div id="worksheet-calculation" className="min-w-0 space-y-5 p-5 sm:p-6">
       <div>
         <Eyebrow>{t("allocation:worksheet.modeLabel")}</Eyebrow>
         <div className="border-border bg-muted/20 mt-2 inline-flex rounded-full border p-1">
@@ -529,52 +515,6 @@ function CalculationControl({
         onClear={onClearAssets}
         accountNames={accountNames}
       />
-
-      <div className="space-y-3">
-        {isOutOfDate && (
-          <div
-            role="status"
-            className="rounded-lg border border-amber-400/50 bg-amber-50/60 px-3 py-2 dark:bg-amber-950/15"
-          >
-            <p className="text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
-              {t("allocation:worksheet.inputsChanged")}
-            </p>
-          </div>
-        )}
-        {!hasGenerated && (
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            {t("allocation:worksheet.notCalculatedDescription")}
-          </p>
-        )}
-        {error && (
-          <div
-            role="alert"
-            className="border-destructive/30 bg-destructive/5 rounded-lg border p-3"
-          >
-            <p className="text-destructive text-xs font-semibold">
-              {t("allocation:worksheet.generateFailed")}
-            </p>
-            <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{error}</p>
-          </div>
-        )}
-        {blockingIssue && (
-          <p className="text-muted-foreground text-xs leading-relaxed">{blockingIssue}</p>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={!!blockingIssue || isCalculating} onClick={onRecalculate}>
-            {isCalculating ? (
-              <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Icons.RefreshCw className="mr-1.5 h-4 w-4" />
-            )}
-            {t("allocation:worksheet.recalculateFromTarget")}
-          </Button>
-          <Button size="sm" variant="ghost" disabled={!hasGenerated} onClick={onReset}>
-            <Icons.Undo className="mr-1.5 h-4 w-4" />
-            {t("allocation:worksheet.resetToCalculated")}
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1231,7 +1171,7 @@ export function AllocationWorksheetTab({
   );
   const { data: portfolios = [] } = usePortfolios();
 
-  const [view, setView] = useState<WorksheetView>("position");
+  const [panel, setPanel] = useState<WorksheetPanel>("setup");
   const [editMode, setEditMode] = useState<WorksheetEditMode>("amount");
   const [mode, setMode] = useState<WorksheetMode>("invest_cash");
   const [rule, setRule] = useState<AllocationRule | null>(null);
@@ -1445,7 +1385,8 @@ export function AllocationWorksheetTab({
     setExpandedAssetIds(new Set());
     setResult(null);
     setCalculationError(null);
-    setView("position");
+    // A worksheet already calculated reopens on its amounts.
+    setPanel(draft?.generated ? "amounts" : "setup");
   }, [
     accountsLoading,
     assetsLoading,
@@ -1929,7 +1870,7 @@ export function AllocationWorksheetTab({
     setExpandedAssetIds(new Set());
     setResult(null);
     setCalculationError(null);
-    setView("position");
+    setPanel("amounts");
   }
 
   async function recalculateFromTarget() {
@@ -1959,6 +1900,8 @@ export function AllocationWorksheetTab({
   function reviewPreparedIssue() {
     const issue = prepared.issue;
     if (!issue) return;
+    // The issue sits on the panel that owns it; the element exists once it renders.
+    setPanel(issue.kind === "cash" ? "setup" : "amounts");
     if (issue.assetId) {
       if (issue.kind === "allocation") {
         setExpandedAssetIds((current) => new Set(current).add(issue.assetId!));
@@ -1971,11 +1914,13 @@ export function AllocationWorksheetTab({
       });
       return;
     }
-    const element = document.getElementById(
-      issue.kind === "cash" ? "worksheet-cash" : "worksheet-positions",
-    );
-    element?.scrollIntoView({ behavior: "smooth", block: "center" });
-    element?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      const element = document.getElementById(
+        issue.kind === "cash" ? "worksheet-cash" : "worksheet-positions",
+      );
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      element?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    });
   }
 
   async function calculate() {
@@ -2032,6 +1977,20 @@ export function AllocationWorksheetTab({
     setFirstUseOpen(false);
   }
 
+  const changedCount = amountsRows.filter((row) => row.isChanged).length;
+  const disclosure = (
+    <div className="border-t px-4 py-3 sm:px-5">
+      <details>
+        <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium">
+          {t("allocation:worksheet.limitationsTitle")}
+        </summary>
+        <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+          {t("allocation:worksheet.fullDisclosure")}
+        </p>
+      </details>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <AlertDialog open={firstUseOpen}>
@@ -2050,230 +2009,362 @@ export function AllocationWorksheetTab({
         </AlertDialogContent>
       </AlertDialog>
 
-      <Card className="overflow-hidden">
-        <CardContent className="grid p-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
-          <AccountsControl
-            accounts={scopedAccounts}
-            selectedAccountIds={changeAccountIds}
-            onToggle={(accountId) =>
-              setSelectedAccountIds(
-                changeAccountIds.includes(accountId)
-                  ? changeAccountIds.filter((id) => id !== accountId)
-                  : [...changeAccountIds, accountId],
-              )
-            }
-            onSelectAll={() => setSelectedAccountIds(null)}
-          />
-          <CashControl
-            availableCash={availableCash}
-            trackedCash={trackedCash}
-            onTrackedCashChange={setTrackedCash}
-            accounts={changeAccounts}
-            externalCash={externalCash}
-            onExternalCashChange={(accountId, value) =>
-              setExternalCash((current) => ({ ...current, [accountId]: value }))
-            }
-            currency={currency}
-          />
-        </CardContent>
-      </Card>
+      <WorksheetStepper
+        panel={panel}
+        onSelect={setPanel}
+        changedCount={changedCount}
+        isOutOfDate={isOutOfDate}
+      />
 
-      <Card className="overflow-hidden">
-        <CardContent className="grid p-0 lg:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.7fr)]">
-          <CalculationControl
-            mode={mode}
-            allowSells={profile.allowSells}
-            onModeChange={setMode}
-            rule={rule}
-            onRuleChange={setRule}
-            holdings={scopedHoldings}
-            excludedAssetIds={eligibility.excludedAssetIds}
-            onToggleAsset={eligibility.toggle}
-            onSelectAllAssets={eligibility.selectAll}
-            onClearAssets={eligibility.clear}
-            accountNames={accountNames}
-            blockingIssue={generationIssue}
-            isCalculating={calculator.isPending}
-            hasGenerated={generated !== null}
-            isOutOfDate={isOutOfDate}
-            error={generateError}
-            onRecalculate={() => void recalculateFromTarget()}
-            onReset={resetToCalculated}
-          />
-          <FundingSummary
-            result={isResultStale ? null : result}
-            accountNames={accountNames}
-            currency={currency}
-          />
-        </CardContent>
-      </Card>
+      {/* On every panel: only the two explicit actions regenerate (§5). */}
+      {isOutOfDate && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-50/60 px-4 py-2.5 dark:bg-amber-950/15"
+        >
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
+            {t("allocation:worksheet.inputsChanged")}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!!generationIssue || calculator.isPending}
+            onClick={() => void recalculateFromTarget()}
+          >
+            {calculator.isPending ? (
+              <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Icons.RefreshCw className="mr-1.5 h-4 w-4" />
+            )}
+            {t("allocation:worksheet.recalculateFromTarget")}
+          </Button>
+        </div>
+      )}
 
-      <HighlightStoreContext.Provider value={highlightStore}>
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_23rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
-          <Card id="worksheet-positions" className="min-w-0 overflow-hidden">
+      {panel === "setup" ? (
+        <>
+          <Card className="overflow-hidden">
+            <CardContent className="grid p-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
+              <AccountsControl
+                accounts={scopedAccounts}
+                selectedAccountIds={changeAccountIds}
+                onToggle={(accountId) =>
+                  setSelectedAccountIds(
+                    changeAccountIds.includes(accountId)
+                      ? changeAccountIds.filter((id) => id !== accountId)
+                      : [...changeAccountIds, accountId],
+                  )
+                }
+                onSelectAll={() => setSelectedAccountIds(null)}
+              />
+              <CashControl
+                availableCash={availableCash}
+                trackedCash={trackedCash}
+                onTrackedCashChange={setTrackedCash}
+                accounts={changeAccounts}
+                externalCash={externalCash}
+                onExternalCashChange={(accountId, value) =>
+                  setExternalCash((current) => ({ ...current, [accountId]: value }))
+                }
+                currency={currency}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden">
             <CardContent className="p-0">
-              <div className="space-y-3 border-b p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2">
+              <CalculationControl
+                mode={mode}
+                allowSells={profile.allowSells}
+                onModeChange={setMode}
+                rule={rule}
+                onRuleChange={setRule}
+                holdings={scopedHoldings}
+                excludedAssetIds={eligibility.excludedAssetIds}
+                onToggleAsset={eligibility.toggle}
+                onSelectAllAssets={eligibility.selectAll}
+                onClearAssets={eligibility.clear}
+                accountNames={accountNames}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
+                <div className="min-w-0 flex-1 space-y-2">
+                  {generateError && (
+                    <div role="alert">
+                      <p className="text-destructive text-xs font-semibold">
+                        {t("allocation:worksheet.generateFailed")}
+                      </p>
+                      <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
+                        {generateError}
+                      </p>
+                    </div>
+                  )}
+                  {!generated && (
+                    <p className="text-muted-foreground text-xs leading-relaxed">
+                      {generationIssue ?? t("allocation:worksheet.notCalculatedDescription")}
+                    </p>
+                  )}
+                </div>
+                {/* Calculating is offered here until it has run once; after that
+                    only the out-of-date banner offers it again. */}
+                {generated ? (
+                  <Button onClick={() => setPanel("amounts")}>
+                    {t("allocation:worksheet.nextPanel", {
+                      panel: t("allocation:worksheet.stepAmounts"),
+                    })}
+                    <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    disabled={!!generationIssue || calculator.isPending}
+                    onClick={() => void recalculateFromTarget()}
+                  >
+                    {calculator.isPending && (
+                      <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
+                    )}
+                    {t("allocation:worksheet.calculateFromTarget")}
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+        <HighlightStoreContext.Provider value={highlightStore}>
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_23rem] xl:grid-cols-[minmax(0,1fr)_26rem]">
+            <Card id="worksheet-positions" className="min-w-0 overflow-hidden">
+              <CardContent className="p-0">
+                {panel === "amounts" && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4 sm:p-5">
                     <div className="border-border bg-muted/20 flex rounded-full border p-1">
-                      {(["position", "review"] as const).map((option) => (
+                      {(["amount", "after_percentage"] as const).map((option) => (
                         <button
                           key={option}
                           type="button"
-                          onClick={() => setView(option)}
+                          onClick={() => switchEditMode(option)}
                           className={cn(
-                            "rounded-full px-4 py-1.5 font-mono text-xs transition-colors",
-                            view === option
+                            "rounded-full px-3.5 py-1.5 font-mono text-xs transition-colors",
+                            editMode === option
                               ? "bg-foreground text-background"
                               : "text-muted-foreground hover:text-foreground",
                           )}
                         >
-                          {option === "position"
-                            ? t("allocation:worksheet.byPosition")
-                            : t("allocation:worksheet.reviewChanges")}
+                          {option === "amount"
+                            ? t("allocation:worksheet.changeAmount")
+                            : t("allocation:worksheet.afterPercentage")}
                         </button>
                       ))}
                     </div>
-                    {view === "position" && (
-                      <div className="border-border bg-muted/20 flex rounded-full border p-1">
-                        {(["amount", "after_percentage"] as const).map((option) => (
-                          <button
-                            key={option}
-                            type="button"
-                            onClick={() => switchEditMode(option)}
-                            className={cn(
-                              "rounded-full px-3.5 py-1.5 font-mono text-xs transition-colors",
-                              editMode === option
-                                ? "bg-foreground text-background"
-                                : "text-muted-foreground hover:text-foreground",
-                            )}
-                          >
-                            {option === "amount"
-                              ? t("allocation:worksheet.changeAmount")
-                              : t("allocation:worksheet.afterPercentage")}
-                          </button>
-                        ))}
-                      </div>
+                    {generated && (
+                      <Button size="sm" variant="ghost" onClick={resetToCalculated}>
+                        <Icons.Undo className="mr-1.5 h-4 w-4" />
+                        {t("allocation:worksheet.resetToCalculated")}
+                      </Button>
                     )}
                   </div>
-                </div>
-              </div>
+                )}
 
-              {/* Visible in both views: what the calculation could not place is
-                exactly what the review is missing, and hiding it there leaves
-                the leftover cash unexplained. */}
-              {generated && (
-                <CalculatedSummary
-                  calculated={generated.calculated}
-                  currency={currency}
-                  accountNames={accountNames}
-                />
-              )}
+                {/* On both panels: what the calculation could not place is
+                    exactly what the review is missing, and hiding it there leaves
+                    the leftover cash unexplained. */}
+                {generated && (
+                  <CalculatedSummary
+                    calculated={generated.calculated}
+                    currency={currency}
+                    accountNames={accountNames}
+                  />
+                )}
 
-              {view === "position" ? (
-                <div>
-                  {positions.length === 0 ? (
-                    <div className="px-5 py-14 text-center">
-                      <p className="text-sm font-medium">
-                        {t("allocation:worksheet.noPositionsTitle")}
-                      </p>
-                      <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
-                        {t("allocation:worksheet.noPositionsDescription")}
-                      </p>
+                {panel === "amounts" ? (
+                  <div>
+                    {positions.length === 0 ? (
+                      <div className="px-5 py-14 text-center">
+                        <p className="text-sm font-medium">
+                          {t("allocation:worksheet.noPositionsTitle")}
+                        </p>
+                        <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
+                          {t("allocation:worksheet.noPositionsDescription")}
+                        </p>
+                      </div>
+                    ) : (
+                      <AmountsList
+                        rows={amountsRows}
+                        flaggedAssetIds={flaggedAssetIds}
+                        classColors={new Map(classes.map((item) => [item.categoryId, item.color]))}
+                        accountNames={accountNames}
+                        unresolvedCategoryIds={
+                          new Set(unresolvedAmounts.map((item) => item.categoryId))
+                        }
+                        editMode={editMode}
+                        currency={currency}
+                        allowSells={profile.allowSells}
+                        wholeSharesOnly={profile.wholeSharesOnly}
+                        fundingByAccount={fundingByAccount}
+                        isPriceSyncing={syncPrice.isPending}
+                        actions={{
+                          onInputChange: updatePositionInput,
+                          onReduceToZero: reducePositionToZero,
+                          onRemove: removeAddedPosition,
+                          onToggleExpanded: (assetId) =>
+                            setExpandedAssetIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(assetId)) next.delete(assetId);
+                              else next.add(assetId);
+                              return next;
+                            }),
+                          onAccountAmountChange: updateAccountAmount,
+                          onPriceAction: (assetId, asset) => {
+                            if (asset?.quoteMode === "MARKET") syncPrice.mutate([asset.id]);
+                            else navigate(`/holdings/${assetId}`);
+                          },
+                        }}
+                      />
+                    )}
+                    <div className="border-t px-2 py-1.5 sm:px-3">
+                      <AddPositionButton
+                        assets={eligibleAssets}
+                        excludedAssetIds={new Set(positions.map((position) => position.assetId))}
+                        onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
+                      />
                     </div>
-                  ) : (
-                    <AmountsList
-                      rows={amountsRows}
-                      flaggedAssetIds={flaggedAssetIds}
-                      classColors={new Map(classes.map((item) => [item.categoryId, item.color]))}
-                      accountNames={accountNames}
-                      unresolvedCategoryIds={
-                        new Set(unresolvedAmounts.map((item) => item.categoryId))
-                      }
-                      editMode={editMode}
-                      currency={currency}
-                      allowSells={profile.allowSells}
-                      wholeSharesOnly={profile.wholeSharesOnly}
-                      fundingByAccount={fundingByAccount}
-                      isPriceSyncing={syncPrice.isPending}
-                      actions={{
-                        onInputChange: updatePositionInput,
-                        onReduceToZero: reducePositionToZero,
-                        onRemove: removeAddedPosition,
-                        onToggleExpanded: (assetId) =>
-                          setExpandedAssetIds((current) => {
-                            const next = new Set(current);
-                            if (next.has(assetId)) next.delete(assetId);
-                            else next.add(assetId);
-                            return next;
-                          }),
-                        onAccountAmountChange: updateAccountAmount,
-                        onPriceAction: (assetId, asset) => {
-                          if (asset?.quoteMode === "MARKET") syncPrice.mutate([asset.id]);
-                          else navigate(`/holdings/${assetId}`);
-                        },
-                      }}
-                    />
-                  )}
-                  <div className="border-t px-2 py-1.5 sm:px-3">
-                    <AddPositionButton
-                      assets={eligibleAssets}
-                      excludedAssetIds={new Set(positions.map((position) => position.assetId))}
-                      onSelect={(assetId) => setAddedAssetIds((current) => [...current, assetId])}
-                    />
                   </div>
+                ) : (
+                  <ReviewChanges
+                    result={result}
+                    isStale={isResultStale}
+                    isCalculating={isPreviewUpdating}
+                    issue={prepared.issue}
+                    calculationError={calculationError}
+                    accountNames={accountNames}
+                    currency={currency}
+                    onReviewIssue={reviewPreparedIssue}
+                  />
+                )}
+
+                {disclosure}
+
+                <div className="flex items-center justify-between gap-3 border-t px-4 py-3 sm:px-5">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setPanel(panel === "review" ? "amounts" : "setup")}
+                  >
+                    <Icons.ArrowLeft className="mr-1.5 h-4 w-4" />
+                    {t("allocation:worksheet.previousPanel", {
+                      panel:
+                        panel === "review"
+                          ? t("allocation:worksheet.stepAmounts")
+                          : t("allocation:worksheet.stepSetup"),
+                    })}
+                  </Button>
+                  {panel === "amounts" && (
+                    <Button onClick={() => setPanel("review")}>
+                      {t("allocation:worksheet.nextPanel", {
+                        panel: t("allocation:worksheet.stepReview"),
+                      })}
+                      <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
-              ) : (
-                <ReviewChanges
-                  result={result}
-                  isStale={isResultStale}
-                  isCalculating={isPreviewUpdating}
-                  issue={prepared.issue}
-                  calculationError={calculationError}
-                  accountNames={accountNames}
-                  currency={currency}
-                  onReviewIssue={reviewPreparedIssue}
-                />
-              )}
+              </CardContent>
+            </Card>
 
-              <div className="border-t px-4 py-3 sm:px-5">
-                <details>
-                  <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium">
-                    {t("allocation:worksheet.limitationsTitle")}
-                  </summary>
-                  <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
-                    {t("allocation:worksheet.fullDisclosure")}
-                  </p>
-                </details>
-              </div>
-            </CardContent>
-          </Card>
-
-          <ImpactRail
-            report={driftReport}
-            result={result}
-            isStale={isResultStale}
-            classes={classes}
-            rows={amountsRows.map((row) => ({
-              assetId: row.position.assetId,
-              symbol: row.position.symbol,
-              shares: row.position.categoryExposures,
-              change: row.changeAmount,
-            }))}
-            unresolved={unresolvedAmounts}
-            issueMessage={prepared.issue?.message}
-            calculationError={calculationError}
-            isCalculating={isPreviewUpdating}
-            firstUseOpen={firstUseOpen}
-            onCalculate={() => void calculate()}
-            onReviewIssue={reviewPreparedIssue}
-            onClassifySecurity={(lineId) => {
-              const assetId = result?.lines.find((line) => line.lineId === lineId)?.assetId;
-              if (assetId) navigate(`/holdings/${assetId}`);
-            }}
-          />
-        </div>
-      </HighlightStoreContext.Provider>
+            <div className="space-y-4 lg:sticky lg:top-4">
+              <ImpactRail
+                report={driftReport}
+                result={result}
+                isStale={isResultStale}
+                classes={classes}
+                rows={amountsRows.map((row) => ({
+                  assetId: row.position.assetId,
+                  symbol: row.position.symbol,
+                  shares: row.position.categoryExposures,
+                  change: row.changeAmount,
+                }))}
+                unresolved={unresolvedAmounts}
+                issueMessage={prepared.issue?.message}
+                calculationError={calculationError}
+                isCalculating={isPreviewUpdating}
+                firstUseOpen={firstUseOpen}
+                onCalculate={() => void calculate()}
+                onReviewIssue={reviewPreparedIssue}
+                onClassifySecurity={(lineId) => {
+                  const assetId = result?.lines.find((line) => line.lineId === lineId)?.assetId;
+                  if (assetId) navigate(`/holdings/${assetId}`);
+                }}
+              />
+              <Card className="overflow-hidden">
+                <CardContent className="p-0">
+                  <FundingSummary
+                    result={isResultStale ? null : result}
+                    accountNames={accountNames}
+                    currency={currency}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </HighlightStoreContext.Provider>
+      )}
     </div>
+  );
+}
+
+interface WorksheetStepperProps {
+  panel: WorksheetPanel;
+  onSelect: (panel: WorksheetPanel) => void;
+  changedCount: number;
+  isOutOfDate: boolean;
+}
+
+/**
+ * Every step is a button: any panel, ahead or behind, opens on the current
+ * worksheet, and nothing is calculated on the way.
+ */
+function WorksheetStepper({ panel, onSelect, changedCount, isOutOfDate }: WorksheetStepperProps) {
+  const { t } = useTranslation();
+  const steps: { id: WorksheetPanel; label: string; note?: ReactNode }[] = [
+    {
+      id: "setup",
+      label: t("allocation:worksheet.stepSetup"),
+      note: isOutOfDate ? (
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+      ) : undefined,
+    },
+    {
+      id: "amounts",
+      label: t("allocation:worksheet.stepAmounts"),
+      note:
+        changedCount > 0 ? (
+          <span className="font-mono text-[11px] opacity-70">
+            {t("allocation:worksheet.lineCount", { count: changedCount })}
+          </span>
+        ) : undefined,
+    },
+    { id: "review", label: t("allocation:worksheet.stepReview") },
+  ];
+
+  return (
+    <nav
+      aria-label={t("allocation:worksheet.title")}
+      className="border-border bg-muted/20 inline-flex flex-wrap rounded-full border p-1"
+    >
+      {steps.map((step, index) => (
+        <button
+          key={step.id}
+          type="button"
+          aria-current={panel === step.id ? "step" : undefined}
+          onClick={() => onSelect(step.id)}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs transition-colors",
+            panel === step.id
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <span className="font-mono text-[10px] opacity-60">{index + 1}</span>
+          {step.label}
+          {step.note}
+        </button>
+      ))}
+    </nav>
   );
 }

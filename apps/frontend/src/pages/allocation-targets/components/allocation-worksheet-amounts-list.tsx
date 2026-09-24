@@ -19,6 +19,7 @@ import {
   partialShareBps,
   partitionAmountsRows,
   rowEmphasis,
+  rowStaysOpen,
   type HighlightTarget,
   type RowStatus,
 } from "./allocation-worksheet-amounts";
@@ -99,8 +100,23 @@ export function AmountsList({
   ...shared
 }: AmountsListProps) {
   const { t } = useTranslation();
+  const changedAssetIds = new Set(
+    rows.filter((row) => row.isChanged).map((row) => row.position.assetId),
+  );
   const [touchedAssetIds, setTouchedAssetIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [showCollapsed, setShowCollapsed] = useState(false);
+  // With nothing to decide yet, before a calculation or any typing, the whole
+  // list is the work: it opens rather than hiding every row behind one line.
+  const [showCollapsed, setShowCollapsed] = useState(
+    () =>
+      !rows.some((row) =>
+        rowStaysOpen(row.position, {
+          changedAssetIds,
+          flaggedAssetIds,
+          unresolvedCategoryIds,
+          touchedAssetIds: new Set(),
+        }),
+      ),
+  );
   const { reset } = useHighlightActions();
   // Leaving the list ends pointing and selection, so nothing stays lit in the rail.
   useEffect(() => reset, [reset]);
@@ -129,9 +145,7 @@ export function AmountsList({
   const { open, collapsed, collapsedValue } = partitionAmountsRows(
     rows.map((row) => row.position),
     {
-      changedAssetIds: new Set(
-        rows.filter((row) => row.isChanged).map((row) => row.position.assetId),
-      ),
+      changedAssetIds,
       flaggedAssetIds,
       unresolvedCategoryIds,
       touchedAssetIds,

@@ -393,7 +393,6 @@
     "afterPercentage": "% finale",
     "allCash": "Tutto",
     "allocateAccountsIssue": "Ripartisci l'intera variazione di {{amount}} per {{symbol}} tra i conti idonei.",
-    "byPosition": "Regola le posizioni",
     "calculatedSummary": "Dall'ultimo calcolo",
     "cashAvailablePending": "lettura dei conti scelti…",
     "cashMustBePositive": "La liquidità da impiegare non può essere negativa.",
@@ -450,7 +449,7 @@
     "noPositionsDescription": "I conti scelti non detengono alcun titolo. Aggiungi un titolo monitorato per modellare una nuova posizione.",
     "noPositionsTitle": "Nessuna posizione in questa vista",
     "noQuoteShort": "Prezzo richiesto",
-    "notCalculatedDescription": "Scegli una modalità, una regola di ripartizione e i titoli idonei, poi ricalcola dall'obiettivo. Puoi anche inserire le variazioni tu stesso.",
+    "notCalculatedDescription": "Scegli una modalità, una regola di ripartizione e i titoli idonei, poi calcola dall'obiettivo. Puoi anche passare agli importi e inserire tu stesso le variazioni.",
     "ofObservedCash": "su {{amount}} nei conti scelti",
     "outsideRangeImpact": "{{before}} → {{after}} allocazioni fuori intervallo",
     "overAllocatedBy": "{{amount}} in eccesso",
@@ -530,6 +529,12 @@
     "checkAmount": "Verifica l'importo",
     "roundedTo": "Arrotondato a {{amount}}",
     "priceFrom": "Prezzo del {{date}}",
-    "notEligible": "Non idoneo"
+    "notEligible": "Non idoneo",
+    "stepSetup": "Impostazione",
+    "stepAmounts": "Importi",
+    "stepReview": "Revisione",
+    "previousPanel": "Indietro: {{panel}}",
+    "nextPanel": "Avanti: {{panel}}",
+    "calculateFromTarget": "Calcola dall'obiettivo"
   }
 }

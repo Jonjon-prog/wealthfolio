@@ -151,7 +151,7 @@ export function ImpactRail({
   const unresolvedByCategory = new Map(unresolved.map((item) => [item.categoryId, item]));
 
   return (
-    <Card className="overflow-hidden lg:sticky lg:top-4">
+    <Card className="overflow-hidden">
       <CardContent className="p-0">
         {selectedLabel && (
           <div className="bg-background flex items-center justify-between gap-2 border-b px-5 py-2 text-xs sm:px-6">

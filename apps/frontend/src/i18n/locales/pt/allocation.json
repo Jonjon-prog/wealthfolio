@@ -393,7 +393,6 @@
     "afterPercentage": "% final",
     "allCash": "Tudo",
     "allocateAccountsIssue": "Distribua a variação completa de {{amount}} de {{symbol}} entre as contas elegíveis.",
-    "byPosition": "Ajustar posições",
     "calculatedSummary": "Do último cálculo",
     "cashAvailablePending": "lendo as contas escolhidas…",
     "cashMustBePositive": "O caixa a alocar não pode ser negativo.",
@@ -450,7 +449,7 @@
     "noPositionsDescription": "As contas escolhidas não detêm nenhum ativo. Adicione um ativo acompanhado para modelar uma nova posição.",
     "noPositionsTitle": "Nenhuma posição nesta visualização",
     "noQuoteShort": "Preço necessário",
-    "notCalculatedDescription": "Escolha um modo, uma regra de distribuição e ativos elegíveis e depois recalcule a partir da meta. Você também pode informar as variações por conta própria.",
+    "notCalculatedDescription": "Escolha um modo, uma regra de distribuição e ativos elegíveis e depois calcule a partir da meta. Você também pode ir para Valores e informar as variações por conta própria.",
     "ofObservedCash": "de {{amount}} nas contas escolhidas",
     "outsideRangeImpact": "{{before}} → {{after}} alocações fora da faixa",
     "overAllocatedBy": "{{amount}} alocados a mais",
@@ -530,6 +529,12 @@
     "checkAmount": "Verifique o valor",
     "roundedTo": "Arredondado para {{amount}}",
     "priceFrom": "Preço de {{date}}",
-    "notEligible": "Não elegível"
+    "notEligible": "Não elegível",
+    "stepSetup": "Configuração",
+    "stepAmounts": "Valores",
+    "stepReview": "Revisão",
+    "previousPanel": "Anterior: {{panel}}",
+    "nextPanel": "Próximo: {{panel}}",
+    "calculateFromTarget": "Calcular a partir da meta"
   }
 }

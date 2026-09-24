@@ -382,7 +382,6 @@
     "afterPercentage": "Final %",
     "allCash": "All",
     "allocateAccountsIssue": "Allocate the full {{amount}} change for {{symbol}} across eligible accounts.",
-    "byPosition": "Adjust positions",
     "calculatedSummary": "From the last calculation",
     "cashAvailablePending": "reading the accounts you chose…",
     "cashMustBePositive": "Cash to deploy cannot be negative.",
@@ -437,7 +436,7 @@
     "noPositionsDescription": "The accounts you chose hold no security. Add a tracked security to model a new position.",
     "noPositionsTitle": "No positions in this view",
     "noQuoteShort": "Price required",
-    "notCalculatedDescription": "Choose a mode, an allocation rule, and eligible securities, then recalculate from target. You can also enter changes yourself.",
+    "notCalculatedDescription": "Choose a mode, an allocation rule, and eligible securities, then calculate from target. You can also go to Amounts and enter changes yourself.",
     "ofObservedCash": "of {{amount}} in the accounts you chose",
     "outsideRangeImpact": "{{before}} → {{after}} allocations outside range",
     "overAllocatedBy": "{{amount}} over allocated",
@@ -514,6 +513,12 @@
     "checkAmount": "Check the amount",
     "roundedTo": "Rounded to {{amount}}",
     "priceFrom": "Price from {{date}}",
-    "notEligible": "Not eligible"
+    "notEligible": "Not eligible",
+    "stepSetup": "Setup",
+    "stepAmounts": "Amounts",
+    "stepReview": "Review",
+    "previousPanel": "Previous: {{panel}}",
+    "nextPanel": "Next: {{panel}}",
+    "calculateFromTarget": "Calculate from target"
   }
 }

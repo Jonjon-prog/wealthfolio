@@ -382,7 +382,6 @@
     "afterPercentage": "最終 %",
     "allCash": "全部",
     "allocateAccountsIssue": "請將 {{symbol}} 的全部變動 {{amount}} 分配到符合條件的帳戶。",
-    "byPosition": "調整持有部位",
     "calculatedSummary": "來自上次計算",
     "cashAvailablePending": "正在讀取所選帳戶…",
     "cashMustBePositive": "待投入現金不能為負數。",
@@ -437,7 +436,7 @@
     "noPositionsDescription": "所選帳戶中沒有證券。新增一個追蹤中的證券來模擬新的持有部位。",
     "noPositionsTitle": "此檢視中沒有持有部位",
     "noQuoteShort": "需要價格",
-    "notCalculatedDescription": "選取模式、分配規則和符合條件的證券，然後從目標重新計算。您也可以自行輸入變動。",
+    "notCalculatedDescription": "選取模式、分配規則和符合條件的證券，然後從目標計算。您也可以前往金額並自行輸入變動。",
     "ofObservedCash": "（所選帳戶中的 {{amount}}）",
     "outsideRangeImpact": "超出區間的配置 {{before}} → {{after}}",
     "overAllocatedBy": "超額分配 {{amount}}",
@@ -514,6 +513,12 @@
     "checkAmount": "請檢查金額",
     "roundedTo": "取整為 {{amount}}",
     "priceFrom": "{{date}} 的價格",
-    "notEligible": "不符合條件"
+    "notEligible": "不符合條件",
+    "stepSetup": "設定",
+    "stepAmounts": "金額",
+    "stepReview": "檢閱",
+    "previousPanel": "上一步：{{panel}}",
+    "nextPanel": "下一步：{{panel}}",
+    "calculateFromTarget": "從目標計算"
   }
 }

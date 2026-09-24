@@ -219,13 +219,22 @@ async function renderWorksheet(report: DriftReport = driftReport) {
     />,
     { wrapper: Providers },
   );
-  await screen.findByRole("button", { name: /Recalculate from target/ });
+  await screen.findByRole("navigation");
   return user;
+}
+
+async function goTo(
+  user: ReturnType<typeof userEvent.setup>,
+  step: "Setup" | "Amounts" | "Review",
+) {
+  await user.click(
+    within(screen.getByRole("navigation")).getByRole("button", { name: new RegExp(step) }),
+  );
 }
 
 async function calculateFromTarget(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /Allocate by current holding proportions/ }));
-  await user.click(screen.getByRole("button", { name: /Recalculate from target/ }));
+  await user.click(screen.getByRole("button", { name: /Calculate from target/ }));
   await waitFor(() => expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200"));
 }
 
@@ -245,7 +254,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
   it("does not calculate adjustments until an allocation rule is chosen", async () => {
     await renderWorksheet();
 
-    expect(screen.getByRole("button", { name: /Recalculate from target/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Calculate from target/ })).toBeDisabled();
     expect(generateMock).not.toHaveBeenCalled();
   });
 
@@ -296,15 +305,47 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
   });
 
+  it("opens on Setup and calculates only from its button, then moves on without calculating", async () => {
+    const user = await renderWorksheet();
+    expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Change for VTI")).not.toBeInTheDocument();
+
+    await calculateFromTarget(user);
+
+    // Once calculated, Setup's button moves on; calculating again is left to
+    // the out-of-date banner.
+    await goTo(user, "Setup");
+    expect(screen.queryByRole("button", { name: /Calculate from target/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next: Amounts" }));
+    expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens any panel from the stepper before a calculation, and calculates nothing", async () => {
+    const user = await renderWorksheet();
+
+    await goTo(user, "Review");
+    await goTo(user, "Amounts");
+    expect(screen.getByLabelText("Change for VTI")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Previous: Setup" }));
+
+    expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toBeInTheDocument();
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
   it("marks the worksheet out of date when an input changes, and leaves it alone", async () => {
     const user = await renderWorksheet();
     await calculateFromTarget(user);
 
+    await goTo(user, "Setup");
     const cashInput = screen.getByRole("textbox", { name: "Cash to deploy" });
     await user.clear(cashInput);
     await user.type(cashInput, "100");
 
     expect(await screen.findByText(/Inputs changed since these adjustments/)).toBeInTheDocument();
+    // The banner follows to every panel, and the amounts are left alone.
+    await goTo(user, "Amounts");
+    expect(screen.getByText(/Inputs changed since these adjustments/)).toBeInTheDocument();
     expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
     expect(generateMock).toHaveBeenCalledTimes(1);
   });
@@ -384,7 +425,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await user.click(
       screen.getByRole("button", { name: /Allocate by current holding proportions/ }),
     );
-    await user.click(screen.getByRole("button", { name: /Recalculate from target/ }));
+    await user.click(screen.getByRole("button", { name: /Calculate from target/ }));
 
     await waitFor(() => expect(generateMock).toHaveBeenCalled());
     expect(generateMock.mock.lastCall?.[0]).toMatchObject({ selectedAccountIds: ["acc-1"] });
@@ -501,6 +542,15 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     document.querySelector<HTMLElement>(`[data-amounts-row="${assetId}"]`)!;
   const railClass = (categoryId: string) =>
     document.querySelector<HTMLElement>(`[data-impact-class="${categoryId}"]`)!;
+  /** Rows out of the collapsed group: those above its counted line. */
+  const rowsAboveLine = () => {
+    const ids: string[] = [];
+    for (const element of document.querySelectorAll("[data-amounts-row], [data-collapsed-rows]")) {
+      if (element.hasAttribute("data-collapsed-rows")) break;
+      ids.push(element.getAttribute("data-amounts-row")!);
+    }
+    return ids;
+  };
   const collapsedLine = () => document.querySelector<HTMLElement>("[data-collapsed-rows]")!;
 
   beforeEach(() => {
@@ -534,38 +584,37 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens short: rows with no change sit behind one counted line", async () => {
+  it("opens the whole list while nothing is decided, behind a line that can fold it", async () => {
     const user = await renderWorksheet(report);
+    await goTo(user, "Amounts");
 
     expect(collapsedLine()).toHaveTextContent("4 securities with no change");
     expect(collapsedLine()).toHaveTextContent("$2,000.00");
-    expect(rowOrder()).toEqual([]);
+    // Below the line, in the list's own order.
+    expect(rowsAboveLine()).toEqual([]);
+    expect(rowOrder()).toEqual(["vti", "vbiax", "bnd", "iau"]);
 
     await user.click(collapsedLine());
-    // Opened below the line, in the list's own order.
-    expect(rowOrder()).toEqual(["vti", "vbiax", "bnd", "iau"]);
+    expect(rowOrder()).toEqual([]);
   });
 
   it("brings a typed row out at once, keeps its focus, and keeps it out until the list is left", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
 
-    const input = screen.getByLabelText("Change for BND");
-    await user.type(input, "100");
+    await user.type(screen.getByLabelText("Change for BND"), "100");
     // Moved out of the group while typing, without losing a keystroke.
+    expect(rowsAboveLine()).toEqual(["bnd"]);
     expect(screen.getByLabelText("Change for BND")).toHaveValue("100");
     expect(screen.getByLabelText("Change for BND")).toHaveFocus();
 
-    await user.click(collapsedLine());
-    expect(rowOrder()).toEqual(["bnd"]);
-
     // Cleared back to zero: it stays under the cursor for this visit.
     await user.clear(screen.getByLabelText("Change for BND"));
-    expect(rowOrder()).toEqual(["bnd"]);
+    expect(rowsAboveLine()).toEqual(["bnd"]);
 
-    await user.click(screen.getByRole("button", { name: "Review adjustments" }));
-    await user.click(screen.getByRole("button", { name: "Adjust positions" }));
-    expect(rowOrder()).toEqual([]);
+    await goTo(user, "Review");
+    await goTo(user, "Amounts");
+    expect(rowsAboveLine()).toEqual([]);
     expect(collapsedLine()).toHaveTextContent("4 securities with no change");
   });
 
@@ -591,7 +640,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("lights both classes of a mixed fund with its share of the change", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
     await user.type(screen.getByLabelText("Change for VBIAX"), "1200");
 
     await user.hover(row("vbiax"));
@@ -610,12 +659,10 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("lights the rows touching a class, and says how many sit in the collapsed group", async () => {
     const user = await renderWorksheet(report);
+    await goTo(user, "Amounts");
 
     await user.hover(railClass("bond"));
     expect(collapsedLine()).toHaveTextContent("2 of them touch Bonds");
-
-    await user.click(collapsedLine());
-    await user.hover(railClass("bond"));
     expect(row("vbiax")).toHaveAttribute("data-emphasis", "lit");
     expect(row("bnd")).toHaveAttribute("data-emphasis", "lit");
     expect(row("vti")).toHaveAttribute("data-emphasis", "dim");
@@ -626,7 +673,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("keeps a selection without filtering or reordering the list", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
     const order = rowOrder();
 
     await user.click(within(row("vbiax")).getAllByText("VBIAX")[0]);
@@ -648,7 +695,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("selects the row when its amount field is tapped", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
 
     await user.pointer({ keys: "[TouchA]", target: screen.getByLabelText("Change for BND") });
 
@@ -657,7 +704,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("shows the weight a changed row reaches against the planning total", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
     expect(row("bnd")).toHaveTextContent("15.0%");
 
     await user.type(screen.getByLabelText("Change for BND"), "100");
@@ -681,7 +728,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
       ],
     } as unknown as AllocationWorksheetResult);
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
 
     await user.type(screen.getByLabelText("Change for BND"), "100");
 
@@ -692,7 +739,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
   it("does not render the worksheet again while pointing", async () => {
     const user = await renderWorksheet(report);
-    await user.click(collapsedLine());
+    await goTo(user, "Amounts");
     // Let the preview of the worksheet as it stands land first.
     await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
     await waitFor(() => expect(screen.queryByText("Updating…")).not.toBeInTheDocument());

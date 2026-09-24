@@ -378,7 +378,6 @@
     "afterPercentage": "最終 %",
     "allCash": "すべて",
     "allocateAccountsIssue": "{{symbol}}の変更額{{amount}}の全額を対象口座に配分してください。",
-    "byPosition": "ポジションを調整",
     "calculatedSummary": "前回の計算結果",
     "cashAvailablePending": "選択した口座を読み込み中…",
     "cashMustBePositive": "投入する現金をマイナスにすることはできません。",
@@ -431,7 +430,7 @@
     "noPositionsDescription": "選択した口座に銘柄がありません。追跡中の銘柄を追加して新しいポジションを試算してください。",
     "noPositionsTitle": "この表示にポジションはありません",
     "noQuoteShort": "価格が必要",
-    "notCalculatedDescription": "モード、配分ルール、対象銘柄を選択してから、目標から再計算してください。変更額を自分で入力することもできます。",
+    "notCalculatedDescription": "モード、配分ルール、対象銘柄を選択してから、目標から計算してください。金額に進んで変更額を自分で入力することもできます。",
     "ofObservedCash": "（選択した口座の{{amount}}のうち）",
     "outsideRangeImpact": "範囲外の配分 {{before}} → {{after}}",
     "overAllocatedBy": "{{amount}}の配分超過",
@@ -505,6 +504,12 @@
     "checkAmount": "金額を確認",
     "roundedTo": "{{amount}}に端数調整",
     "priceFrom": "{{date}}時点の価格",
-    "notEligible": "対象外"
+    "notEligible": "対象外",
+    "stepSetup": "設定",
+    "stepAmounts": "金額",
+    "stepReview": "確認",
+    "previousPanel": "前へ: {{panel}}",
+    "nextPanel": "次へ: {{panel}}",
+    "calculateFromTarget": "目標から計算"
   }
 }

@@ -393,7 +393,6 @@
     "afterPercentage": "% final",
     "allCash": "Tout",
     "allocateAccountsIssue": "Répartissez la totalité de la variation de {{amount}} de {{symbol}} entre les comptes éligibles.",
-    "byPosition": "Ajuster les positions",
     "calculatedSummary": "Issu du dernier calcul",
     "cashAvailablePending": "lecture des comptes choisis…",
     "cashMustBePositive": "La trésorerie à déployer ne peut pas être négative.",
@@ -450,7 +449,7 @@
     "noPositionsDescription": "Les comptes choisis ne détiennent aucun titre. Ajoutez un titre suivi pour modéliser une nouvelle position.",
     "noPositionsTitle": "Aucune position dans cette vue",
     "noQuoteShort": "Prix requis",
-    "notCalculatedDescription": "Choisissez un mode, une règle de répartition et des titres éligibles, puis recalculez depuis la cible. Vous pouvez aussi saisir les variations vous-même.",
+    "notCalculatedDescription": "Choisissez un mode, une règle de répartition et des titres éligibles, puis calculez depuis la cible. Vous pouvez aussi passer aux montants et saisir les variations vous-même.",
     "ofObservedCash": "sur {{amount}} dans les comptes choisis",
     "outsideRangeImpact": "{{before}} → {{after}} allocations hors fourchette",
     "overAllocatedBy": "{{amount}} en trop",
@@ -530,6 +529,12 @@
     "checkAmount": "Montant à vérifier",
     "roundedTo": "Arrondi à {{amount}}",
     "priceFrom": "Prix du {{date}}",
-    "notEligible": "Non éligible"
+    "notEligible": "Non éligible",
+    "stepSetup": "Configuration",
+    "stepAmounts": "Montants",
+    "stepReview": "Revue",
+    "previousPanel": "Précédent : {{panel}}",
+    "nextPanel": "Suivant : {{panel}}",
+    "calculateFromTarget": "Calculer depuis la cible"
   }
 }
