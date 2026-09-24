@@ -201,6 +201,37 @@ const previewResult: AllocationWorksheetResult = {
   sourceRecords: [],
 };
 
+/** A resolved line of VTI, as the preview returns it. */
+function previewLine(
+  overrides: Partial<AllocationWorksheetResult["lines"][number]>,
+): AllocationWorksheetResult["lines"][number] {
+  return {
+    lineId: "line",
+    direction: "increase",
+    assetId: "vti",
+    accountId: "acc-1",
+    symbol: "VTI",
+    name: "Total market",
+    inputMode: "amount",
+    inputValue: 0,
+    quantity: 2,
+    unitPrice: 100,
+    estimatedAmount: 200,
+    contractMultiplier: 1,
+    quoteSource: {
+      id: "q",
+      sourceType: "quote",
+      value: 100,
+      fromCurrency: "USD",
+      toCurrency: "USD",
+      timestamp: "2026-09-20T00:00:00Z",
+      isStale: false,
+    },
+    categoryExposures: [],
+    ...overrides,
+  };
+}
+
 async function renderWorksheet(report: DriftReport = driftReport) {
   const user = userEvent.setup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -466,29 +497,16 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
   it("groups the review by account, with the cash each one has left or lacks", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
-    const quote = {
-      id: "q",
-      sourceType: "quote",
-      value: 100,
-      fromCurrency: "USD",
-      toCurrency: "USD",
-      timestamp: "2026-09-20T00:00:00Z",
-      isStale: false,
-    };
-    const line = {
-      assetId: "vti",
-      symbol: "VTI",
-      name: "Total market",
-      quantity: 2,
-      unitPrice: 100,
-      quoteSource: quote,
-      categoryExposures: [],
-    };
     previewMock.mockResolvedValue({
       ...previewResult,
       lines: [
-        { ...line, lineId: "l1", direction: "increase", accountId: "acc-1", estimatedAmount: 1000 },
-        { ...line, lineId: "l2", direction: "reduce", accountId: "acc-2", estimatedAmount: 200 },
+        previewLine({ lineId: "l1", accountId: "acc-1", estimatedAmount: 1000 }),
+        previewLine({
+          lineId: "l2",
+          direction: "reduce",
+          accountId: "acc-2",
+          estimatedAmount: 200,
+        }),
       ],
       accountFunding: [
         {
@@ -538,6 +556,55 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await user.click(within(held).getByRole("button", { name: "Open in Amounts" }));
     expect(await screen.findByText("Account allocation")).toBeInTheDocument();
     expect(screen.getByLabelText("Amount for Brokerage")).toHaveValue("");
+  });
+
+  it("copies and exports the same table once every change is in the review", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage")];
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [previewLine({ lineId: "l1", estimatedAmount: 1000, quantity: 10 })],
+    });
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:worksheet");
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static override createObjectURL = createObjectURL;
+        static override revokeObjectURL = vi.fn();
+      },
+    );
+    const user = await renderWorksheet();
+    await goTo(user, "Review");
+
+    // The actions move from the empty review to the result once the preview lands.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy table" })).toBeEnabled(), {
+      timeout: 2000,
+    });
+    expect(screen.getByText("Warnings and unresolved amounts are included.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy table" }));
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toContain("Adjustment\t\tIncrease\tVTI — Total market\tBrokerage\t1000\t10");
+
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    const csv = await createObjectURL.mock.calls[0][0].text();
+    expect(csv).toContain(
+      `"Adjustment","","Increase","VTI — Total market","Brokerage","1000","10"`,
+    );
+  });
+
+  it("holds export back while a change is not in the review, and says why", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+
+    await goTo(user, "Review");
+
+    expect(screen.getByRole("button", { name: "Copy table" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    expect(
+      screen.getByText("Export is available once every change is in the review."),
+    ).toBeInTheDocument();
   });
 
   it("previews a worksheet with no adjustments instead of refusing it", async () => {

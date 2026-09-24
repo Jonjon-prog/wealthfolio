@@ -29,6 +29,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 import { getAssetTaxonomyAssignments, getHoldingsList } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
@@ -64,6 +65,7 @@ import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amount
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
 import { rowStatus } from "./allocation-worksheet-amounts";
 import { impactClasses, ImpactRail } from "./allocation-worksheet-impact-rail";
+import { downloadCsv, toCsv, toTsv, worksheetExportRows } from "./allocation-worksheet-export";
 import { ReviewPanel } from "./allocation-worksheet-review";
 import {
   adjustmentsFromCalculated,
@@ -1798,6 +1800,103 @@ export function AllocationWorksheetTab({
   }
 
   const changedCount = amountsRows.filter((row) => row.isChanged).length;
+  // Warnings and an out-of-date worksheet travel with the file; only a change
+  // the review cannot include, or a result being recomputed, holds it back.
+  const canExport = Boolean(result && !isResultStale && !prepared.issue && !calculationError);
+  const exportMessage = prepared.issue
+    ? t("allocation:worksheet.exportHeld")
+    : !result
+      ? t("allocation:worksheet.exportNothing")
+      : isResultStale
+        ? t("allocation:worksheet.reviewUpdating")
+        : calculationError
+          ? calculationError.title
+          : [
+              t("allocation:worksheet.exportIncludes"),
+              isOutOfDate ? t("allocation:worksheet.exportOutOfDateNote") : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+  async function exportWorksheet(format: "copy" | "csv") {
+    if (!result || !canExport) return;
+    const calculated = generated?.calculated ?? null;
+    const scaling = calculated
+      ? [
+          calculated.scaling.increaseFactor != null &&
+            t("allocation:worksheet.increasesScaled", {
+              percent: formatDecimalInput(calculated.scaling.increaseFactor * 100, 1),
+            }),
+          calculated.scaling.reductionFactor != null &&
+            t("allocation:worksheet.reductionsScaled", {
+              percent: formatDecimalInput(calculated.scaling.reductionFactor * 100, 1),
+            }),
+        ].filter((sentence): sentence is string => Boolean(sentence))
+      : [];
+    const table = worksheetExportRows(
+      {
+        result,
+        calculated,
+        accountNames,
+        accountIds: changeAccountIds,
+        trackedCashToUse,
+        externalCash: externalTotal,
+      },
+      {
+        title: t("allocation:worksheet.title"),
+        target: t("allocation:worksheet.exportTarget"),
+        calculatedAt: t("allocation:worksheet.exportCalculatedAt"),
+        accounts: t("allocation:worksheet.accountsLabel"),
+        mode: t("allocation:worksheet.modeLabel"),
+        // What the worksheet was calculated from, or that it was entered by hand.
+        modeValue: !calculated
+          ? t("allocation:worksheet.exportNotCalculated")
+          : calculated.mode === "rebalance"
+            ? t("allocation:worksheet.modeRebalance")
+            : t("allocation:worksheet.modeInvestCash"),
+        rule: t("allocation:worksheet.ruleLabel"),
+        ruleValue: calculated
+          ? t("allocation:worksheet.ruleCurrentHoldingProportions")
+          : t("allocation:worksheet.exportNotCalculated"),
+        trackedCash: t("allocation:worksheet.exportTrackedCash"),
+        externalCash: t("allocation:worksheet.externalCash"),
+        eligible: t("allocation:worksheet.exportEligible"),
+        eligibleValue:
+          eligibility.eligibleAssetIds === undefined
+            ? t("allocation:worksheet.exportAllRecorded")
+            : String(eligibility.eligibleAssetIds.length),
+        scaling,
+        outOfDate: isOutOfDate ? t("allocation:worksheet.exportOutOfDate") : undefined,
+        status: t("allocation:worksheet.status"),
+        category: t("allocation:worksheet.exportCategory"),
+        direction: t("allocation:worksheet.direction"),
+        security: t("allocation:worksheet.security"),
+        account: t("allocation:worksheet.account"),
+        amount: t("allocation:worksheet.exportAmount"),
+        quantity: t("allocation:worksheet.exportQuantity"),
+        price: t("allocation:worksheet.unitPrice"),
+        priceDate: t("allocation:worksheet.exportPriceDate"),
+        warnings: t("allocation:worksheet.exportWarnings"),
+        statusAdjustment: t("allocation:worksheet.exportStatusAdjustment"),
+        statusUnresolved: t("allocation:worksheet.exportStatusUnresolved"),
+        increase: t("allocation:worksheet.increase"),
+        reduce: t("allocation:worksheet.reduce"),
+        unknownAccount: t("allocation:worksheet.unknownAccount"),
+        limitationsTitle: t("allocation:worksheet.limitationsTitle"),
+        limitations: t("allocation:worksheet.fullDisclosure"),
+      },
+    );
+    if (format === "csv") {
+      downloadCsv(toCsv(table), result.calculatedAt.slice(0, 10));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(toTsv(table));
+      toast.success(t("allocation:worksheet.tableCopied"));
+    } catch {
+      toast.error(t("allocation:worksheet.copyFailed"));
+    }
+  }
   const recalculateButton = (
     <Button
       size="sm"
@@ -2088,6 +2187,39 @@ export function AllocationWorksheetTab({
                       const issue = prepared.rowIssues.get(assetId);
                       if (issue) openIssue(issue);
                     }}
+                    exportActions={
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 sm:px-5">
+                        <p
+                          className={cn(
+                            "min-w-0 flex-1 text-xs leading-relaxed",
+                            prepared.issue
+                              ? "text-amber-800 dark:text-amber-200"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {exportMessage}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!canExport}
+                            onClick={() => void exportWorksheet("copy")}
+                          >
+                            <Icons.Copy className="mr-1.5 h-4 w-4" />
+                            {t("allocation:worksheet.copyTable")}
+                          </Button>
+                          <Button
+                            size="sm"
+                            disabled={!canExport}
+                            onClick={() => void exportWorksheet("csv")}
+                          >
+                            <Icons.Download className="mr-1.5 h-4 w-4" />
+                            {t("allocation:worksheet.exportCsv")}
+                          </Button>
+                        </div>
+                      </div>
+                    }
                   />
                 )}
 

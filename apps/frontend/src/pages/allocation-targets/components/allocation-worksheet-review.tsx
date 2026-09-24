@@ -8,6 +8,7 @@ import {
   useDateFormatting,
   useNumberFormatting,
 } from "@wealthfolio/ui";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AllocationWorksheetLineResult, AllocationWorksheetResult } from "@/lib/types";
@@ -38,6 +39,8 @@ interface ReviewPanelProps {
   accountNames: ReadonlyMap<string, string>;
   currency: string;
   onOpenRow: (assetId: string) => void;
+  /** Copy and export, which sit with the result they carry. */
+  exportActions: ReactNode;
 }
 
 function signedLineAmount(line: AllocationWorksheetLineResult): number {
@@ -60,6 +63,7 @@ export function ReviewPanel({
   accountNames,
   currency,
   onOpenRow,
+  exportActions,
 }: ReviewPanelProps) {
   const { t } = useTranslation();
   const { formatAmount, formatPrice } = useAmountFormatting();
@@ -140,6 +144,7 @@ export function ReviewPanel({
             {calculationError?.description ?? t("allocation:worksheet.reviewHint")}
           </p>
         </div>
+        {exportActions}
       </div>
     );
   }
@@ -276,6 +281,8 @@ export function ReviewPanel({
           );
         })}
       </div>
+
+      {exportActions}
 
       <p className="text-muted-foreground border-t px-4 py-3 text-xs leading-relaxed sm:px-5">
         {t("allocation:worksheet.reviewDisclaimer")}
