@@ -500,7 +500,6 @@
     "hideRows": "隱藏",
     "selectedLabel": "已選取：",
     "clearSelection": "清除",
-    "shareOfRow": "{{symbol}} 的 {{share}}",
     "unresolvedInClass": "未解決 {{amount}}：{{reason}}",
     "rowUnclassified": "{{symbol}} 不屬於任何資產類別，因此這裡沒有類別變動。",
     "rowPartlyClassified": "{{symbol}} 的 {{share}} 不屬於任何資產類別。",
@@ -544,6 +543,7 @@
     "exportHeld": "所有變動都納入檢閱後即可匯出。",
     "exportNothing": "尚無可匯出的內容。",
     "exportIncludes": "包含警告和未解決金額。",
-    "exportOutOfDateNote": "檔案會註明計算後輸入已有變更。"
+    "exportOutOfDateNote": "檔案會註明計算後輸入已有變更。",
+    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}"
   }
 }

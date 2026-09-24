@@ -32,6 +32,8 @@ export interface ImpactRailRow {
   symbol: string;
   shares: readonly PositionCategoryExposure[];
   change: number;
+  /** What the security holds of each class across the target's scope. */
+  valueIn: Readonly<Record<string, number>>;
 }
 
 export interface ImpactClass {
@@ -43,6 +45,8 @@ export interface ImpactClass {
   targetBps: number;
   projectedDifferenceBps: number;
   effectiveBandBps: number;
+  currentValue: number;
+  projectedValue: number;
 }
 
 type UnresolvedAmount = CalculatedAdjustments["unresolved"][number];
@@ -82,6 +86,8 @@ export function impactClasses(
       projectedBps: row.currentBps,
       targetBps: row.targetBps,
       projectedDifferenceBps: row.driftBps,
+      currentValue: row.currentValue,
+      projectedValue: row.currentValue,
     }));
   const visibleRows = sourceRows.filter(
     (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
@@ -94,6 +100,8 @@ export function impactClasses(
     projectedBps: row.projectedBps,
     targetBps: row.targetBps,
     projectedDifferenceBps: row.projectedDifferenceBps,
+    currentValue: row.currentValue,
+    projectedValue: row.projectedValue,
     color: allocationTargetColorForRow(row, colorMap, index),
     effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? defaultBandBps,
   }));
@@ -105,6 +113,32 @@ function formatWeight(bps: number): string {
 
 function formatShare(bps: number): string {
   return `${Math.round(bps / 100)}%`;
+}
+
+function formatFraction(fraction: number): string {
+  const percent = fraction * 100;
+  return `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
+}
+
+/**
+ * How big a security is inside a class: its value there over the class's,
+ * now and once its change lands. Answers whether the row weighs much in the
+ * class, which its share of the row (100% for a single-class fund) does not.
+ */
+function shareOfClass(
+  row: ImpactRailRow,
+  item: ImpactClass,
+  weightBps: number,
+): string | undefined {
+  const valueNow = row.valueIn[item.categoryId] ?? 0;
+  const delta = changeInCategory(row.change, weightBps);
+  const now = item.currentValue > 0 ? valueNow / item.currentValue : undefined;
+  const after =
+    Math.abs(delta) >= AMOUNT_EPSILON && item.projectedValue > 0
+      ? Math.max(0, valueNow + delta) / item.projectedValue
+      : undefined;
+  if (after !== undefined) return `${formatFraction(now ?? 0)} → ${formatFraction(after)}`;
+  return now === undefined ? undefined : formatFraction(now);
 }
 
 export function ImpactRail({
@@ -240,14 +274,17 @@ export function ImpactRail({
                 isSelected={
                   selected?.kind === "category" && selected.categoryId === item.categoryId
                 }
-                shareText={
-                  activeRow && share
-                    ? t("allocation:worksheet.shareOfRow", {
-                        share: formatShare(share.weightBps),
+                shareText={(() => {
+                  const inClass =
+                    activeRow && share ? shareOfClass(activeRow, item, share.weightBps) : undefined;
+                  return activeRow && inClass
+                    ? t("allocation:worksheet.rowShareOfClass", {
                         symbol: activeRow.symbol,
+                        share: inClass,
+                        category: item.categoryName,
                       })
-                    : undefined
-                }
+                    : undefined;
+                })()}
                 shareAmount={
                   activeRow && share && Math.abs(activeRow.change) >= AMOUNT_EPSILON
                     ? formatSignedAmount(

@@ -500,7 +500,6 @@
     "hideRows": "Hide",
     "selectedLabel": "Selected:",
     "clearSelection": "Clear",
-    "shareOfRow": "{{share}} of {{symbol}}",
     "unresolvedInClass": "{{amount}} unresolved: {{reason}}",
     "rowUnclassified": "{{symbol}} is in no asset class, so no class here moves.",
     "rowPartlyClassified": "{{share}} of {{symbol}} is in no asset class.",
@@ -544,6 +543,7 @@
     "exportHeld": "Export is available once every change is in the review.",
     "exportNothing": "Nothing to export yet.",
     "exportIncludes": "Warnings and unresolved amounts are included.",
-    "exportOutOfDateNote": "The file notes that inputs changed after the calculation."
+    "exportOutOfDateNote": "The file notes that inputs changed after the calculation.",
+    "rowShareOfClass": "{{symbol}}: {{share}} of {{category}}"
   }
 }

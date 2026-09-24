@@ -500,7 +500,6 @@
     "hideRows": "Ausblenden",
     "selectedLabel": "Ausgewählt:",
     "clearSelection": "Aufheben",
-    "shareOfRow": "{{share}} von {{symbol}}",
     "unresolvedInClass": "{{amount}} offen: {{reason}}",
     "rowUnclassified": "{{symbol}} gehört zu keiner Anlageklasse, daher bewegt sich hier keine Klasse.",
     "rowPartlyClassified": "{{share}} von {{symbol}} gehört zu keiner Anlageklasse.",
@@ -544,6 +543,7 @@
     "exportHeld": "Der Export ist verfügbar, sobald jede Änderung in der Prüfung enthalten ist.",
     "exportNothing": "Noch nichts zu exportieren.",
     "exportIncludes": "Warnungen und offene Beträge sind enthalten.",
-    "exportOutOfDateNote": "Die Datei vermerkt, dass sich die Eingaben nach der Berechnung geändert haben."
+    "exportOutOfDateNote": "Die Datei vermerkt, dass sich die Eingaben nach der Berechnung geändert haben.",
+    "rowShareOfClass": "{{symbol}}: {{share}} von {{category}}"
   }
 }

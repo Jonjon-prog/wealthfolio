@@ -491,7 +491,6 @@
     "hideRows": "非表示",
     "selectedLabel": "選択中:",
     "clearSelection": "解除",
-    "shareOfRow": "{{symbol}}の{{share}}",
     "unresolvedInClass": "未解決 {{amount}}: {{reason}}",
     "rowUnclassified": "{{symbol}}はどの資産クラスにも属さないため、ここで動くクラスはありません。",
     "rowPartlyClassified": "{{symbol}}の{{share}}はどの資産クラスにも属していません。",
@@ -535,6 +534,7 @@
     "exportHeld": "すべての変更が確認に含まれるとエクスポートできます。",
     "exportNothing": "まだエクスポートするものはありません。",
     "exportIncludes": "警告と未解決の金額も含まれます。",
-    "exportOutOfDateNote": "計算後に入力内容が変更されたことがファイルに記載されます。"
+    "exportOutOfDateNote": "計算後に入力内容が変更されたことがファイルに記載されます。",
+    "rowShareOfClass": "{{symbol}}: {{category}}の{{share}}"
   }
 }

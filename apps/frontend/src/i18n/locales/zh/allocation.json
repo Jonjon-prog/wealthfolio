@@ -491,7 +491,6 @@
     "hideRows": "隐藏",
     "selectedLabel": "已选择：",
     "clearSelection": "清除",
-    "shareOfRow": "{{symbol}} 的 {{share}}",
     "unresolvedInClass": "未解决 {{amount}}：{{reason}}",
     "rowUnclassified": "{{symbol}} 不属于任何资产类别，因此这里没有类别变动。",
     "rowPartlyClassified": "{{symbol}} 的 {{share}} 不属于任何资产类别。",
@@ -535,6 +534,7 @@
     "exportHeld": "所有变动都纳入审阅后即可导出。",
     "exportNothing": "暂无可导出的内容。",
     "exportIncludes": "包含警告和未解决金额。",
-    "exportOutOfDateNote": "文件会注明计算后输入已发生变化。"
+    "exportOutOfDateNote": "文件会注明计算后输入已发生变化。",
+    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}"
   }
 }

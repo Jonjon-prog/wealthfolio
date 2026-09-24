@@ -516,7 +516,6 @@
     "hideRows": "Ocultar",
     "selectedLabel": "Seleccionado:",
     "clearSelection": "Borrar",
-    "shareOfRow": "{{share}} de {{symbol}}",
     "unresolvedInClass": "{{amount}} sin resolver: {{reason}}",
     "rowUnclassified": "{{symbol}} no está en ninguna clase de activo, así que aquí no se mueve ninguna clase.",
     "rowPartlyClassified": "El {{share}} de {{symbol}} no está en ninguna clase de activo.",
@@ -560,6 +559,7 @@
     "exportHeld": "La exportación estará disponible cuando todos los cambios estén en la revisión.",
     "exportNothing": "Todavía no hay nada que exportar.",
     "exportIncludes": "Se incluyen las advertencias y los importes sin resolver.",
-    "exportOutOfDateNote": "El archivo indica que los datos de entrada cambiaron después del cálculo."
+    "exportOutOfDateNote": "El archivo indica que los datos de entrada cambiaron después del cálculo.",
+    "rowShareOfClass": "{{symbol}}: {{share}} de {{category}}"
   }
 }

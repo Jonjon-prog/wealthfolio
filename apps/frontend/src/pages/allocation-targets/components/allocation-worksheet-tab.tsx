@@ -1606,6 +1606,15 @@ export function AllocationWorksheetTab({
   });
   const flaggedAssetIds = new Set([...warningsByAsset.keys(), ...prepared.rowIssues.keys()]);
   const unresolvedAmounts = generated?.calculated.unresolved ?? [];
+  // Across the whole scope, like the class totals it is compared with, rather
+  // than only the accounts the worksheet may change.
+  const valueInClassByAsset = new Map<string, Record<string, number>>();
+  for (const row of driftReport.holdings?.rows ?? []) {
+    if (row.isCash || !row.assetId) continue;
+    const values = valueInClassByAsset.get(row.assetId) ?? {};
+    values[row.categoryId] = (values[row.categoryId] ?? 0) + row.value;
+    valueInClassByAsset.set(row.assetId, values);
+  }
   const classes = impactClasses(driftReport, result, profile.driftBandBps);
 
   function updateAdjustment(assetId: string, next: PositionAdjustment | null) {
@@ -2261,6 +2270,7 @@ export function AllocationWorksheetTab({
                   symbol: row.position.symbol,
                   shares: row.position.categoryExposures,
                   change: row.changeAmount,
+                  valueIn: valueInClassByAsset.get(row.position.assetId) ?? {},
                 }))}
                 unresolved={unresolvedAmounts}
                 issueMessage={prepared.issue?.message}

@@ -782,8 +782,8 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     categories: classes.map((row) => ({
       ...row,
       color: "",
-      currentValue: 0,
-      projectedValue: 0,
+      currentValue: row.currentBps / 5,
+      projectedValue: row.currentBps / 5,
       projectedBps: row.currentBps,
       currentDifferenceBps: row.currentBps - row.targetBps,
       projectedDifferenceBps: row.currentBps - row.targetBps,
@@ -896,19 +896,26 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     );
   });
 
-  it("lights both classes of a mixed fund with its share of the change", async () => {
+  it("lights both classes of a mixed fund with how much of each it is", async () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Amounts");
-    await user.type(screen.getByLabelText("Change for VBIAX"), "1200");
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
 
     await user.hover(row("vbiax"));
 
     expect(railClass("us")).toHaveAttribute("data-emphasis", "lit");
     expect(railClass("bond")).toHaveAttribute("data-emphasis", "lit");
     expect(railClass("gold")).toHaveAttribute("data-emphasis", "dim");
-    expect(railClass("us")).toHaveTextContent("60% of VBIAX");
+    // 360 of the 1,260 of US equity, and 240 of the 540 of Bonds.
+    await waitFor(() => expect(railClass("us")).toHaveTextContent("VBIAX: 29% of US equity"));
+    expect(railClass("bond")).toHaveTextContent("VBIAX: 44% of Bonds");
+
+    // Once it changes, each class shows where the fund's share goes and the
+    // part of the change that lands there.
+    await user.type(screen.getByLabelText("Change for VBIAX"), "1200");
+    await user.hover(row("vbiax"));
+    expect(railClass("us")).toHaveTextContent(/VBIAX: 29% → \d+% of US equity/);
     expect(railClass("us")).toHaveTextContent("+$720.00");
-    expect(railClass("bond")).toHaveTextContent("40% of VBIAX");
     expect(railClass("bond")).toHaveTextContent("+$480.00");
 
     await user.unhover(row("vbiax"));
