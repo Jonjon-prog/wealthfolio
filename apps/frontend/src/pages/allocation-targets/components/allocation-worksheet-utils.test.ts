@@ -9,6 +9,7 @@ import {
   formatDecimalInput,
   generationInputsKey,
   parseDecimalInput,
+  placementAccountIds,
   planningTotal,
   type WorksheetGenerationInputs,
 } from "./allocation-worksheet-utils";
@@ -82,6 +83,29 @@ describe("eligible accounts for a change", () => {
 
   it("draws a reduction only from the accounts that hold the security", () => {
     expect(eligibleAccountIdsForChange(-500, ["acc-2"], ["acc-1", "acc-2"])).toEqual(["acc-2"]);
+  });
+});
+
+describe("accounts an allocation lists first", () => {
+  it("lists the holders and keeps the other accounts behind a link", () => {
+    expect(placementAccountIds(["acc-1", "acc-2", "acc-3"], ["acc-2"], [])).toEqual({
+      shown: ["acc-2"],
+      hidden: ["acc-1", "acc-3"],
+    });
+  });
+
+  it("keeps an account with an amount in view, holder or not", () => {
+    expect(placementAccountIds(["acc-1", "acc-2", "acc-3"], ["acc-2"], ["acc-3"])).toEqual({
+      shown: ["acc-2", "acc-3"],
+      hidden: ["acc-1"],
+    });
+  });
+
+  it("lists every account for a security no eligible account holds", () => {
+    expect(placementAccountIds(["acc-1", "acc-2"], ["acc-9"], [])).toEqual({
+      shown: ["acc-1", "acc-2"],
+      hidden: [],
+    });
   });
 });
 

@@ -535,6 +535,8 @@
     "stepReview": "Revisão",
     "previousPanel": "Anterior: {{panel}}",
     "nextPanel": "Próximo: {{panel}}",
-    "calculateFromTarget": "Calcular a partir da meta"
+    "calculateFromTarget": "Calcular a partir da meta",
+    "toggleAccountAllocation": "Editar a distribuição por conta",
+    "placeInAnotherAccount": "Alocar em outra conta"
   }
 }

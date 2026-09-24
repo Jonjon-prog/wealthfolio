@@ -519,6 +519,8 @@
     "stepReview": "Review",
     "previousPanel": "Previous: {{panel}}",
     "nextPanel": "Next: {{panel}}",
-    "calculateFromTarget": "Calculate from target"
+    "calculateFromTarget": "Calculate from target",
+    "toggleAccountAllocation": "Edit account allocation",
+    "placeInAnotherAccount": "Place in another account"
   }
 }

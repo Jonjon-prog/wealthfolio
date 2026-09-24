@@ -464,21 +464,38 @@ function AmountRow({
           )}
         </div>
 
-        <div className="order-4 min-w-0 text-xs sm:order-none">
-          <RowStatusCell
-            status={status}
-            accountNames={accountNames}
-            currency={currency}
-            isExpanded={isExpanded}
-            onToggleExpanded={() => actions.onToggleExpanded(position.assetId)}
-            onPriceAction={() => actions.onPriceAction(position.assetId, asset)}
-            priceActionLabel={
-              asset?.quoteMode === "MARKET"
-                ? t("allocation:worksheet.refreshPrice")
-                : t("allocation:worksheet.addManualPrice")
-            }
-            isPriceSyncing={isPriceSyncing}
-          />
+        <div className="order-4 flex min-w-0 items-center justify-between gap-1 text-xs sm:order-none">
+          <div className="min-w-0">
+            <RowStatusCell
+              status={status}
+              accountNames={accountNames}
+              currency={currency}
+              isExpanded={isExpanded}
+              onToggleExpanded={() => actions.onToggleExpanded(position.assetId)}
+              onPriceAction={() => actions.onPriceAction(position.assetId, asset)}
+              priceActionLabel={
+                asset?.quoteMode === "MARKET"
+                  ? t("allocation:worksheet.refreshPrice")
+                  : t("allocation:worksheet.addManualPrice")
+              }
+              isPriceSyncing={isPriceSyncing}
+            />
+          </div>
+          {/* Placing the change is always reachable, whatever the status says. */}
+          {placement && placement.accounts.length > 1 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-label={t("allocation:worksheet.toggleAccountAllocation")}
+              aria-expanded={isExpanded}
+              onClick={() => actions.onToggleExpanded(position.assetId)}
+            >
+              <Icons.ChevronDown
+                className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-180")}
+              />
+            </Button>
+          )}
         </div>
       </div>
 

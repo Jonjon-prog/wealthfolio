@@ -1,4 +1,5 @@
 import { Button, Icons, useAmountFormatting, useNumberFormatting } from "@wealthfolio/ui";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Account, WorksheetAccountFunding } from "@/lib/types";
@@ -9,6 +10,7 @@ import {
   AMOUNT_EPSILON,
   decimalInputOrZero,
   formatDecimalInput,
+  placementAccountIds,
   type PositionAdjustment,
   type WorksheetPosition,
 } from "./allocation-worksheet-utils";
@@ -47,6 +49,7 @@ export function AccountAllocation({
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
   const { formatQuantity } = useNumberFormatting();
+  const [showOtherAccounts, setShowOtherAccounts] = useState(false);
   const requested = Math.abs(changeAmount);
   const hasEnteredAmount = accounts.some(
     (account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "",
@@ -66,6 +69,18 @@ export function AccountAllocation({
     AMOUNT_EPSILON,
   );
   const isReduce = changeAmount < 0;
+  const { shown, hidden } = placementAccountIds(
+    accounts.map((account) => account.id),
+    position.accountHoldings
+      .filter((holding) => holding.quantity > 0)
+      .map((holding) => holding.accountId),
+    accounts
+      .filter((account) => (adjustment.accountAmounts[account.id] ?? "").trim() !== "")
+      .map((account) => account.id),
+  );
+  const listedAccounts = showOtherAccounts
+    ? accounts
+    : accounts.filter((account) => shown.includes(account.id));
   // Which accounts record the security is a fact about the portfolio, so it is
   // stated whether or not the user has since placed the change by hand. Only
   // the first sentence — that the app placed it — depends on that.
@@ -120,7 +135,7 @@ export function AccountAllocation({
             {t("allocation:worksheet.noEligibleAccounts")}
           </p>
         )}
-        {accounts.map((account) => {
+        {listedAccounts.map((account) => {
           const holding = position.accountHoldings.find((item) => item.accountId === account.id);
           const funding = fundingByAccount.get(account.id);
           const currentAmount = amountFor(account.id);
@@ -226,6 +241,17 @@ export function AccountAllocation({
           );
         })}
       </div>
+      {/* Any other account can still receive the change; it opens a new position there. */}
+      {!showOtherAccounts && hidden.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowOtherAccounts(true)}
+          className="text-foreground mt-3 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+        >
+          <Icons.Plus className="h-3.5 w-3.5" />
+          {t("allocation:worksheet.placeInAnotherAccount")}
+        </button>
+      )}
     </div>
   );
 }

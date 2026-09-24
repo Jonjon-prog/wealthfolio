@@ -425,7 +425,43 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
       .closest<HTMLElement>("[data-account-allocation]")!;
     expect(within(allocation).getByText("Fully allocated")).toBeInTheDocument();
     expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("1200");
-    expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("");
+    // An account without the security waits behind a link, and can still take it.
+    expect(within(allocation).queryByLabelText("Amount for Retirement")).not.toBeInTheDocument();
+    await user.click(within(allocation).getByRole("button", { name: "Place in another account" }));
+    await user.type(within(allocation).getByLabelText("Amount for Retirement"), "200");
+    expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("200");
+    expect(
+      within(allocation).queryByRole("button", { name: "Place in another account" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the account allocation from its chevron whatever the status says", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [{ lineId: "position:vti:acc-1:increase", assetId: "vti" }],
+      warnings: [
+        {
+          id: "w1",
+          kind: "stale_quote",
+          lineId: "position:vti:acc-1:increase",
+          message: "VTI is priced from a dated quote.",
+          acknowledgementRequired: false,
+        },
+      ],
+    } as unknown as AllocationWorksheetResult);
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+
+    // The status reports the warning, so it no longer names the account.
+    expect(await screen.findByText("1 warning", {}, { timeout: 2000 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit account allocation" }));
+
+    const allocation = screen
+      .getByText("Account allocation")
+      .closest<HTMLElement>("[data-account-allocation]")!;
+    expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("1200");
   });
 
   it("previews a worksheet with no adjustments instead of refusing it", async () => {

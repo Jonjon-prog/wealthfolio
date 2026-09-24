@@ -510,6 +510,8 @@
     "stepReview": "確認",
     "previousPanel": "前へ: {{panel}}",
     "nextPanel": "次へ: {{panel}}",
-    "calculateFromTarget": "目標から計算"
+    "calculateFromTarget": "目標から計算",
+    "toggleAccountAllocation": "口座別の配分を編集",
+    "placeInAnotherAccount": "別の口座に配置"
   }
 }

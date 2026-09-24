@@ -160,6 +160,32 @@ export function soleHoldingAccountId(
 }
 
 /**
+ * Which accounts an account allocation lists straight away (§6).
+ *
+ * The accounts that hold the security are a fact and come first. Any other
+ * account the change could go to waits behind "Place in another account",
+ * unless it already carries an amount. A security no eligible account holds
+ * lists every account: there is no fact to put first.
+ */
+export function placementAccountIds(
+  eligibleAccountIds: readonly string[],
+  heldAccountIds: readonly string[],
+  enteredAccountIds: readonly string[],
+): { shown: string[]; hidden: string[] } {
+  const held = new Set(heldAccountIds);
+  if (!eligibleAccountIds.some((accountId) => held.has(accountId))) {
+    return { shown: [...eligibleAccountIds], hidden: [] };
+  }
+  const entered = new Set(enteredAccountIds);
+  const shown: string[] = [];
+  const hidden: string[] = [];
+  for (const accountId of eligibleAccountIds) {
+    (held.has(accountId) || entered.has(accountId) ? shown : hidden).push(accountId);
+  }
+  return { shown, hidden };
+}
+
+/**
  * The worksheet the calculated adjustments prefill (§5): one signed amount per
  * security, and the accounts the calculation placed it in. An increase the
  * calculation left unallocated arrives without account amounts, so the user

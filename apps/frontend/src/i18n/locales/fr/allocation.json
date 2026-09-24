@@ -535,6 +535,8 @@
     "stepReview": "Revue",
     "previousPanel": "Précédent : {{panel}}",
     "nextPanel": "Suivant : {{panel}}",
-    "calculateFromTarget": "Calculer depuis la cible"
+    "calculateFromTarget": "Calculer depuis la cible",
+    "toggleAccountAllocation": "Modifier la répartition par compte",
+    "placeInAnotherAccount": "Placer dans un autre compte"
   }
 }

@@ -510,6 +510,8 @@
     "stepReview": "검토",
     "previousPanel": "이전: {{panel}}",
     "nextPanel": "다음: {{panel}}",
-    "calculateFromTarget": "목표에서 계산"
+    "calculateFromTarget": "목표에서 계산",
+    "toggleAccountAllocation": "계좌별 배분 수정",
+    "placeInAnotherAccount": "다른 계좌에 배치"
   }
 }

@@ -519,6 +519,8 @@
     "stepReview": "Prüfung",
     "previousPanel": "Zurück: {{panel}}",
     "nextPanel": "Weiter: {{panel}}",
-    "calculateFromTarget": "Vom Ziel berechnen"
+    "calculateFromTarget": "Vom Ziel berechnen",
+    "toggleAccountAllocation": "Aufteilung nach Konto bearbeiten",
+    "placeInAnotherAccount": "In einem anderen Konto platzieren"
   }
 }

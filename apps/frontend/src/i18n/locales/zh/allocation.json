@@ -510,6 +510,8 @@
     "stepReview": "审阅",
     "previousPanel": "上一步：{{panel}}",
     "nextPanel": "下一步：{{panel}}",
-    "calculateFromTarget": "从目标计算"
+    "calculateFromTarget": "从目标计算",
+    "toggleAccountAllocation": "编辑按账户分配",
+    "placeInAnotherAccount": "分配到其他账户"
   }
 }

@@ -519,6 +519,8 @@
     "stepReview": "檢閱",
     "previousPanel": "上一步：{{panel}}",
     "nextPanel": "下一步：{{panel}}",
-    "calculateFromTarget": "從目標計算"
+    "calculateFromTarget": "從目標計算",
+    "toggleAccountAllocation": "編輯依帳戶分配",
+    "placeInAnotherAccount": "配置到其他帳戶"
   }
 }
