@@ -309,6 +309,7 @@ function AmountRow({
     (state) => state.selected?.kind === "row" && state.selected.assetId === position.assetId,
   );
   const { point, unpoint, select, toggleSelected } = useHighlightActions();
+  const canPlace = placement !== undefined && placement.accounts.length > 1;
   const target: HighlightTarget = { kind: "row", assetId: position.assetId };
   // Said in words as well as colour: "US equity 60%, Bonds 40%".
   const classNames = position.categoryExposures.map((exposure) =>
@@ -335,8 +336,17 @@ function AmountRow({
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) unpoint(target);
       }}
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest("input, button, a")) return;
-        toggleSelected(target);
+        const clicked = event.target as HTMLElement;
+        if (clicked.closest("input, button, a, [data-account-allocation]")) return;
+        if (!canPlace) {
+          toggleSelected(target);
+          return;
+        }
+        // The whole row opens where the change goes; the open row is the
+        // selected one, so its classes stay lit while it is placed.
+        actions.onToggleExpanded(position.assetId);
+        if (!isExpanded) select(target);
+        else if (isSelected) toggleSelected(target);
       }}
       className={cn(
         "cursor-pointer px-4 py-2.5 transition-[opacity,background-color] sm:px-5",
@@ -487,7 +497,7 @@ function AmountRow({
             />
           </div>
           {/* Placing the change is always reachable, whatever the status says. */}
-          {placement && placement.accounts.length > 1 && (
+          {canPlace && (
             <Button
               variant="ghost"
               size="icon"

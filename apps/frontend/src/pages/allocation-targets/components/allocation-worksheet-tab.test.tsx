@@ -476,6 +476,27 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("opens the account allocation from anywhere on the row, and closes it the same way", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    const vti = document.querySelector<HTMLElement>('[data-amounts-row="vti"]')!;
+
+    await user.click(within(vti).getByText("Total market"));
+    expect(within(vti).getByText("Account allocation")).toBeInTheDocument();
+    // The open row is the selected one, so its classes stay lit.
+    expect(vti).toHaveAttribute("aria-current", "true");
+
+    // Working inside the open allocation does not close it.
+    await user.click(within(vti).getByText("Account allocation"));
+    expect(within(vti).getByText("Account allocation")).toBeInTheDocument();
+
+    await user.click(within(vti).getByText("Total market"));
+    expect(within(vti).queryByText("Account allocation")).not.toBeInTheDocument();
+    expect(vti).not.toHaveAttribute("aria-current");
+  });
+
   it("opens the account allocation from its chevron whatever the status says", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
     heldAccountIds.current = ["acc-1"];
