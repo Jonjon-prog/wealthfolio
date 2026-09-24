@@ -521,6 +521,9 @@
     "nextPanel": "下一步：{{panel}}",
     "calculateFromTarget": "從目標計算",
     "toggleAccountAllocation": "編輯依帳戶分配",
-    "placeInAnotherAccount": "配置到其他帳戶"
+    "placeInAnotherAccount": "配置到其他帳戶",
+    "heldTitle": "尚未納入檢閱",
+    "openInAmounts": "在金額中開啟",
+    "accountCashLeft": "剩餘 {{amount}}"
   }
 }

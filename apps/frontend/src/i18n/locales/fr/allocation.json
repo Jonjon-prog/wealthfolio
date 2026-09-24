@@ -537,6 +537,9 @@
     "nextPanel": "Suivant : {{panel}}",
     "calculateFromTarget": "Calculer depuis la cible",
     "toggleAccountAllocation": "Modifier la répartition par compte",
-    "placeInAnotherAccount": "Placer dans un autre compte"
+    "placeInAnotherAccount": "Placer dans un autre compte",
+    "heldTitle": "Pas encore dans la revue",
+    "openInAmounts": "Ouvrir dans Montants",
+    "accountCashLeft": "{{amount}} restants"
   }
 }

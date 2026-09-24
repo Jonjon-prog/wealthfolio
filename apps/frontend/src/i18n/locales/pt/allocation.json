@@ -537,6 +537,9 @@
     "nextPanel": "Próximo: {{panel}}",
     "calculateFromTarget": "Calcular a partir da meta",
     "toggleAccountAllocation": "Editar a distribuição por conta",
-    "placeInAnotherAccount": "Alocar em outra conta"
+    "placeInAnotherAccount": "Alocar em outra conta",
+    "heldTitle": "Ainda fora da revisão",
+    "openInAmounts": "Abrir em Valores",
+    "accountCashLeft": "Restam {{amount}}"
   }
 }

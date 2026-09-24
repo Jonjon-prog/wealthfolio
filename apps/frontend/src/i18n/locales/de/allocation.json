@@ -521,6 +521,9 @@
     "nextPanel": "Weiter: {{panel}}",
     "calculateFromTarget": "Vom Ziel berechnen",
     "toggleAccountAllocation": "Aufteilung nach Konto bearbeiten",
-    "placeInAnotherAccount": "In einem anderen Konto platzieren"
+    "placeInAnotherAccount": "In einem anderen Konto platzieren",
+    "heldTitle": "Noch nicht in der Prüfung",
+    "openInAmounts": "In Beträgen öffnen",
+    "accountCashLeft": "{{amount}} übrig"
   }
 }

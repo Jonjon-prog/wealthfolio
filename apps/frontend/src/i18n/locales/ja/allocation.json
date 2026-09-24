@@ -512,6 +512,9 @@
     "nextPanel": "次へ: {{panel}}",
     "calculateFromTarget": "目標から計算",
     "toggleAccountAllocation": "口座別の配分を編集",
-    "placeInAnotherAccount": "別の口座に配置"
+    "placeInAnotherAccount": "別の口座に配置",
+    "heldTitle": "まだ確認に含まれていない変更",
+    "openInAmounts": "金額で開く",
+    "accountCashLeft": "残り {{amount}}"
   }
 }

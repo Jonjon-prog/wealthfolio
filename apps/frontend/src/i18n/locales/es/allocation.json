@@ -537,6 +537,9 @@
     "nextPanel": "Siguiente: {{panel}}",
     "calculateFromTarget": "Calcular desde el objetivo",
     "toggleAccountAllocation": "Editar el reparto por cuenta",
-    "placeInAnotherAccount": "Asignar a otra cuenta"
+    "placeInAnotherAccount": "Asignar a otra cuenta",
+    "heldTitle": "Aún fuera de la revisión",
+    "openInAmounts": "Abrir en Importes",
+    "accountCashLeft": "Quedan {{amount}}"
   }
 }

@@ -25,8 +25,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
   useAmountFormatting,
-  useDateFormatting,
-  useNumberFormatting,
 } from "@wealthfolio/ui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -66,6 +64,7 @@ import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amount
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
 import { rowStatus } from "./allocation-worksheet-amounts";
 import { impactClasses, ImpactRail } from "./allocation-worksheet-impact-rail";
+import { ReviewPanel } from "./allocation-worksheet-review";
 import {
   adjustmentsFromCalculated,
   AMOUNT_EPSILON,
@@ -962,188 +961,6 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
   );
 }
 
-interface ReviewChangesProps {
-  result: AllocationWorksheetResult | null;
-  isStale: boolean;
-  isCalculating: boolean;
-  issue?: PreparedWorksheetIssue;
-  calculationError: WorksheetCalculationError | null;
-  accountNames: Map<string, string>;
-  currency: string;
-  onReviewIssue: () => void;
-}
-
-function ReviewChanges({
-  result,
-  isStale,
-  isCalculating,
-  issue,
-  calculationError,
-  accountNames,
-  currency,
-  onReviewIssue,
-}: ReviewChangesProps) {
-  const { t } = useTranslation();
-  const { formatAmount, formatPrice } = useAmountFormatting();
-  const { formatQuantity } = useNumberFormatting();
-  const { formatDateTime } = useDateFormatting();
-  const warningsByLine = new Map<string, string[]>();
-  for (const warning of result?.warnings ?? []) {
-    if (!warning.lineId) continue;
-    const warnings = warningsByLine.get(warning.lineId) ?? [];
-    warnings.push(warning.message);
-    warningsByLine.set(warning.lineId, warnings);
-  }
-
-  if (!result) {
-    return (
-      <div className="px-5 py-14 text-center">
-        {isCalculating ? (
-          <Icons.Spinner className="text-muted-foreground mx-auto h-5 w-5 animate-spin" />
-        ) : (
-          <Icons.ListChecks className="text-muted-foreground mx-auto h-5 w-5" />
-        )}
-        <p className="mt-3 text-sm font-medium">
-          {isCalculating
-            ? t("allocation:worksheet.reviewUpdating")
-            : t("allocation:worksheet.reviewEmpty")}
-        </p>
-        <p className="text-muted-foreground mx-auto mt-1 max-w-md text-xs leading-relaxed">
-          {calculationError?.description ?? issue?.message ?? t("allocation:worksheet.reviewHint")}
-        </p>
-        {issue && (
-          <Button size="sm" variant="outline" className="mt-4" onClick={onReviewIssue}>
-            <Icons.AlertCircle className="mr-1.5 h-4 w-4" />
-            {t("allocation:worksheet.reviewWorksheet")}
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4 sm:px-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-mono text-sm font-semibold">
-              {t("allocation:worksheet.reviewChanges")}
-            </h3>
-            <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-[10px]">
-              {t("allocation:worksheet.lineCount", { count: result.lines.length })}
-            </span>
-            {isStale && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-800 dark:text-amber-200">
-                {isCalculating
-                  ? t("allocation:worksheet.updatingPreview")
-                  : t("allocation:worksheet.previewOutOfDate")}
-              </span>
-            )}
-          </div>
-          <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-            {isStale ? t("allocation:worksheet.reviewStale") : t("allocation:worksheet.reviewHint")}
-          </p>
-        </div>
-      </div>
-
-      <div className={cn("transition-opacity", isStale && "pointer-events-none opacity-50")}>
-        <div className="text-muted-foreground bg-muted/15 hidden grid-cols-[5.5rem_minmax(12rem,1.4fr)_minmax(9rem,1fr)_7rem_7rem_9rem] gap-3 border-b px-5 py-3 font-mono text-[10px] uppercase tracking-[0.14em] xl:grid">
-          <span>{t("allocation:worksheet.direction")}</span>
-          <span>{t("allocation:worksheet.security")}</span>
-          <span>{t("allocation:worksheet.account")}</span>
-          <span className="text-right">{t("allocation:worksheet.resolvedAmount")}</span>
-          <span className="text-right">{t("allocation:worksheet.quantity")}</span>
-          <span className="text-right">{t("allocation:worksheet.unitPrice")}</span>
-        </div>
-
-        <div className="divide-y">
-          {result.lines.map((line) => {
-            const warnings = warningsByLine.get(line.lineId) ?? [];
-            return (
-              <div
-                key={line.lineId}
-                className="grid gap-3 px-4 py-4 sm:px-5 xl:grid-cols-[5.5rem_minmax(12rem,1.4fr)_minmax(9rem,1fr)_7rem_7rem_9rem] xl:items-center"
-              >
-                <div>
-                  <span className="bg-muted rounded-full px-2 py-1 font-mono text-[10px] font-medium">
-                    {line.direction === "increase"
-                      ? t("allocation:worksheet.increase")
-                      : t("allocation:worksheet.reduce")}
-                  </span>
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-xs font-semibold">
-                    {line.symbol} · {line.name}
-                  </p>
-                  {warnings.length > 0 && (
-                    <p
-                      className="mt-1 flex items-center gap-1 text-[10px] text-amber-800 dark:text-amber-200"
-                      title={warnings.join("\n")}
-                    >
-                      <Icons.AlertCircle className="h-3 w-3 shrink-0" />
-                      {t("allocation:worksheet.lineWarningCount", { count: warnings.length })}
-                    </p>
-                  )}
-                </div>
-                <p className="truncate font-mono text-xs">
-                  {accountNames.get(line.accountId) ?? t("allocation:worksheet.unknownAccount")}
-                </p>
-                <p className="font-mono text-xs font-semibold tabular-nums xl:text-right">
-                  {formatAmount(line.estimatedAmount, currency)}
-                </p>
-                <p className="font-mono text-xs tabular-nums xl:text-right">
-                  ≈ {formatQuantity(line.quantity)}
-                </p>
-                <div className="xl:text-right">
-                  <TooltipProvider delayDuration={150}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="border-muted-foreground/60 cursor-help border-b border-dotted font-mono text-xs tabular-nums"
-                        >
-                          {formatPrice(line.unitPrice, currency)}
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="left" className="max-w-80 space-y-1 text-xs">
-                        <p>
-                          {t("allocation:worksheet.recordedPriceSource", {
-                            price: formatPrice(
-                              line.quoteSource.value,
-                              line.quoteSource.fromCurrency,
-                            ),
-                            date: formatDateTime(line.quoteSource.timestamp),
-                          })}
-                        </p>
-                        {line.fxSource ? (
-                          <p>
-                            {t("allocation:worksheet.fxConversionSource", {
-                              from: line.fxSource.fromCurrency,
-                              to: line.fxSource.toCurrency,
-                              rate: formatDecimalInput(line.fxSource.value, 6),
-                              date: formatDateTime(line.fxSource.timestamp),
-                            })}
-                          </p>
-                        ) : (
-                          <p>{t("allocation:worksheet.noFxConversion")}</p>
-                        )}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <p className="text-muted-foreground border-t px-4 py-3 text-xs leading-relaxed sm:px-5">
-        {t("allocation:worksheet.reviewDisclaimer")}
-      </p>
-    </div>
-  );
-}
-
 export function AllocationWorksheetTab({
   profile,
   driftReport,
@@ -1898,8 +1715,11 @@ export function AllocationWorksheetTab({
   }
 
   function reviewPreparedIssue() {
-    const issue = prepared.issue;
-    if (!issue) return;
+    if (prepared.issue) openIssue(prepared.issue);
+  }
+
+  /** Opens the panel that owns an issue and puts the cursor where it is fixed. */
+  function openIssue(issue: PreparedWorksheetIssue) {
     // The issue sits on the panel that owns it; the element exists once it renders.
     setPanel(issue.kind === "cash" ? "setup" : "amounts");
     if (issue.assetId) {
@@ -2241,15 +2061,33 @@ export function AllocationWorksheetTab({
                     </div>
                   </div>
                 ) : (
-                  <ReviewChanges
+                  <ReviewPanel
                     result={result}
                     isStale={isResultStale}
                     isCalculating={isPreviewUpdating}
-                    issue={prepared.issue}
+                    worksheetIssue={
+                      prepared.issue && !prepared.issue.assetId ? prepared.issue.message : undefined
+                    }
+                    heldLines={amountsRows.flatMap((row) => {
+                      const issue = prepared.rowIssues.get(row.position.assetId);
+                      return issue
+                        ? [
+                            {
+                              assetId: row.position.assetId,
+                              symbol: row.position.symbol,
+                              change: row.changeAmount,
+                              cause: issue.message,
+                            },
+                          ]
+                        : [];
+                    })}
                     calculationError={calculationError}
                     accountNames={accountNames}
                     currency={currency}
-                    onReviewIssue={reviewPreparedIssue}
+                    onOpenRow={(assetId) => {
+                      const issue = prepared.rowIssues.get(assetId);
+                      if (issue) openIssue(issue);
+                    }}
                   />
                 )}
 
@@ -2304,15 +2142,18 @@ export function AllocationWorksheetTab({
                   if (assetId) navigate(`/holdings/${assetId}`);
                 }}
               />
-              <Card className="overflow-hidden">
-                <CardContent className="p-0">
-                  <FundingSummary
-                    result={isResultStale ? null : result}
-                    accountNames={accountNames}
-                    currency={currency}
-                  />
-                </CardContent>
-              </Card>
+              {/* Review states each account's cash in its own group. */}
+              {panel === "amounts" && (
+                <Card className="overflow-hidden">
+                  <CardContent className="p-0">
+                    <FundingSummary
+                      result={isResultStale ? null : result}
+                      accountNames={accountNames}
+                      currency={currency}
+                    />
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </HighlightStoreContext.Provider>

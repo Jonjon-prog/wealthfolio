@@ -464,6 +464,82 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("1200");
   });
 
+  it("groups the review by account, with the cash each one has left or lacks", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    const quote = {
+      id: "q",
+      sourceType: "quote",
+      value: 100,
+      fromCurrency: "USD",
+      toCurrency: "USD",
+      timestamp: "2026-09-20T00:00:00Z",
+      isStale: false,
+    };
+    const line = {
+      assetId: "vti",
+      symbol: "VTI",
+      name: "Total market",
+      quantity: 2,
+      unitPrice: 100,
+      quoteSource: quote,
+      categoryExposures: [],
+    };
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [
+        { ...line, lineId: "l1", direction: "increase", accountId: "acc-1", estimatedAmount: 1000 },
+        { ...line, lineId: "l2", direction: "reduce", accountId: "acc-2", estimatedAmount: 200 },
+      ],
+      accountFunding: [
+        {
+          accountId: "acc-1",
+          availableCash: 700,
+          externalCash: 0,
+          reductionProceeds: 0,
+          increases: 1000,
+          remaining: -300,
+        },
+        {
+          accountId: "acc-2",
+          availableCash: 0,
+          externalCash: 0,
+          reductionProceeds: 200,
+          increases: 0,
+          remaining: 200,
+        },
+      ],
+    } as unknown as AllocationWorksheetResult);
+    const user = await renderWorksheet();
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
+
+    await goTo(user, "Review");
+
+    const brokerage = await waitFor(
+      () => document.querySelector<HTMLElement>('[data-review-account="acc-1"]')!,
+    );
+    expect(brokerage).toHaveTextContent("Brokerage · 1 entry · +$1,000.00");
+    expect(brokerage).toHaveTextContent("Funding needed: $300.00");
+    const retirement = document.querySelector<HTMLElement>('[data-review-account="acc-2"]')!;
+    expect(retirement).toHaveTextContent("Retirement · 1 entry · −$200.00");
+    expect(retirement).toHaveTextContent("$200.00 left");
+  });
+
+  it("lists a change that cannot be placed yet, and leads back to its row", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+
+    await goTo(user, "Review");
+    const held = document.querySelector<HTMLElement>('[data-held-line="vti"]')!;
+    expect(held).toHaveTextContent("VTI +$1,200.00");
+    expect(held).toHaveTextContent("Allocate the full $1,200.00 change for VTI");
+
+    await user.click(within(held).getByRole("button", { name: "Open in Amounts" }));
+    expect(await screen.findByText("Account allocation")).toBeInTheDocument();
+    expect(screen.getByLabelText("Amount for Brokerage")).toHaveValue("");
+  });
+
   it("previews a worksheet with no adjustments instead of refusing it", async () => {
     accountsRef.current = [account("acc-1", "Brokerage")];
     await renderWorksheet();

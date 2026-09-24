@@ -512,6 +512,9 @@
     "nextPanel": "下一步：{{panel}}",
     "calculateFromTarget": "从目标计算",
     "toggleAccountAllocation": "编辑按账户分配",
-    "placeInAnotherAccount": "分配到其他账户"
+    "placeInAnotherAccount": "分配到其他账户",
+    "heldTitle": "尚未纳入审阅",
+    "openInAmounts": "在金额中打开",
+    "accountCashLeft": "剩余 {{amount}}"
   }
 }

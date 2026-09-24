@@ -521,6 +521,9 @@
     "nextPanel": "Next: {{panel}}",
     "calculateFromTarget": "Calculate from target",
     "toggleAccountAllocation": "Edit account allocation",
-    "placeInAnotherAccount": "Place in another account"
+    "placeInAnotherAccount": "Place in another account",
+    "heldTitle": "Not in the review yet",
+    "openInAmounts": "Open in Amounts",
+    "accountCashLeft": "{{amount}} left"
   }
 }

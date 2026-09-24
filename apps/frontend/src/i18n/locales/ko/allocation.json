@@ -512,6 +512,9 @@
     "nextPanel": "다음: {{panel}}",
     "calculateFromTarget": "목표에서 계산",
     "toggleAccountAllocation": "계좌별 배분 수정",
-    "placeInAnotherAccount": "다른 계좌에 배치"
+    "placeInAnotherAccount": "다른 계좌에 배치",
+    "heldTitle": "아직 검토에 포함되지 않음",
+    "openInAmounts": "금액에서 열기",
+    "accountCashLeft": "{{amount}} 남음"
   }
 }
