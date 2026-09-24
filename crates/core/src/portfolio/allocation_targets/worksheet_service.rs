@@ -27,7 +27,8 @@ use crate::fx::{
     denormalization_multiplier, normalize_currency_code, ExchangeRate, FxServiceTrait,
 };
 use crate::portfolio::allocation::{
-    AllocationServiceTrait, HoldingAllocationContribution, TaxonomyHoldingContributions,
+    AllocationService, AllocationServiceTrait, HoldingAllocationContribution,
+    TaxonomyHoldingContributions,
 };
 use crate::portfolio::holdings::{Holding, HoldingType, HoldingsServiceTrait};
 use crate::quotes::{LatestQuoteSnapshot, QuoteServiceTrait};
@@ -623,6 +624,35 @@ impl AllocationWorksheetService {
         }
     }
 
+    /// An asset's classification, rolled up to the categories the target is
+    /// set on. For a hierarchical taxonomy the drift report measures the
+    /// top-level classes, so a security classified as Gold has to move
+    /// Commodities rather than a Gold row the target never mentions. Shares of
+    /// one asset that land in the same class are merged.
+    fn rolled_up_assignments(
+        assignments: &[AssetTaxonomyAssignment],
+        top_level: &HashMap<&str, &str>,
+    ) -> Vec<AssetTaxonomyAssignment> {
+        let mut rolled_up: Vec<AssetTaxonomyAssignment> = Vec::new();
+        for assignment in assignments {
+            let category_id = top_level
+                .get(assignment.category_id.as_str())
+                .copied()
+                .unwrap_or(assignment.category_id.as_str());
+            match rolled_up
+                .iter_mut()
+                .find(|existing| existing.category_id == category_id)
+            {
+                Some(existing) => existing.weight += assignment.weight,
+                None => rolled_up.push(AssetTaxonomyAssignment {
+                    category_id: category_id.to_string(),
+                    ..assignment.clone()
+                }),
+            }
+        }
+        rolled_up
+    }
+
     fn category_exposures(
         line: &AllocationWorksheetLineInput,
         amount: Decimal,
@@ -1038,6 +1068,11 @@ impl AllocationWorksheetService {
             Self::tracked_cash_to_use(input.cash.tracked_cash_to_use, observed_tracked_cash);
 
         let holdings_by_account = Self::holdings_by_account(&sources.accounts);
+        let top_level = if AllocationService::rollup_to_top_level(&target.taxonomy_id) {
+            AllocationService::build_top_level_map(&sources.taxonomy.categories)
+        } else {
+            HashMap::new()
+        };
         let assignments_by_asset = sources
             .assignments
             .iter()
@@ -1048,7 +1083,15 @@ impl AllocationWorksheetService {
                     .or_default()
                     .push(assignment);
                 map
-            });
+            })
+            .into_iter()
+            .map(|(asset_id, assignments)| {
+                (
+                    asset_id,
+                    Self::rolled_up_assignments(&assignments, &top_level),
+                )
+            })
+            .collect::<HashMap<_, _>>();
         let category_names = sources
             .taxonomy
             .categories
@@ -2456,6 +2499,128 @@ mod tests {
     }
 
     // ── Generation to preview ───────────────────────────────────────────────
+
+    /// Commodities held through a security classified as Gold, two levels down:
+    /// the drift report measures Commodities, and the preview has to as well.
+    #[test]
+    fn a_security_classified_below_a_target_class_moves_that_class() {
+        let portfolio = Portfolio {
+            taxonomy_id: "asset_classes",
+            categories: vec![
+                ("EQUITY", dec!(8000), 7000, false),
+                ("COMMODITIES", dec!(2000), 3000, false),
+            ],
+            total_value: dec!(10000),
+            account_ids: vec!["acc-1"],
+            positions: vec![
+                position("vti", "acc-1", "EQUITY", dec!(80)),
+                position("gold", "acc-1", "COMMODITIES", dec!(20)),
+            ],
+            cash: vec![],
+            allow_sells: true,
+        };
+        let mut taxonomy = portfolio.taxonomy();
+        let commodities = taxonomy
+            .categories
+            .iter()
+            .find(|category| category.id == "COMMODITIES")
+            .unwrap()
+            .clone();
+        taxonomy.categories.extend([
+            Category {
+                id: "COMM_PRECIOUS".to_string(),
+                parent_id: Some("COMMODITIES".to_string()),
+                name: "Precious Metals".to_string(),
+                ..commodities.clone()
+            },
+            Category {
+                id: "COMM_PRECIOUS_GOLD".to_string(),
+                parent_id: Some("COMM_PRECIOUS".to_string()),
+                name: "Gold".to_string(),
+                ..commodities
+            },
+        ]);
+        let cash = WorksheetCashInput {
+            tracked_cash_to_use: Decimal::ZERO,
+            external_contribution: HashMap::from([("acc-1".to_string(), dec!(1000))]),
+        };
+
+        let result = AllocationWorksheetService::preview(
+            &CalculateAllocationWorksheetInput {
+                target_id: "target-1".to_string(),
+                cash,
+                lines: vec![AllocationWorksheetLineInput {
+                    line_id: "line-gold".to_string(),
+                    direction: WorksheetDirection::Increase,
+                    asset_id: "gold".to_string(),
+                    account_id: "acc-1".to_string(),
+                    input_mode: WorksheetInputMode::Amount,
+                    value: dec!(1000),
+                }],
+                account_ids: portfolio.scope(),
+                base_currency: "USD".to_string(),
+                aggregated_account_id: "all".to_string(),
+                selected_account_ids: portfolio.scope(),
+            },
+            &PreviewSources {
+                target: portfolio.target(),
+                drift: portfolio.drift(),
+                weights: portfolio.weights(),
+                taxonomy,
+                accounts: portfolio.accounts(),
+                constraints: Vec::new(),
+                assets_by_id: portfolio.assets_by_id(),
+                quote_snapshots: portfolio.quotes(),
+                assignments: vec![
+                    assignment_for("vti", "EQUITY", 10_000),
+                    assignment_for("gold", "COMM_PRECIOUS_GOLD", 10_000),
+                ],
+                fx_rates: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        // 3000 of 11000 once the 1000 lands in Commodities.
+        assert_eq!(projected_bps(&result, "COMMODITIES"), 2727);
+        assert_eq!(projected_bps(&result, "EQUITY"), 7273);
+        assert!(result
+            .categories
+            .iter()
+            .all(|category| category.category_id != "COMM_PRECIOUS_GOLD"));
+        assert_eq!(
+            result.lines[0].category_exposures[0].category_id,
+            "COMMODITIES"
+        );
+    }
+
+    #[test]
+    fn shares_of_one_asset_in_the_same_class_are_merged_when_rolled_up() {
+        let top_level = HashMap::from([
+            ("COMM_PRECIOUS_GOLD", "COMMODITIES"),
+            ("COMM_PRECIOUS_SILVER", "COMMODITIES"),
+            ("EQUITY_PUBLIC", "EQUITY"),
+        ]);
+        let rolled_up = AllocationWorksheetService::rolled_up_assignments(
+            &[
+                assignment_for("fund", "COMM_PRECIOUS_GOLD", 3_000),
+                assignment_for("fund", "EQUITY_PUBLIC", 4_000),
+                assignment_for("fund", "COMM_PRECIOUS_SILVER", 3_000),
+            ],
+            &top_level,
+        );
+        let weights = rolled_up
+            .iter()
+            .map(|assignment| (assignment.category_id.as_str(), assignment.weight))
+            .collect::<Vec<_>>();
+        assert_eq!(weights, vec![("COMMODITIES", 6_000), ("EQUITY", 4_000)]);
+
+        // A flat taxonomy has no ancestors to roll up to.
+        let flat = AllocationWorksheetService::rolled_up_assignments(
+            &[assignment_for("fund", "COMM_PRECIOUS_GOLD", 10_000)],
+            &HashMap::new(),
+        );
+        assert_eq!(flat[0].category_id, "COMM_PRECIOUS_GOLD");
+    }
 
     #[test]
     fn the_preview_projects_what_the_generation_aimed_for() {
