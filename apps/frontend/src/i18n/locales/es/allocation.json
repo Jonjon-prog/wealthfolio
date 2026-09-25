@@ -566,6 +566,12 @@
     "legendCurrent": "Actual",
     "legendProjected": "Proyectado",
     "legendTarget": "Objetivo",
-    "legendRange": "Rango"
+    "legendRange": "Rango",
+    "addOneUnit": "Añadir una participación de {{symbol}}",
+    "removeOneUnit": "Quitar una participación de {{symbol}}",
+    "perUnit": "{{price}} por participación",
+    "unitsAtPrice_one": "≈ {{quantity}} participación a {{price}}",
+    "unitsAtPrice_other": "≈ {{quantity}} participaciones a {{price}}",
+    "unitsAtPrice_many": "≈ {{quantity}} participaciones a {{price}}"
   }
 }

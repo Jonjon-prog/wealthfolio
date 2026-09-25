@@ -10,8 +10,10 @@ import {
   rowStaysOpen,
   rowStatus,
   sameTarget,
+  stepByUnits,
   trackHalfWindowBps,
   trackPosition,
+  unitsFor,
   type HighlightTarget,
   type OpenRowFacts,
   type RowStatusFacts,
@@ -79,6 +81,43 @@ describe("Amounts highlight", () => {
     expect(changeInCategory(1_200, 6_000)).toBe(720);
     expect(changeInCategory(1_200, 4_000)).toBe(480);
     expect(changeInCategory(-500, 10_000)).toBe(-500);
+  });
+});
+
+describe("stepping by units", () => {
+  it("adds one whole unit as an exact amount the core floors back to the same units", () => {
+    // 3 units at 59.31 typed as 177.93, then one more.
+    const next = stepByUnits(177.93, 59.31, 1, true, 2);
+    expect(next).toBe(237.24);
+    expect(unitsFor(next, 59.31, true)).toBe(4);
+  });
+
+  it("rounds up to the cent, so a price with more decimals keeps the unit just added", () => {
+    const price = 59.311234;
+    const next = stepByUnits(0, price, 1, true, 2);
+    expect(next).toBe(59.32);
+    expect(unitsFor(next, price, true)).toBe(1);
+  });
+
+  it("snaps a typed amount to whole units before stepping", () => {
+    // 200 at 59.31 is 3.37 units: one more is 4, not 4.37.
+    expect(stepByUnits(200, 59.31, 1, true, 2)).toBe(237.24);
+    expect(stepByUnits(200, 59.31, -1, true, 2)).toBe(118.62);
+  });
+
+  it("steps into a reduction, still in whole units", () => {
+    const next = stepByUnits(0, 59.31, -1, true, 2);
+    expect(next).toBe(-59.31);
+    expect(unitsFor(next, 59.31, true)).toBe(1);
+  });
+
+  it("adds a unit's price as it is when fractions are allowed", () => {
+    expect(stepByUnits(100, 59.31, 1, false, 2)).toBe(159.31);
+    expect(unitsFor(159.31, 59.31, false)).toBeCloseTo(2.686, 3);
+  });
+
+  it("follows the currency's smallest unit", () => {
+    expect(stepByUnits(0, 1234.4, 1, true, 0)).toBe(1235);
   });
 });
 

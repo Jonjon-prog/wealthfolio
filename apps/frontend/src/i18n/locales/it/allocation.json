@@ -566,6 +566,12 @@
     "legendCurrent": "Attuale",
     "legendProjected": "Previsto",
     "legendTarget": "Obiettivo",
-    "legendRange": "Intervallo"
+    "legendRange": "Intervallo",
+    "addOneUnit": "Aggiungi una quota di {{symbol}}",
+    "removeOneUnit": "Rimuovi una quota di {{symbol}}",
+    "perUnit": "{{price}} per quota",
+    "unitsAtPrice_one": "≈ {{quantity}} quota a {{price}}",
+    "unitsAtPrice_other": "≈ {{quantity}} quote a {{price}}",
+    "unitsAtPrice_many": "≈ {{quantity}} quote a {{price}}"
   }
 }

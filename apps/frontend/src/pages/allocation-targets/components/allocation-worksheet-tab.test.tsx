@@ -953,6 +953,23 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     expect(railClass("gold")).toHaveAttribute("data-emphasis", "none");
   });
 
+  it("steps a row one unit at a time, with the price in view", async () => {
+    const user = await renderWorksheet(report);
+    await goTo(user, "Amounts");
+    // BND: 10 units recorded at 300, so 30 a unit.
+    expect(row("bnd")).toHaveTextContent("$30.00 per unit");
+
+    await user.click(within(row("bnd")).getByRole("button", { name: "Add one unit of BND" }));
+    await user.click(within(row("bnd")).getByRole("button", { name: "Add one unit of BND" }));
+    // The amount moves; the units it comes to follow.
+    expect(screen.getByLabelText("Change for BND")).toHaveValue("60");
+    expect(row("bnd")).toHaveTextContent("≈ 2 units at $30.00");
+
+    await user.click(within(row("bnd")).getByRole("button", { name: "Remove one unit of BND" }));
+    expect(screen.getByLabelText("Change for BND")).toHaveValue("30");
+    expect(row("bnd")).toHaveTextContent("≈ 1 unit at $30.00");
+  });
+
   it("names the marks on the class tracks", async () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Amounts");

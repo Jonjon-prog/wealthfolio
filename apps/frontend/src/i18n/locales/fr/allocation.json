@@ -566,6 +566,12 @@
     "legendCurrent": "Actuel",
     "legendProjected": "Projeté",
     "legendTarget": "Cible",
-    "legendRange": "Fourchette"
+    "legendRange": "Fourchette",
+    "addOneUnit": "Ajouter une part de {{symbol}}",
+    "removeOneUnit": "Retirer une part de {{symbol}}",
+    "perUnit": "{{price}} la part",
+    "unitsAtPrice_one": "≈ {{quantity}} part à {{price}}",
+    "unitsAtPrice_other": "≈ {{quantity}} parts à {{price}}",
+    "unitsAtPrice_many": "≈ {{quantity}} parts à {{price}}"
   }
 }

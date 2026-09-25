@@ -550,6 +550,11 @@
     "legendCurrent": "Current",
     "legendProjected": "Projected",
     "legendTarget": "Target",
-    "legendRange": "Range"
+    "legendRange": "Range",
+    "addOneUnit": "Add one unit of {{symbol}}",
+    "removeOneUnit": "Remove one unit of {{symbol}}",
+    "perUnit": "{{price}} per unit",
+    "unitsAtPrice_one": "≈ {{quantity}} unit at {{price}}",
+    "unitsAtPrice_other": "≈ {{quantity}} units at {{price}}"
   }
 }

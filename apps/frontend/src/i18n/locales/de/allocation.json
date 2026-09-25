@@ -550,6 +550,11 @@
     "legendCurrent": "Aktuell",
     "legendProjected": "Prognose",
     "legendTarget": "Ziel",
-    "legendRange": "Bandbreite"
+    "legendRange": "Bandbreite",
+    "addOneUnit": "Einen Anteil von {{symbol}} hinzufügen",
+    "removeOneUnit": "Einen Anteil von {{symbol}} entfernen",
+    "perUnit": "{{price}} pro Anteil",
+    "unitsAtPrice_one": "≈ {{quantity}} Anteil zu {{price}}",
+    "unitsAtPrice_other": "≈ {{quantity}} Anteile zu {{price}}"
   }
 }

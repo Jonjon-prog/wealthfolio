@@ -6,6 +6,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
   useAmountFormatting,
+  useNumberFormatting,
 } from "@wealthfolio/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,8 @@ import {
   partitionAmountsRows,
   rowEmphasis,
   rowStaysOpen,
+  stepByUnits,
+  unitsFor,
   type HighlightTarget,
   type RowStatus,
 } from "./allocation-worksheet-amounts";
@@ -47,6 +50,8 @@ export interface AmountsRowModel {
   projectedValue: number;
   /** The weight after the change, against the planning total. */
   projectedPct: number;
+  /** The price one unit resolves at: the preview's when it has one, else the recorded one. */
+  unitPrice: number | undefined;
   status: RowStatus | null;
   asset: Asset | undefined;
   isExpanded: boolean;
@@ -85,7 +90,7 @@ interface AmountsListProps {
 
 /** The grid shared by the header and every row: Position · Weight · Change · Status. */
 const AMOUNTS_GRID =
-  "grid grid-cols-[minmax(0,1fr)_9.5rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_10rem_9rem] sm:items-center";
+  "grid grid-cols-[minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_12.5rem_9rem] sm:items-start";
 
 /**
  * The list of securities, opened short: rows with nothing to decide collapse
@@ -285,7 +290,8 @@ function AmountRow({
   isPriceSyncing,
 }: AmountRowProps) {
   const { t } = useTranslation();
-  const { formatAmount } = useAmountFormatting();
+  const { formatAmount, formatPrice, currencyFractionDigits } = useAmountFormatting();
+  const { formatQuantity } = useNumberFormatting();
   const {
     position,
     adjustment,
@@ -294,6 +300,7 @@ function AmountRow({
     isChanged,
     projectedValue,
     projectedPct,
+    unitPrice,
     status,
     asset,
     isExpanded,
@@ -310,6 +317,16 @@ function AmountRow({
   );
   const { point, unpoint, select, toggleSelected } = useHighlightActions();
   const canPlace = placement !== undefined && placement.accounts.length > 1;
+  const fractionDigits = currencyFractionDigits(currency);
+  // One unit at a time, on the amount: amounts stay primary (§4.6.5).
+  const canStep = editMode === "amount" && unitPrice !== undefined && unitPrice > 0;
+  const downTo = canStep
+    ? stepByUnits(changeAmount, unitPrice, -1, wholeSharesOnly, fractionDigits)
+    : undefined;
+  // Without reductions, a step cannot take the amount below zero.
+  const stepDown = downTo !== undefined && (allowSells || downTo >= 0) ? downTo : undefined;
+  const stepTo = (amount: number) =>
+    actions.onInputChange(position, formatDecimalInput(amount, fractionDigits));
   const target: HighlightTarget = { kind: "row", assetId: position.assetId };
   // Said in words as well as colour: "US equity 60%, Bonds 40%".
   const classNames = position.categoryExposures.map((exposure) =>
@@ -393,9 +410,20 @@ function AmountRow({
 
         <div className="min-w-0">
           <div className="flex items-center gap-1">
-            <div className="border-input bg-background flex h-8 min-w-0 flex-1 items-center rounded-md border px-2 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
+            <div className="border-input bg-background flex h-8 min-w-0 flex-1 items-center rounded-md border px-1 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
+              {canStep && (
+                <button
+                  type="button"
+                  aria-label={t("allocation:worksheet.removeOneUnit", { symbol: position.symbol })}
+                  disabled={stepDown === undefined}
+                  onClick={() => stepDown !== undefined && stepTo(stepDown)}
+                  className="text-muted-foreground hover:text-foreground flex h-6 w-6 shrink-0 items-center justify-center rounded disabled:opacity-30"
+                >
+                  <Icons.Minus className="h-3 w-3" />
+                </button>
+              )}
               {editMode === "amount" && (
-                <span className="text-muted-foreground mr-1.5 text-[11px]">{currency}</span>
+                <span className="text-muted-foreground ml-1 mr-1.5 text-[11px]">{currency}</span>
               )}
               <input
                 aria-label={t("allocation:worksheet.positionInputLabel", {
@@ -433,6 +461,18 @@ function AmountRow({
               />
               {editMode === "after_percentage" && (
                 <span className="text-muted-foreground ml-1 text-xs">%</span>
+              )}
+              {canStep && (
+                <button
+                  type="button"
+                  aria-label={t("allocation:worksheet.addOneUnit", { symbol: position.symbol })}
+                  onClick={() =>
+                    stepTo(stepByUnits(changeAmount, unitPrice, 1, wholeSharesOnly, fractionDigits))
+                  }
+                  className="text-muted-foreground hover:text-foreground ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded"
+                >
+                  <Icons.Plus className="h-3 w-3" />
+                </button>
               )}
             </div>
             {position.isAdded ? (
@@ -475,6 +515,18 @@ function AmountRow({
           {editMode === "after_percentage" && isChanged && (
             <p className="text-muted-foreground mt-0.5 text-right font-mono text-[10px] tabular-nums">
               ≈ {formatSignedAmount(changeAmount, currency, formatAmount)}
+            </p>
+          )}
+          {/* The price, so an amount can be sized; the units it comes to, secondary. */}
+          {editMode === "amount" && unitPrice !== undefined && (
+            <p className="text-muted-foreground mt-0.5 text-right font-mono text-[10px] tabular-nums">
+              {Math.abs(changeAmount) >= AMOUNT_EPSILON
+                ? t("allocation:worksheet.unitsAtPrice", {
+                    count: unitsFor(changeAmount, unitPrice, wholeSharesOnly),
+                    quantity: formatQuantity(unitsFor(changeAmount, unitPrice, wholeSharesOnly)),
+                    price: formatPrice(unitPrice, currency),
+                  })
+                : t("allocation:worksheet.perUnit", { price: formatPrice(unitPrice, currency) })}
             </p>
           )}
         </div>

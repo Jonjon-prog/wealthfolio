@@ -1575,7 +1575,13 @@ export function AllocationWorksheetTab({
     if (assetId)
       warningsByAsset.set(assetId, [...(warningsByAsset.get(assetId) ?? []), warning.message]);
   }
+  // The price the core resolved a line at, when the preview has one: the unit
+  // a step adds is then the unit the core places.
+  const resolvedPriceByAsset = new Map(
+    (result?.lines ?? []).map((line) => [line.assetId, line.unitPrice]),
+  );
   const amountsRows: AmountsRowModel[] = positions.map((position) => {
+    const unitPrice = resolvedPriceByAsset.get(position.assetId) ?? unitPriceFor(position);
     const adjustment = adjustments[position.assetId];
     const rawChangeAmount = positionChangeAmount(adjustment, position, basis);
     const changeAmount = Number.isFinite(rawChangeAmount) ? rawChangeAmount : 0;
@@ -1601,6 +1607,7 @@ export function AllocationWorksheetTab({
         (!Number.isFinite(rawChangeAmount) || Math.abs(rawChangeAmount) >= AMOUNT_EPSILON),
       projectedValue,
       projectedPct: basis > 0 ? (projectedValue / basis) * 100 : 0,
+      unitPrice,
       status: rowStatus({
         issue: prepared.rowIssues.get(position.assetId),
         needsPrice: position.isAdded && latestQuotes.isFetched && !quote?.quote,
@@ -1623,7 +1630,7 @@ export function AllocationWorksheetTab({
           ? {
               accounts: accountsForChange(position, changeAmount),
               impliedAccountId: impliedAccountIdFor(position, changeAmount),
-              unitPrice: unitPriceFor(position),
+              unitPrice,
             }
           : undefined,
     };

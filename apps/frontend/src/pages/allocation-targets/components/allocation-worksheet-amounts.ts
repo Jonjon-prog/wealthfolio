@@ -106,6 +106,39 @@ export function trackPosition(weightBps: number, targetBps: number, halfWindowBp
   return Math.min(97, Math.max(3, position));
 }
 
+/**
+ * The units an amount comes to at a unit price. Under a whole-unit policy the
+ * core floors the quantity, so that is what the row shows.
+ */
+export function unitsFor(amount: number, unitPrice: number, wholeUnits: boolean): number {
+  const units = Math.abs(amount) / unitPrice;
+  // Tolerates the float residue of an amount that is an exact multiple.
+  return wholeUnits ? Math.floor(units + 1e-9) : units;
+}
+
+/**
+ * The amount one more or one fewer unit comes to (§4.6.5: amounts stay primary,
+ * so a step changes the amount and the units follow).
+ *
+ * Under a whole-unit policy the result is an exact number of units, rounded up
+ * to the currency's smallest unit in magnitude: rounding down would leave the
+ * amount a hair short and the core's floor would drop the unit just added.
+ */
+export function stepByUnits(
+  amount: number,
+  unitPrice: number,
+  step: 1 | -1,
+  wholeUnits: boolean,
+  fractionDigits: number,
+): number {
+  const next = wholeUnits
+    ? (Math.round(amount / unitPrice) + step) * unitPrice
+    : amount + step * unitPrice;
+  const scale = 10 ** fractionDigits;
+  const magnitude = Math.ceil(Math.abs(next) * scale - 1e-6) / scale;
+  return Math.sign(next) * magnitude;
+}
+
 /** The part of a row's change that moves one of its classes. */
 export function changeInCategory(change: number, weightBps: number): number {
   return (change * weightBps) / 10_000;
