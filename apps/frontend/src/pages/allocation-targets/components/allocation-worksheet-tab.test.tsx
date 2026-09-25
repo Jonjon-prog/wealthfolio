@@ -17,18 +17,26 @@ import { cleanup, render, screen, waitFor, within } from "@/test/render";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
 
-const { generateMock, previewMock, useAccountsMock, accountsRef, heldAccountIds, holdingsRef } =
-  vi.hoisted(() => ({
-    generateMock: vi.fn(),
-    previewMock: vi.fn(),
-    // Called once per render of the worksheet, which is how the tests count them.
-    useAccountsMock: vi.fn(),
-    accountsRef: { current: [] as Account[] },
-    /** Holdings by account, when a test needs more than one security. */
-    holdingsRef: { current: null as Record<string, Holding[]> | null },
-    /** Which accounts record VTI, which decides whether an increase is placed for the user (§6). */
-    heldAccountIds: { current: ["acc-1"] as string[] },
-  }));
+const {
+  generateMock,
+  previewMock,
+  saveFileMock,
+  useAccountsMock,
+  accountsRef,
+  heldAccountIds,
+  holdingsRef,
+} = vi.hoisted(() => ({
+  generateMock: vi.fn(),
+  previewMock: vi.fn(),
+  saveFileMock: vi.fn(() => Promise.resolve(true)),
+  // Called once per render of the worksheet, which is how the tests count them.
+  useAccountsMock: vi.fn(),
+  accountsRef: { current: [] as Account[] },
+  /** Holdings by account, when a test needs more than one security. */
+  holdingsRef: { current: null as Record<string, Holding[]> | null },
+  /** Which accounts record VTI, which decides whether an increase is placed for the user (§6). */
+  heldAccountIds: { current: ["acc-1"] as string[] },
+}));
 
 vi.mock("../hooks/use-calculated-adjustments", () => ({
   useCalculatedAdjustments: () => ({ mutateAsync: generateMock, isPending: false }),
@@ -41,6 +49,7 @@ vi.mock("@/adapters", () => ({
     Promise.resolve(holdingsFor(filter.accountId)),
   ),
   getAssetTaxonomyAssignments: vi.fn(() => Promise.resolve([])),
+  openFileSaveDialog: saveFileMock,
   canonicalizeEligibleAssetIds: (ids?: readonly string[]) =>
     ids === undefined ? undefined : [...new Set(ids)].sort(),
 }));
@@ -377,6 +386,34 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(await navigator.clipboard.readText()).toContain(coverage);
   });
 
+  it("marks the worksheet out of date when a price moved since the calculation", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1" }],
+    });
+    // Calculated at 100 a unit; the preview now prices VTI at 110.
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [previewLine({ lineId: "l1", unitPrice: 110, estimatedAmount: 1100, quantity: 10 })],
+    });
+    const user = await renderWorksheet();
+    // Calculate once the cash the accounts record is known, so only prices move.
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2000"),
+    );
+
+    await calculateFromTarget(user);
+
+    expect(
+      await screen.findByText(/Prices changed since these adjustments were calculated/, undefined, {
+        timeout: 2000,
+      }),
+    ).toBeInTheDocument();
+    // Reported, never recalculated on its own (§5).
+    expect(screen.getByLabelText("Change for VTI")).toHaveValue("1200");
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
   it("opens on Setup and calculates only from its button, then moves on without calculating", async () => {
     const user = await renderWorksheet();
     expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toBeInTheDocument();
@@ -626,14 +663,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
       ...previewResult,
       lines: [previewLine({ lineId: "l1", estimatedAmount: 1000, quantity: 10 })],
     });
-    const createObjectURL = vi.fn((_blob: Blob) => "blob:worksheet");
-    vi.stubGlobal(
-      "URL",
-      class extends URL {
-        static override createObjectURL = createObjectURL;
-        static override revokeObjectURL = vi.fn();
-      },
-    );
+    saveFileMock.mockClear();
     const user = await renderWorksheet();
     await goTo(user, "Review");
 
@@ -647,8 +677,12 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const copied = await navigator.clipboard.readText();
     expect(copied).toContain("Adjustment\t\tIncrease\tVTI — Total market\tBrokerage\t1000\t10");
 
+    // Saved through the runtime: a native save dialog in the app, a download on the web.
     await user.click(screen.getByRole("button", { name: "Export CSV" }));
-    const csv = await createObjectURL.mock.calls[0][0].text();
+    await waitFor(() => expect(saveFileMock).toHaveBeenCalledTimes(1));
+    const [file, fileName] = saveFileMock.mock.calls[0] as unknown as [Blob, string];
+    expect(fileName).toBe("rebalancing-worksheet-2026-01-01.csv");
+    const csv = await file.text();
     expect(csv).toContain(
       `"Adjustment","","Increase","VTI — Total market","Brokerage","1000","10"`,
     );

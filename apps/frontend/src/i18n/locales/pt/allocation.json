@@ -572,6 +572,10 @@
     "perUnit": "{{price}} por unidade",
     "unitsAtPrice_one": "≈ {{quantity}} unidade a {{price}}",
     "unitsAtPrice_other": "≈ {{quantity}} unidades a {{price}}",
-    "unitsAtPrice_many": "≈ {{quantity}} unidades a {{price}}"
+    "unitsAtPrice_many": "≈ {{quantity}} unidades a {{price}}",
+    "pricesChanged": "Os preços mudaram desde que estes ajustes foram calculados. Recalcule a partir da meta para atualizá-los. Suas edições permanecem até lá.",
+    "exportPricesChanged": "Os preços mudaram depois deste cálculo.",
+    "exportPricesChangedNote": "O arquivo indica que os preços mudaram depois do cálculo.",
+    "exportFailed": "Não foi possível salvar o arquivo."
   }
 }

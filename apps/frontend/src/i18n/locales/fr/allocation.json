@@ -572,6 +572,10 @@
     "perUnit": "{{price}} la part",
     "unitsAtPrice_one": "≈ {{quantity}} part à {{price}}",
     "unitsAtPrice_other": "≈ {{quantity}} parts à {{price}}",
-    "unitsAtPrice_many": "≈ {{quantity}} parts à {{price}}"
+    "unitsAtPrice_many": "≈ {{quantity}} parts à {{price}}",
+    "pricesChanged": "Les prix ont changé depuis le calcul de ces ajustements. Recalculez depuis la cible pour les mettre à jour. Vos modifications restent en place d'ici là.",
+    "exportPricesChanged": "Les prix ont changé après ce calcul.",
+    "exportPricesChangedNote": "Le fichier indique que les prix ont changé après le calcul.",
+    "exportFailed": "Le fichier n'a pas pu être enregistré."
   }
 }

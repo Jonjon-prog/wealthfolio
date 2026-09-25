@@ -32,7 +32,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-import { getAssetTaxonomyAssignments, getHoldingsList } from "@/adapters";
+import { getAssetTaxonomyAssignments, getHoldingsList, openFileSaveDialog } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { usePortfolios } from "@/hooks/use-portfolios";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
@@ -66,7 +66,7 @@ import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amount
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
 import { rowStatus } from "./allocation-worksheet-amounts";
 import { impactClasses, ImpactRail } from "./allocation-worksheet-impact-rail";
-import { downloadCsv, toCsv, toTsv, worksheetExportRows } from "./allocation-worksheet-export";
+import { csvFile, toCsv, toTsv, worksheetExportRows } from "./allocation-worksheet-export";
 import { ReviewPanel } from "./allocation-worksheet-review";
 import {
   adjustmentsFromCalculated,
@@ -82,6 +82,7 @@ import {
   soleHoldingAccountId,
   UNCLASSIFIED_CATEGORY_ID,
   UNRESOLVED_REASON_KEYS,
+  unitPriceMoved,
   type PositionAdjustment,
   type PositionAdjustments,
   type PositionCategoryExposure,
@@ -1371,9 +1372,24 @@ export function AllocationWorksheetTab({
         eligibleAssetIds: eligibility.eligibleAssetIds,
       }
     : null;
-  const isOutOfDate = Boolean(
+  const inputsChanged = Boolean(
     generated && generationInputs && generated.inputsKey !== generationInputsKey(generationInputs),
   );
+  // Prices are an input too (§5): a calculated line the preview now prices
+  // differently no longer matches what was calculated. Only the user's action
+  // recalculates.
+  const pricesChanged = Boolean(
+    generated &&
+    result &&
+    generated.calculated.adjustments.some((adjustment) => {
+      const line = result.lines.find((item) => item.assetId === adjustment.assetId);
+      return line !== undefined && unitPriceMoved(line.unitPrice, adjustment.unitPrice);
+    }),
+  );
+  const isOutOfDate = inputsChanged || pricesChanged;
+  const outOfDateMessage = inputsChanged
+    ? t("allocation:worksheet.inputsChanged")
+    : t("allocation:worksheet.pricesChanged");
   const generationIssue = !rule
     ? t("allocation:worksheet.chooseRuleIssue")
     : changeAccountIds.length === 0
@@ -1853,7 +1869,13 @@ export function AllocationWorksheetTab({
           ? calculationError.title
           : [
               t("allocation:worksheet.exportIncludes"),
-              isOutOfDate ? t("allocation:worksheet.exportOutOfDateNote") : "",
+              isOutOfDate
+                ? t(
+                    inputsChanged
+                      ? "allocation:worksheet.exportOutOfDateNote"
+                      : "allocation:worksheet.exportPricesChangedNote",
+                  )
+                : "",
             ]
               .filter(Boolean)
               .join(" ");
@@ -1895,7 +1917,11 @@ export function AllocationWorksheetTab({
             ? t("allocation:worksheet.exportAllRecorded")
             : String(eligibility.eligibleAssetIds.length),
         scaling,
-        outOfDate: isOutOfDate ? t("allocation:worksheet.exportOutOfDate") : undefined,
+        outOfDate: !isOutOfDate
+          ? undefined
+          : inputsChanged
+            ? t("allocation:worksheet.exportOutOfDate")
+            : t("allocation:worksheet.exportPricesChanged"),
         status: t("allocation:worksheet.status"),
         category: t("allocation:worksheet.exportCategory"),
         direction: t("allocation:worksheet.direction"),
@@ -1916,7 +1942,15 @@ export function AllocationWorksheetTab({
       },
     );
     if (format === "csv") {
-      downloadCsv(toCsv(table), result.calculatedAt.slice(0, 10));
+      // The runtime's own save: a native dialog in the app, a download on the web.
+      try {
+        await openFileSaveDialog(
+          csvFile(toCsv(table)),
+          `rebalancing-worksheet-${result.calculatedAt.slice(0, 10)}.csv`,
+        );
+      } catch {
+        toast.error(t("allocation:worksheet.exportFailed"));
+      }
       return;
     }
     try {
@@ -1987,7 +2021,7 @@ export function AllocationWorksheetTab({
           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-50/60 px-4 py-2.5 dark:bg-amber-950/15"
         >
           <p className="min-w-0 flex-1 text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
-            {t("allocation:worksheet.inputsChanged")}
+            {outOfDateMessage}
           </p>
           {recalculateButton}
         </div>
@@ -2057,7 +2091,7 @@ export function AllocationWorksheetTab({
                   ) : (
                     isOutOfDate && (
                       <p className="text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
-                        {generationIssue ?? t("allocation:worksheet.inputsChanged")}
+                        {generationIssue ?? outOfDateMessage}
                       </p>
                     )
                   )}

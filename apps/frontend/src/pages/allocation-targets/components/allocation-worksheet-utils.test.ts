@@ -11,6 +11,7 @@ import {
   parseDecimalInput,
   placementAccountIds,
   planningTotal,
+  unitPriceMoved,
   type WorksheetGenerationInputs,
 } from "./allocation-worksheet-utils";
 
@@ -83,6 +84,14 @@ describe("eligible accounts for a change", () => {
 
   it("draws a reduction only from the accounts that hold the security", () => {
     expect(eligibleAccountIdsForChange(-500, ["acc-2"], ["acc-1", "acc-2"])).toEqual(["acc-2"]);
+  });
+});
+
+describe("a price moved since the calculation", () => {
+  it("counts a real move and ignores float noise", () => {
+    expect(unitPriceMoved(149.4861, 147.820084)).toBe(true);
+    expect(unitPriceMoved(59.3100006, 59.31)).toBe(false);
+    expect(unitPriceMoved(100, 100)).toBe(false);
   });
 });
 

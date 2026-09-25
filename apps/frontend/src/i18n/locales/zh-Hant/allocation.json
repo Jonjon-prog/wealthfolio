@@ -555,6 +555,10 @@
     "removeOneUnit": "減少一單位 {{symbol}}",
     "perUnit": "每單位 {{price}}",
     "unitsAtPrice_one": "≈ {{quantity}} 單位 × {{price}}",
-    "unitsAtPrice_other": "≈ {{quantity}} 單位 × {{price}}"
+    "unitsAtPrice_other": "≈ {{quantity}} 單位 × {{price}}",
+    "pricesChanged": "計算這些調整額後，價格已有變動。請從目標重新計算以更新。在此之前，您的編輯會保留。",
+    "exportPricesChanged": "此次計算後價格已有變動。",
+    "exportPricesChangedNote": "檔案會註明計算後價格已有變動。",
+    "exportFailed": "無法儲存檔案。"
   }
 }

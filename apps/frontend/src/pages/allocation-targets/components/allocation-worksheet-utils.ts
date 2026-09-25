@@ -218,6 +218,15 @@ export function adjustmentsFromCalculated(calculated: CalculatedAdjustments): Po
   return adjustments;
 }
 
+/**
+ * Whether a unit price moved since a calculation used it. The calculation
+ * depends on prices, so a move leaves the worksheet no longer matching what was
+ * calculated (§5). A hundredth of a percent absorbs float and rounding noise.
+ */
+export function unitPriceMoved(now: number, calculatedWith: number): boolean {
+  return Math.abs(now - calculatedWith) > Math.abs(calculatedWith) * 1e-4;
+}
+
 /** Cash not yet recorded, keyed by the account it would arrive in. */
 export function externalContributionFor(
   accountIds: readonly string[],

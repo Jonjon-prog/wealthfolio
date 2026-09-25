@@ -545,6 +545,10 @@
     "addOneUnit": "{{symbol}} 1주 추가",
     "removeOneUnit": "{{symbol}} 1주 빼기",
     "perUnit": "주당 {{price}}",
-    "unitsAtPrice_other": "≈ {{quantity}}주 × {{price}}"
+    "unitsAtPrice_other": "≈ {{quantity}}주 × {{price}}",
+    "pricesChanged": "이 조정액을 계산한 뒤 가격이 변경되었습니다. 업데이트하려면 목표에서 다시 계산하세요. 그때까지 수정 내용은 유지됩니다.",
+    "exportPricesChanged": "이 계산 이후 가격이 변경되었습니다.",
+    "exportPricesChangedNote": "계산 이후 가격이 변경되었다는 사실이 파일에 기록됩니다.",
+    "exportFailed": "파일을 저장할 수 없습니다."
   }
 }

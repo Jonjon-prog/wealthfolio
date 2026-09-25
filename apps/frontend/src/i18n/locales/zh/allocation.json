@@ -545,6 +545,10 @@
     "addOneUnit": "增加一份 {{symbol}}",
     "removeOneUnit": "减少一份 {{symbol}}",
     "perUnit": "每份 {{price}}",
-    "unitsAtPrice_other": "≈ {{quantity}} 份 × {{price}}"
+    "unitsAtPrice_other": "≈ {{quantity}} 份 × {{price}}",
+    "pricesChanged": "计算这些调整额后，价格已发生变化。请从目标重新计算以更新。在此之前，您的编辑会保留。",
+    "exportPricesChanged": "此次计算后价格已发生变化。",
+    "exportPricesChangedNote": "文件会注明计算后价格已发生变化。",
+    "exportFailed": "无法保存文件。"
   }
 }

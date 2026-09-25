@@ -168,16 +168,10 @@ export function toTsv(rows: readonly ExportCell[][]): string {
     .join("\n");
 }
 
-/** Uses a Blob link, which works in both the web and Tauri builds. */
-export function downloadCsv(csv: string, date: string) {
-  // The byte order mark lets spreadsheet apps read accented names as UTF-8.
-  const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `rebalancing-worksheet-${date}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+/**
+ * The CSV as a file. The byte order mark lets spreadsheet apps read accented
+ * names as UTF-8.
+ */
+export function csvFile(csv: string): Blob {
+  return new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
 }

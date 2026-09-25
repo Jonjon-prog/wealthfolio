@@ -545,6 +545,10 @@
     "addOneUnit": "{{symbol}}を1単位追加",
     "removeOneUnit": "{{symbol}}を1単位減らす",
     "perUnit": "1単位 {{price}}",
-    "unitsAtPrice_other": "≈ {{quantity}}単位 × {{price}}"
+    "unitsAtPrice_other": "≈ {{quantity}}単位 × {{price}}",
+    "pricesChanged": "これらの調整額を計算した後に価格が変わりました。更新するには目標から再計算してください。それまで編集内容は保持されます。",
+    "exportPricesChanged": "この計算の後に価格が変わりました。",
+    "exportPricesChangedNote": "計算後に価格が変わったことがファイルに記載されます。",
+    "exportFailed": "ファイルを保存できませんでした。"
   }
 }
