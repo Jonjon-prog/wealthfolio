@@ -90,7 +90,7 @@ interface AmountsListProps {
 
 /** The grid shared by the header and every row: Position · Weight · Change · Status. */
 const AMOUNTS_GRID =
-  "grid grid-cols-[minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_12.5rem_9rem] sm:items-start";
+  "grid grid-cols-[minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_12.5rem_9rem] sm:items-center";
 
 /**
  * The list of securities, opened short: rows with nothing to decide collapse
@@ -195,7 +195,7 @@ export function AmountsList({
         )}
       >
         <span>{t("allocation:worksheet.position")}</span>
-        <span className="text-right">{t("allocation:worksheet.weight")}</span>
+        <span>{t("allocation:worksheet.weight")}</span>
         <span>
           {shared.editMode === "amount"
             ? t("allocation:worksheet.changeAmount")
@@ -402,7 +402,7 @@ function AmountRow({
           </span>
         </div>
 
-        <span className="text-muted-foreground order-3 font-mono text-[11px] tabular-nums sm:order-none sm:text-right">
+        <span className="text-muted-foreground order-3 font-mono text-[11px] tabular-nums sm:order-none">
           {isChanged
             ? `${position.currentPct.toFixed(1)} → ${projectedPct.toFixed(1)}%`
             : `${position.currentPct.toFixed(1)}%`}
@@ -523,7 +523,10 @@ function AmountRow({
               {Math.abs(changeAmount) >= AMOUNT_EPSILON
                 ? t("allocation:worksheet.unitsAtPrice", {
                     count: unitsFor(changeAmount, unitPrice, wholeSharesOnly),
-                    quantity: formatQuantity(unitsFor(changeAmount, unitPrice, wholeSharesOnly)),
+                    // An estimate: two decimals say enough.
+                    quantity: formatQuantity(
+                      Math.round(unitsFor(changeAmount, unitPrice, wholeSharesOnly) * 100) / 100,
+                    ),
                     price: formatPrice(unitPrice, currency),
                   })
                 : t("allocation:worksheet.perUnit", { price: formatPrice(unitPrice, currency) })}
