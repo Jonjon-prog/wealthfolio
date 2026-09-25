@@ -535,6 +535,8 @@
     "exportNothing": "暂无可导出的内容。",
     "exportIncludes": "包含警告和未解决金额。",
     "exportOutOfDateNote": "文件会注明计算后输入已发生变化。",
-    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}"
+    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}",
+    "cashCoverage": "所选现金覆盖与目标差额的 {{percent}}%，因此其资助的每项增加都按比例缩减至 {{percent}}%。",
+    "belowOneUnit": "不足一个整数份额，因此以下证券未分配任何金额：{{symbols}}"
   }
 }

@@ -560,6 +560,8 @@
     "exportNothing": "Ancora niente da esportare.",
     "exportIncludes": "Sono inclusi gli avvisi e gli importi non risolti.",
     "exportOutOfDateNote": "Il file indica che i dati di input sono cambiati dopo il calcolo.",
-    "rowShareOfClass": "{{symbol}}: {{share}} di {{category}}"
+    "rowShareOfClass": "{{symbol}}: {{share}} di {{category}}",
+    "cashCoverage": "La liquidità scelta copre il {{percent}}% degli scostamenti dall'obiettivo, quindi ogni aumento che finanzia è ridotto al {{percent}}%.",
+    "belowOneUnit": "Meno di una quota intera, quindi non è stato assegnato nulla a: {{symbols}}."
   }
 }

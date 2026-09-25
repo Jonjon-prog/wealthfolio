@@ -346,6 +346,37 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
   });
 
+  it("states how much of the gaps the cash covered, on screen and in the export", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1" }],
+      scaling: { cashFactor: 0.132 },
+      belowOneUnit: [{ assetId: "vxus", symbol: "VXUS", amount: 60 }],
+    });
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [previewLine({ lineId: "l1", estimatedAmount: 1200, quantity: 12 })],
+    });
+    const coverage =
+      "The selected cash covers 13.2% of the gaps to the target, so each increase it funds is scaled to 13.2%.";
+    const user = await renderWorksheet();
+
+    await calculateFromTarget(user);
+    expect(screen.getByText(coverage)).toBeInTheDocument();
+    expect(
+      screen.getByText("Less than one whole unit, so nothing was placed on: VXUS."),
+    ).toBeInTheDocument();
+    // No step-4 scaling happened, so none is claimed.
+    expect(screen.queryByText(/Increases were scaled/)).not.toBeInTheDocument();
+
+    await goTo(user, "Review");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy table" })).toBeEnabled(), {
+      timeout: 2000,
+    });
+    await user.click(screen.getByRole("button", { name: "Copy table" }));
+    expect(await navigator.clipboard.readText()).toContain(coverage);
+  });
+
   it("opens on Setup and calculates only from its button, then moves on without calculating", async () => {
     const user = await renderWorksheet();
     expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toBeInTheDocument();

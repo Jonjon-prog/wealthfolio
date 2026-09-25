@@ -560,6 +560,8 @@
     "exportNothing": "Todavía no hay nada que exportar.",
     "exportIncludes": "Se incluyen las advertencias y los importes sin resolver.",
     "exportOutOfDateNote": "El archivo indica que los datos de entrada cambiaron después del cálculo.",
-    "rowShareOfClass": "{{symbol}}: {{share}} de {{category}}"
+    "rowShareOfClass": "{{symbol}}: {{share}} de {{category}}",
+    "cashCoverage": "El efectivo elegido cubre el {{percent}} % de las diferencias con el objetivo, así que cada aumento que financia se escala al {{percent}} %.",
+    "belowOneUnit": "Menos de una participación entera, así que no se asignó nada a: {{symbols}}."
   }
 }

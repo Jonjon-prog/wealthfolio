@@ -461,6 +461,9 @@ pub enum UnresolvedReason {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdjustmentScaling {
+    /// §4.5 step 1 — the category gaps ask for more than the selected cash, so
+    /// every increase the cash funds is scaled by this one factor.
+    pub cash_factor: Option<Decimal>,
     /// Step 2 — reductions scaled to fit the target's turnover cap.
     pub reduction_factor: Option<Decimal>,
     /// Step 4 — increases that depend on reduction proceeds, scaled to the
@@ -515,6 +518,20 @@ pub struct CalculatedAdjustments {
     pub remaining_cash: Decimal,
     /// Accounts whose increases exceed what they can fund on their own (§6).
     pub funding_shortfalls: Vec<AccountFundingShortfall>,
+    /// Securities sized below one whole unit, so nothing was placed on them.
+    pub below_one_unit: Vec<BelowOneUnitSecurity>,
+}
+
+/// A security whose calculated amount came to less than one whole unit under
+/// a whole-unit policy (§4.6 step 5). Reported rather than silently dropped,
+/// as §4.6 step 6 asks of every line the limits leave out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BelowOneUnitSecurity {
+    pub asset_id: String,
+    pub symbol: String,
+    /// Signed amount it came to before the quantity was floored.
+    pub amount: Decimal,
 }
 
 /// What the worksheet is prefilled from (§4).

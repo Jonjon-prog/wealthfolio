@@ -560,6 +560,8 @@
     "exportNothing": "Nada para exportar ainda.",
     "exportIncludes": "Avisos e valores não resolvidos estão incluídos.",
     "exportOutOfDateNote": "O arquivo indica que os dados de entrada mudaram depois do cálculo.",
-    "rowShareOfClass": "{{symbol}}: {{share}} de {{category}}"
+    "rowShareOfClass": "{{symbol}}: {{share}} de {{category}}",
+    "cashCoverage": "O caixa escolhido cobre {{percent}}% das diferenças em relação à meta, então cada aumento que ele financia é reduzido a {{percent}}%.",
+    "belowOneUnit": "Menos de uma unidade inteira, então nada foi alocado em: {{symbols}}."
   }
 }

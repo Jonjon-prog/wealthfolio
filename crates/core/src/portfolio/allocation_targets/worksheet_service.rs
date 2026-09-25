@@ -39,10 +39,10 @@ use super::cash::{
 };
 use super::drift_service::DriftServiceTrait;
 use super::model::{
-    AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
+    AdjustmentScaling, AllocationTarget, AllocationTargetConstraint, AllocationTargetWeight,
     AllocationWorksheetLineInput, AllocationWorksheetLineResult, AllocationWorksheetResult,
-    CalculateAllocationWorksheetInput, CalculatedAdjustment, CalculatedAdjustments,
-    ConstraintAction, ConstraintEffect, ConstraintSubjectType, DriftReport,
+    BelowOneUnitSecurity, CalculateAllocationWorksheetInput, CalculatedAdjustment,
+    CalculatedAdjustments, ConstraintAction, ConstraintEffect, ConstraintSubjectType, DriftReport,
     GenerateCalculatedAdjustmentsInput, WorksheetCashInput, WorksheetCategoryExposure,
     WorksheetCategoryResult, WorksheetDirection, WorksheetInputMode, WorksheetMode,
     WorksheetPricingSource, WorksheetSourceRecord, WorksheetWarning, WorksheetWarningKind,
@@ -953,6 +953,7 @@ impl AllocationWorksheetService {
                 .map(|row| row.category_id.clone()),
         });
 
+        let cash_factor = sequence.cash_factor;
         let min_line_amount = Self::min_line_amount(target);
         let limited = apply_limits(
             sequence.increases,
@@ -1016,9 +1017,24 @@ impl AllocationWorksheetService {
                 })
                 .collect(),
             unresolved: sequence.unresolved,
-            scaling: limited.scaling,
+            scaling: AdjustmentScaling {
+                cash_factor,
+                ..limited.scaling
+            },
             remaining_cash: remaining,
             funding_shortfalls,
+            below_one_unit: limited
+                .below_one_unit
+                .into_iter()
+                .map(|(asset_id, amount)| BelowOneUnitSecurity {
+                    symbol: symbols
+                        .get(asset_id.as_str())
+                        .map(|symbol| symbol.to_string())
+                        .unwrap_or_else(|| asset_id.clone()),
+                    asset_id,
+                    amount,
+                })
+                .collect(),
         })
     }
 
@@ -2620,6 +2636,20 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(flat[0].category_id, "COMM_PRECIOUS_GOLD");
+    }
+
+    #[test]
+    fn the_calculation_states_how_much_of_the_gaps_the_cash_covered() {
+        // Equity wants 1000 and fixed income 1000; 1000 of cash covers half.
+        let portfolio = brokerage(7000, 3000, 0);
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(1000)))
+            .unwrap();
+
+        assert_eq!(calculated.scaling.cash_factor, Some(dec!(0.5)));
+        assert_eq!(calculated.scaling.increase_factor, None);
+        assert!(calculated.below_one_unit.is_empty());
     }
 
     #[test]

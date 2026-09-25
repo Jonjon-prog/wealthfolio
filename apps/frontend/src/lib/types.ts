@@ -2760,8 +2760,17 @@ export interface UnresolvedCategoryAmount {
 }
 
 export interface AdjustmentScaling {
+  /** The share of the category gaps the selected cash covers, when it covers less than all. */
+  cashFactor?: number | null;
   reductionFactor?: number | null;
   increaseFactor?: number | null;
+}
+
+export interface BelowOneUnitSecurity {
+  assetId: string;
+  symbol: string;
+  /** Signed amount it came to before the quantity was floored. */
+  amount: number;
 }
 
 export interface CalculatedAdjustment {
@@ -2792,6 +2801,8 @@ export interface CalculatedAdjustments {
   scaling: AdjustmentScaling;
   remainingCash: number;
   fundingShortfalls: AccountFundingShortfall[];
+  /** Securities sized below one whole unit. Absent from drafts saved before it existed. */
+  belowOneUnit?: BelowOneUnitSecurity[];
 }
 
 export interface WorksheetCashInput {

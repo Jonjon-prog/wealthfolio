@@ -544,6 +544,8 @@
     "exportNothing": "Nothing to export yet.",
     "exportIncludes": "Warnings and unresolved amounts are included.",
     "exportOutOfDateNote": "The file notes that inputs changed after the calculation.",
-    "rowShareOfClass": "{{symbol}}: {{share}} of {{category}}"
+    "rowShareOfClass": "{{symbol}}: {{share}} of {{category}}",
+    "cashCoverage": "The selected cash covers {{percent}}% of the gaps to the target, so each increase it funds is scaled to {{percent}}%.",
+    "belowOneUnit": "Less than one whole unit, so nothing was placed on: {{symbols}}."
   }
 }

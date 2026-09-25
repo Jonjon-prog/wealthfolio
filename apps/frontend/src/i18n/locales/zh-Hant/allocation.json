@@ -544,6 +544,8 @@
     "exportNothing": "尚無可匯出的內容。",
     "exportIncludes": "包含警告和未解決金額。",
     "exportOutOfDateNote": "檔案會註明計算後輸入已有變更。",
-    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}"
+    "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}",
+    "cashCoverage": "所選現金涵蓋與目標差額的 {{percent}}%，因此其支應的每項增加都按比例縮減至 {{percent}}%。",
+    "belowOneUnit": "不足一個整數單位，因此以下證券未配置任何金額：{{symbols}}"
   }
 }

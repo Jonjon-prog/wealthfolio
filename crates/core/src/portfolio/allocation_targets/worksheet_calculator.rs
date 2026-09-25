@@ -358,6 +358,9 @@ pub struct SequenceOutput {
     pub increases: Vec<DraftIncrease>,
     pub reductions: Vec<DraftReduction>,
     pub unresolved: Vec<UnresolvedCategoryAmount>,
+    /// The share of the first pass's intents the cash could pay for, when it
+    /// could not pay for all of them. Stated in the result (§4.6).
+    pub cash_factor: Option<Decimal>,
 }
 
 fn sorted_by_asset(amounts: HashMap<String, Decimal>) -> Vec<(String, Decimal)> {
@@ -389,8 +392,8 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
     let available = input.deployable_cash();
     let wanted: Decimal = cash_intents.values().sum();
     let deployed = wanted.min(available);
-    if wanted > available && wanted > Decimal::ZERO {
-        let factor = available / wanted;
+    let cash_factor = (wanted > available && wanted > Decimal::ZERO).then(|| available / wanted);
+    if let Some(factor) = cash_factor {
         for amount in cash_intents.values_mut() {
             *amount *= factor;
         }
@@ -407,6 +410,7 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
             increases,
             reductions: Vec::new(),
             unresolved,
+            cash_factor,
         };
     }
 
@@ -445,6 +449,7 @@ pub fn run_sequence(input: &SequenceInput) -> SequenceOutput {
         // The second pass sees the projected state, so its list is the complete
         // one: a category the first pass could not place is still unplaced here.
         unresolved: remaining_unresolved,
+        cash_factor,
     }
 }
 
@@ -508,6 +513,10 @@ pub struct LimitedAdjustments {
     /// placed in accounts. Never redistributed. Use [`remaining_cash`] once
     /// assignment has run, since a whole-unit split can raise less than this.
     pub remaining_cash: Decimal,
+    /// Securities whose amount floored to zero units, with the signed amount
+    /// they came to. Reported, since leaving them out silently would hide
+    /// where the remaining cash comes from (§4.6 steps 5 and 6).
+    pub below_one_unit: Vec<(String, Decimal)>,
 }
 
 impl LimitedAdjustments {
@@ -609,6 +618,9 @@ fn scale_to_turnover_cap(nets: &mut [NetAdjustment], cap: Option<Decimal>) -> Op
     Some(factor)
 }
 
+/// A millionth of a currency unit: far below any amount anyone places.
+const FUNDING_TOLERANCE: Decimal = Decimal::from_parts(1, 0, 0, false, 6);
+
 /// §4.6 step 4 — every positive net adjustment is scaled by the same factor
 /// when the funding falls short.
 ///
@@ -622,7 +634,10 @@ fn scale_to_funding(nets: &mut [NetAdjustment], available: Decimal) -> Option<De
         .filter(|net| net.amount > Decimal::ZERO)
         .map(|net| net.amount)
         .sum();
-    if total <= available || total <= Decimal::ZERO {
+    // Dividing the cash across the first pass's intents can leave their sum a
+    // few units in the 28th decimal over it. That is residue, not a shortfall,
+    // and reporting it would state a scaling to 100% that never happened.
+    if total <= available + FUNDING_TOLERANCE || total <= Decimal::ZERO {
         return None;
     }
 
@@ -702,14 +717,19 @@ pub fn apply_limits(
 
     let increase_factor = scale_to_funding(&mut nets, available);
 
-    let lines: Vec<LimitedLine> = nets
-        .into_iter()
-        .filter_map(|net| {
-            let price = unit_price_of(securities, &net.asset_id)?;
-            Some(finalize(&net.asset_id, net.amount, price, limits))
-        })
-        .filter(|line| line.amount != Decimal::ZERO)
-        .collect();
+    let mut lines: Vec<LimitedLine> = Vec::new();
+    let mut below_one_unit = Vec::new();
+    for net in nets {
+        let Some(price) = unit_price_of(securities, &net.asset_id) else {
+            continue;
+        };
+        let line = finalize(&net.asset_id, net.amount, price, limits);
+        if line.amount != Decimal::ZERO {
+            lines.push(line);
+        } else if net.amount != Decimal::ZERO {
+            below_one_unit.push((net.asset_id, net.amount));
+        }
+    }
 
     // Step 7 — whatever rounding and minimum-line reporting left behind. Not
     // redistributed: that would be another round of construction. Signed
@@ -720,10 +740,12 @@ pub fn apply_limits(
     LimitedAdjustments {
         lines,
         scaling: AdjustmentScaling {
+            cash_factor: None,
             reduction_factor,
             increase_factor,
         },
         remaining_cash,
+        below_one_unit,
     }
 }
 
@@ -1250,6 +1272,83 @@ mod tests {
             asset_id: asset_id.to_string(),
             amount,
         }
+    }
+
+    fn equity_sequence(cash: Decimal, holdings: &[Decimal]) -> SequenceOutput {
+        let securities: Vec<SecurityInput> = holdings
+            .iter()
+            .enumerate()
+            .map(|(index, value)| security(&format!("s{index}"), &[("EQUITY", *value)]))
+            .collect();
+        let current: Decimal = holdings.iter().copied().sum();
+        run_sequence(&SequenceInput {
+            mode: WorksheetMode::InvestCash,
+            categories: &[category("EQUITY", 10_000, current)],
+            securities: &securities,
+            planning_total: current * dec!(3),
+            cash,
+            external_cash: no_external_cash(),
+            cash_category_id: None,
+        })
+    }
+
+    #[test]
+    fn the_result_states_how_much_of_the_gaps_the_cash_covers() {
+        // Equity holds 3000 of a 9000 basis and wants 6000 more.
+        let short = equity_sequence(dec!(1500), &[dec!(1000), dec!(2000)]);
+        assert_eq!(short.cash_factor, Some(dec!(0.25)));
+
+        let enough = equity_sequence(dec!(6000), &[dec!(1000), dec!(2000)]);
+        assert_eq!(enough.cash_factor, None);
+    }
+
+    #[test]
+    fn a_residue_of_dividing_the_cash_is_not_a_funding_shortfall() {
+        // Four intents scaled to 1000 add up to a hair over it in the 28th
+        // decimal. The increases fit the cash, so no scaling is reported.
+        let holdings = [dec!(1000), dec!(1037), dec!(1074), dec!(1111)];
+        let sequence = equity_sequence(dec!(1000), &holdings);
+        let securities: Vec<SecurityInput> = holdings
+            .iter()
+            .enumerate()
+            .map(|(index, value)| security(&format!("s{index}"), &[("EQUITY", *value)]))
+            .collect();
+
+        let result = apply_limits(
+            sequence.increases,
+            Vec::new(),
+            &securities,
+            &LimitsInput {
+                tracked_cash: dec!(1000),
+                ..limits()
+            },
+        );
+
+        assert_eq!(result.scaling.increase_factor, None);
+    }
+
+    #[test]
+    fn a_security_below_one_whole_unit_is_reported_rather_than_dropped() {
+        let securities = vec![
+            security("vti", &[("EQUITY", dec!(1000))]),
+            security("bnd", &[("FIXED_INCOME", dec!(1000))]),
+        ];
+
+        let result = apply_limits(
+            vec![increase("vti", dec!(250)), increase("bnd", dec!(60))],
+            Vec::new(),
+            &securities,
+            &LimitsInput {
+                tracked_cash: dec!(310),
+                whole_shares_only: true,
+                ..limits()
+            },
+        );
+
+        // 2 units of VTI at 100; 0.6 of a unit of BND places nothing.
+        assert_eq!(result.increases().count(), 1);
+        assert_eq!(result.below_one_unit, vec![("bnd".to_string(), dec!(60))]);
+        assert_eq!(result.remaining_cash, dec!(110));
     }
 
     #[test]

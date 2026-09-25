@@ -27,6 +27,7 @@ import {
   useAmountFormatting,
 } from "@wealthfolio/ui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -835,24 +836,47 @@ interface CalculatedSummaryProps {
  * not place, limits that scaled it, cash it left over, and accounts that cannot
  * fund their increases on their own.
  */
-function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSummaryProps) {
-  const { t } = useTranslation();
-  const { formatAmount } = useAmountFormatting();
+/**
+ * What the calculation scaled or could not place (§4.6). Stated on screen and
+ * in the export, so a scaled figure is never mistaken for the full amount.
+ */
+function calculationNotes(calculated: CalculatedAdjustments, t: TFunction): string[] {
+  const percent = (factor: number) => formatDecimalInput(factor * 100, 1);
   const notes: string[] = [];
+  if (calculated.scaling.cashFactor != null) {
+    notes.push(
+      t("allocation:worksheet.cashCoverage", { percent: percent(calculated.scaling.cashFactor) }),
+    );
+  }
   if (calculated.scaling.reductionFactor != null) {
     notes.push(
       t("allocation:worksheet.reductionsScaled", {
-        percent: formatDecimalInput(calculated.scaling.reductionFactor * 100, 1),
+        percent: percent(calculated.scaling.reductionFactor),
       }),
     );
   }
   if (calculated.scaling.increaseFactor != null) {
     notes.push(
       t("allocation:worksheet.increasesScaled", {
-        percent: formatDecimalInput(calculated.scaling.increaseFactor * 100, 1),
+        percent: percent(calculated.scaling.increaseFactor),
       }),
     );
   }
+  const belowOneUnit = calculated.belowOneUnit ?? [];
+  if (belowOneUnit.length > 0) {
+    notes.push(
+      t("allocation:worksheet.belowOneUnit", {
+        symbols: belowOneUnit.map((security) => security.symbol).join(", "),
+      }),
+    );
+  }
+  return notes;
+}
+
+function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSummaryProps) {
+  const { t } = useTranslation();
+  const { formatAmount } = useAmountFormatting();
+  const notes = calculationNotes(calculated, t);
   if (Math.abs(calculated.remainingCash) >= AMOUNT_EPSILON) {
     notes.push(
       t("allocation:worksheet.remainingCash", {
@@ -1830,18 +1854,7 @@ export function AllocationWorksheetTab({
   async function exportWorksheet(format: "copy" | "csv") {
     if (!result || !canExport) return;
     const calculated = generated?.calculated ?? null;
-    const scaling = calculated
-      ? [
-          calculated.scaling.increaseFactor != null &&
-            t("allocation:worksheet.increasesScaled", {
-              percent: formatDecimalInput(calculated.scaling.increaseFactor * 100, 1),
-            }),
-          calculated.scaling.reductionFactor != null &&
-            t("allocation:worksheet.reductionsScaled", {
-              percent: formatDecimalInput(calculated.scaling.reductionFactor * 100, 1),
-            }),
-        ].filter((sentence): sentence is string => Boolean(sentence))
-      : [];
+    const scaling = calculated ? calculationNotes(calculated, t) : [];
     const table = worksheetExportRows(
       {
         result,

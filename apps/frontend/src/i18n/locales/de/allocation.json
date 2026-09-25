@@ -544,6 +544,8 @@
     "exportNothing": "Noch nichts zu exportieren.",
     "exportIncludes": "Warnungen und offene Beträge sind enthalten.",
     "exportOutOfDateNote": "Die Datei vermerkt, dass sich die Eingaben nach der Berechnung geändert haben.",
-    "rowShareOfClass": "{{symbol}}: {{share}} von {{category}}"
+    "rowShareOfClass": "{{symbol}}: {{share}} von {{category}}",
+    "cashCoverage": "Das gewählte Bargeld deckt {{percent}} % der Abweichungen vom Ziel, daher wird jede damit finanzierte Erhöhung auf {{percent}} % skaliert.",
+    "belowOneUnit": "Weniger als ein ganzer Anteil, daher wurde nichts platziert bei: {{symbols}}."
   }
 }
