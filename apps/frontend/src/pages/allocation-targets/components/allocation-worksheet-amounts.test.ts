@@ -10,6 +10,8 @@ import {
   rowStaysOpen,
   rowStatus,
   sameTarget,
+  trackHalfWindowBps,
+  trackPosition,
   type HighlightTarget,
   type OpenRowFacts,
   type RowStatusFacts,
@@ -77,6 +79,42 @@ describe("Amounts highlight", () => {
     expect(changeInCategory(1_200, 6_000)).toBe(720);
     expect(changeInCategory(1_200, 4_000)).toBe(480);
     expect(changeInCategory(-500, 10_000)).toBe(-500);
+  });
+});
+
+describe("class tracks", () => {
+  // The figures of a real portfolio: equity far under target, fixed income far over.
+  const classes = [
+    { currentBps: 4710, projectedBps: 4680, targetBps: 6500, effectiveBandBps: 500 },
+    { currentBps: 3920, projectedBps: 3810, targetBps: 1500, effectiveBandBps: 500 },
+    { currentBps: 380, projectedBps: 420, targetBps: 1000, effectiveBandBps: 500 },
+  ];
+
+  it("shares one scale wide enough that no weight sits pinned at an edge", () => {
+    const halfWindow = trackHalfWindowBps(classes);
+    const positions = classes.flatMap((item) => [
+      trackPosition(item.currentBps, item.targetBps, halfWindow),
+      trackPosition(item.projectedBps, item.targetBps, halfWindow),
+    ]);
+    expect(Math.max(...positions)).toBeLessThan(97);
+    expect(Math.min(...positions)).toBeGreaterThan(3);
+    // Fixed income, 24 points over, sits further right than equity, 18 under, sits left.
+    expect(trackPosition(3920, 1500, halfWindow) - 50).toBeGreaterThan(
+      50 - trackPosition(4710, 6500, halfWindow),
+    );
+  });
+
+  it("keeps at least 8 points, or twice a band, when every class sits close", () => {
+    expect(
+      trackHalfWindowBps([
+        { currentBps: 1000, projectedBps: 1010, targetBps: 1000, effectiveBandBps: 200 },
+      ]),
+    ).toBe(800);
+    expect(
+      trackHalfWindowBps([
+        { currentBps: 1000, projectedBps: 1010, targetBps: 1000, effectiveBandBps: 600 },
+      ]),
+    ).toBe(1200);
   });
 });
 

@@ -503,7 +503,7 @@
     "unresolvedInClass": "{{amount}} unresolved: {{reason}}",
     "rowUnclassified": "{{symbol}} is in no asset class, so no class here moves.",
     "rowPartlyClassified": "{{share}} of {{symbol}} is in no asset class.",
-    "classFiguresTitle": "Now → projected / target, in %",
+    "classFiguresTitle": "Current → projected / target, in %",
     "weight": "Weight",
     "status": "Status",
     "needsAccount": "Needs an account",
@@ -546,6 +546,10 @@
     "exportOutOfDateNote": "The file notes that inputs changed after the calculation.",
     "rowShareOfClass": "{{symbol}}: {{share}} of {{category}}",
     "cashCoverage": "The selected cash covers {{percent}}% of the gaps to the target, so each increase it funds is scaled to {{percent}}%.",
-    "belowOneUnit": "Less than one whole unit, so nothing was placed on: {{symbols}}."
+    "belowOneUnit": "Less than one whole unit, so nothing was placed on: {{symbols}}.",
+    "legendCurrent": "Current",
+    "legendProjected": "Projected",
+    "legendTarget": "Target",
+    "legendRange": "Range"
   }
 }

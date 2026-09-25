@@ -537,6 +537,10 @@
     "exportOutOfDateNote": "계산 이후 입력값이 변경되었다는 사실이 파일에 기록됩니다.",
     "rowShareOfClass": "{{symbol}}: {{category}}의 {{share}}",
     "cashCoverage": "선택한 현금은 목표와의 차이 중 {{percent}}%를 충당하므로, 이 현금으로 충당하는 각 증액은 {{percent}}%로 줄어듭니다.",
-    "belowOneUnit": "1주 미만이어서 다음 종목에는 아무것도 배치되지 않았습니다: {{symbols}}"
+    "belowOneUnit": "1주 미만이어서 다음 종목에는 아무것도 배치되지 않았습니다: {{symbols}}",
+    "legendCurrent": "현재",
+    "legendProjected": "예상",
+    "legendTarget": "목표",
+    "legendRange": "범위"
   }
 }

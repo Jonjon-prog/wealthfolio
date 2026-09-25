@@ -537,6 +537,10 @@
     "exportOutOfDateNote": "計算後に入力内容が変更されたことがファイルに記載されます。",
     "rowShareOfClass": "{{symbol}}: {{category}}の{{share}}",
     "cashCoverage": "選択した現金は目標との差の{{percent}}%をまかなうため、この現金で賄う各増額は{{percent}}%に縮小されます。",
-    "belowOneUnit": "1単位に満たないため、次の銘柄には何も配置されていません: {{symbols}}"
+    "belowOneUnit": "1単位に満たないため、次の銘柄には何も配置されていません: {{symbols}}",
+    "legendCurrent": "現在",
+    "legendProjected": "予測",
+    "legendTarget": "目標",
+    "legendRange": "範囲"
   }
 }

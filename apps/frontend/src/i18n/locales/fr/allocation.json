@@ -562,6 +562,10 @@
     "exportOutOfDateNote": "Le fichier indique que les paramètres ont changé après le calcul.",
     "rowShareOfClass": "{{symbol}} : {{share}} de {{category}}",
     "cashCoverage": "La trésorerie choisie couvre {{percent}} % des écarts à la cible : chaque hausse qu'elle finance est ramenée à {{percent}} %.",
-    "belowOneUnit": "Moins d'une part entière, donc rien n'a été placé sur : {{symbols}}."
+    "belowOneUnit": "Moins d'une part entière, donc rien n'a été placé sur : {{symbols}}.",
+    "legendCurrent": "Actuel",
+    "legendProjected": "Projeté",
+    "legendTarget": "Cible",
+    "legendRange": "Fourchette"
   }
 }

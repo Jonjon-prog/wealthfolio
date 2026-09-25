@@ -546,6 +546,10 @@
     "exportOutOfDateNote": "檔案會註明計算後輸入已有變更。",
     "rowShareOfClass": "{{symbol}}：占{{category}}的 {{share}}",
     "cashCoverage": "所選現金涵蓋與目標差額的 {{percent}}%，因此其支應的每項增加都按比例縮減至 {{percent}}%。",
-    "belowOneUnit": "不足一個整數單位，因此以下證券未配置任何金額：{{symbols}}"
+    "belowOneUnit": "不足一個整數單位，因此以下證券未配置任何金額：{{symbols}}",
+    "legendCurrent": "目前",
+    "legendProjected": "預計",
+    "legendTarget": "目標",
+    "legendRange": "區間"
   }
 }

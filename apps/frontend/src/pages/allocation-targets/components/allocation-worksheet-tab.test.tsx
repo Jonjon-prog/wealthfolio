@@ -953,6 +953,17 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     expect(railClass("gold")).toHaveAttribute("data-emphasis", "none");
   });
 
+  it("names the marks on the class tracks", async () => {
+    const user = await renderWorksheet(report);
+    await goTo(user, "Amounts");
+
+    const legend = document.querySelector<HTMLElement>("[data-track-legend]")!;
+    expect(legend).toHaveTextContent("Current");
+    expect(legend).toHaveTextContent("Projected");
+    expect(legend).toHaveTextContent("Target");
+    expect(legend).toHaveTextContent("Range");
+  });
+
   it("lights the rows touching a class, and says how many sit in the collapsed group", async () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Amounts");

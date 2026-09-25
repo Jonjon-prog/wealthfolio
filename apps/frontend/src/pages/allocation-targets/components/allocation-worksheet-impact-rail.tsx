@@ -183,6 +183,7 @@ export function ImpactRail({
     activeRow?.shares.find((share) => share.categoryId === UNCLASSIFIED_CATEGORY_ID)?.weightBps ??
     0;
   const unresolvedByCategory = new Map(unresolved.map((item) => [item.categoryId, item]));
+  const halfWindow = trackHalfWindowBps(classes);
 
   return (
     <Card className="overflow-hidden">
@@ -261,6 +262,28 @@ export function ImpactRail({
             result && isStale && "opacity-55",
           )}
         >
+          {/* The marks on each track, named with the worksheet's own vocabulary. */}
+          <p
+            data-track-legend
+            className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1.5 text-[10px]"
+          >
+            <span className="inline-flex items-center gap-1">
+              <span className="border-muted-foreground h-2 w-2 rounded-full border" />
+              {t("allocation:worksheet.legendCurrent")}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="bg-muted-foreground h-2 w-2 rounded-full" />
+              {t("allocation:worksheet.legendProjected")}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="bg-foreground h-2.5 w-0.5" />
+              {t("allocation:worksheet.legendTarget")}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="dark:bg-muted h-2 w-3 rounded-sm bg-[#e9e2c9]" />
+              {t("allocation:worksheet.legendRange")}
+            </span>
+          </p>
           {classes.map((item) => {
             const share = activeRow?.shares.find(
               (entry) => entry.categoryId === item.categoryId && entry.weightBps > 0,
@@ -270,6 +293,7 @@ export function ImpactRail({
               <ImpactClassRow
                 key={item.categoryId}
                 item={item}
+                halfWindow={halfWindow}
                 emphasis={categoryEmphasis(active, item.categoryId, activeRow?.shares)}
                 isSelected={
                   selected?.kind === "category" && selected.categoryId === item.categoryId
@@ -386,6 +410,8 @@ export function ImpactRail({
 
 interface ImpactClassRowProps {
   item: ImpactClass;
+  /** Shared by every class, so distances to target compare across them. */
+  halfWindow: number;
   emphasis: Emphasis;
   isSelected: boolean;
   /** The active row's share of this class, e.g. "60% of VBIAX". */
@@ -397,6 +423,7 @@ interface ImpactClassRowProps {
 
 function ImpactClassRow({
   item,
+  halfWindow,
   emphasis,
   isSelected,
   shareText,
@@ -406,7 +433,7 @@ function ImpactClassRow({
   const { t } = useTranslation();
   const { point, unpoint, toggleSelected } = useHighlightActions();
   const target: HighlightTarget = { kind: "category", categoryId: item.categoryId };
-  const halfWindow = trackHalfWindowBps(item.effectiveBandBps);
+
   const bandHalfWidth = (item.effectiveBandBps / halfWindow) * 50;
   const isOutsideRange = Math.abs(item.projectedDifferenceBps) > item.effectiveBandBps;
 

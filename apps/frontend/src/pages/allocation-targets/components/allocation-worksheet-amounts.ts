@@ -71,18 +71,35 @@ export function categoryEmphasis(
     : "dim";
 }
 
+export interface TrackedClass {
+  currentBps: number;
+  projectedBps: number;
+  targetBps: number;
+  effectiveBandBps: number;
+}
+
 /**
- * Half the width of a class's track: 8 points, or twice the tolerance band when
- * that is wider, so the band never fills the track.
+ * Half the width of the class tracks, one scale for every class so their
+ * distances to target compare at a glance. Wide enough for the largest
+ * distance with a little room past it, so no weight sits pinned at an edge,
+ * and never narrower than 8 points or twice a tolerance band.
  */
-export function trackHalfWindowBps(bandBps: number): number {
-  return Math.max(800, bandBps * 2);
+export function trackHalfWindowBps(classes: readonly TrackedClass[]): number {
+  let halfWindow = 800;
+  for (const item of classes) {
+    halfWindow = Math.max(
+      halfWindow,
+      item.effectiveBandBps * 2,
+      Math.abs(item.currentBps - item.targetBps) * 1.1,
+      Math.abs(item.projectedBps - item.targetBps) * 1.1,
+    );
+  }
+  return halfWindow;
 }
 
 /**
  * Where a weight sits on a class's track, in percent of its width. The track is
- * centred on the target so the distance to it reads directly. A weight beyond
- * the window stops at the edge; the figures beside the track stay exact.
+ * centred on the target so the distance to it reads directly.
  */
 export function trackPosition(weightBps: number, targetBps: number, halfWindowBps: number): number {
   const position = 50 + ((weightBps - targetBps) / halfWindowBps) * 50;
