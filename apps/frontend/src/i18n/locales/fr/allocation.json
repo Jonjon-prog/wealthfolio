@@ -85,8 +85,10 @@
     "currentAllocation": "Allocation actuelle",
     "currentAllocationDescription": "Partir de ce que vous détenez aujourd'hui",
     "noCurrentHoldings": "Aucune position actuelle",
-    "moreTemplates": "Plus de modèles",
-    "buildFromScratch": "Partir de zéro"
+    "buildFromScratch": "Partir de zéro",
+    "exampleWeights": "Pondérations d'exemple",
+    "exampleDescription": "À utiliser comme point de départ quantitatif, puis vérifiez et modifiez les pondérations.",
+    "disclosure": "Pondérations d'exemple uniquement. Ce ne sont pas des recommandations, et Wealthfolio n'a pas évalué si elles vous conviennent."
   },
   "mode": {
     "cashFlowOnly": "Flux de trésorerie uniquement",

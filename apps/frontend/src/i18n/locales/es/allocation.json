@@ -85,8 +85,10 @@
     "currentAllocation": "Asignación actual",
     "currentAllocationDescription": "Parte de lo que tienes hoy",
     "noCurrentHoldings": "Sin posiciones actuales",
-    "moreTemplates": "Más plantillas",
-    "buildFromScratch": "Crear desde cero"
+    "buildFromScratch": "Crear desde cero",
+    "exampleWeights": "Pesos de ejemplo",
+    "exampleDescription": "Úsalos como punto de partida cuantitativo y luego revisa y edita los pesos.",
+    "disclosure": "Solo pesos de ejemplo. No son recomendaciones y Wealthfolio no ha evaluado si se ajustan a ti."
   },
   "mode": {
     "cashFlowOnly": "Solo flujo de efectivo",

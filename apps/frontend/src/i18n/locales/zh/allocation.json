@@ -78,8 +78,10 @@
     "currentAllocation": "当前配置",
     "currentAllocationDescription": "从您今日的持仓开始",
     "noCurrentHoldings": "无当前持仓",
-    "moreTemplates": "更多模板",
-    "buildFromScratch": "从零开始构建"
+    "buildFromScratch": "从零开始构建",
+    "exampleWeights": "示例权重",
+    "exampleDescription": "用作量化起点，然后审阅并编辑权重。",
+    "disclosure": "仅为示例权重。它们不构成建议，Wealthfolio 也未评估其是否适合您。"
   },
   "mode": {
     "cashFlowOnly": "仅现金流",

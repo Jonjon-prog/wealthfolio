@@ -81,8 +81,10 @@
     "currentAllocation": "Current allocation",
     "currentAllocationDescription": "Start from what you hold today",
     "noCurrentHoldings": "No current holdings",
-    "moreTemplates": "More templates",
-    "buildFromScratch": "Build from scratch"
+    "buildFromScratch": "Build from scratch",
+    "exampleWeights": "Example weights",
+    "exampleDescription": "Use as a quantitative starting point, then review and edit the weights.",
+    "disclosure": "Example weights only. They are not recommendations, and Wealthfolio has not assessed whether they fit you."
   },
   "mode": {
     "cashFlowOnly": "Cash-flow only",

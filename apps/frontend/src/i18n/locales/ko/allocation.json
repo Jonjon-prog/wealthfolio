@@ -78,8 +78,10 @@
     "currentAllocation": "현재 배분",
     "currentAllocationDescription": "현재 보유 중인 자산을 기준으로 시작",
     "noCurrentHoldings": "현재 보유 종목 없음",
-    "moreTemplates": "템플릿 더 보기",
-    "buildFromScratch": "처음부터 구성"
+    "buildFromScratch": "처음부터 구성",
+    "exampleWeights": "예시 비중",
+    "exampleDescription": "정량적 출발점으로 사용한 뒤 비중을 검토하고 수정하세요.",
+    "disclosure": "예시 비중일 뿐입니다. 추천이 아니며, Wealthfolio는 이 비중이 사용자에게 적합한지 평가하지 않았습니다."
   },
   "mode": {
     "cashFlowOnly": "현금흐름만",

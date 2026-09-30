@@ -42,7 +42,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { BUILT_IN_PRESETS, ModelPresetPicker, type ModelPreset } from "./model-preset-picker";
+import { ModelPresetPicker } from "./model-preset-picker";
+import { BUILT_IN_PRESETS, modelPresetTitle } from "./model-preset-data";
 import { TargetWeightEditor, type WeightDraft } from "./target-weight-editor";
 import { DriftBandSlider } from "./drift-band-slider";
 import { useTargetConstraints } from "../hooks/use-target-constraints";
@@ -96,21 +97,6 @@ function TargetScopeIcon({ scopeType }: { scopeType: TargetScopeType }) {
     return <Icons.CreditCard className="h-4 w-4 shrink-0 opacity-70" />;
   }
   return <Icons.Wallet className="h-4 w-4 shrink-0 opacity-70" />;
-}
-
-function currentPreset(
-  taxonomyId: string,
-  categories: CategoryAllocation[],
-  t: TFunction,
-): ModelPreset {
-  return {
-    id: "current",
-    taxonomyId,
-    name: t("allocation:presets.currentAllocation"),
-    description: t("allocation:presets.currentAllocationDescription"),
-    risk: "From holdings",
-    weights: Object.fromEntries(categories.map((c) => [c.categoryId, c.percentage])),
-  };
 }
 
 function categoriesForTaxonomy(
@@ -631,12 +617,17 @@ function TargetEditor({
     () => BUILT_IN_PRESETS.filter((preset) => preset.taxonomyId === taxonomyId),
     [taxonomyId],
   );
-  const selectedPreset =
-    startId === "scratch" || startId === "saved"
-      ? null
-      : startId === "current"
-        ? currentPreset(taxonomyId, categories, t)
-        : (presets.find((preset) => preset.id === startId) ?? null);
+  const selectedPreset = presets.find((preset) => preset.id === startId) ?? null;
+  const selectedPresetTitle = selectedPreset
+    ? modelPresetTitle(
+        selectedPreset,
+        targetCategories.map((category) => ({
+          id: category.id,
+          name: category.name,
+          sortOrder: category.sortOrder,
+        })),
+      )
+    : null;
   const scope = target
     ? { scopeType: target.scopeType, scopeId: target.scopeId ?? null }
     : defaultScopeFromAccountScope(accountScope);
@@ -649,7 +640,7 @@ function TargetEditor({
         })
       : t("allocation:editor.suggestedTargetName", {
           name:
-            selectedPreset?.name ?? selectedTaxonomy?.name ?? t("allocation:editor.customFallback"),
+            selectedPresetTitle ?? selectedTaxonomy?.name ?? t("allocation:editor.customFallback"),
         });
   const savedWeightDrafts = React.useMemo(
     () => (existingWeightsData ? savedWeightsToDraft(existingWeightsData) : null),
@@ -763,7 +754,7 @@ function TargetEditor({
       ? t("allocation:editor.savedTarget")
       : startId === "scratch"
         ? t("allocation:presets.buildFromScratch")
-        : (selectedPreset?.name ?? t("allocation:presets.currentAllocation"));
+        : (selectedPresetTitle ?? t("allocation:presets.currentAllocation"));
   const showEditorSkeleton =
     taxonomyLoading || (!!target && existingWeightsLoading && weights.length === 0);
 

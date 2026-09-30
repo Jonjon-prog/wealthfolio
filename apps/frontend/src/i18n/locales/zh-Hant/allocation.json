@@ -81,8 +81,10 @@
     "currentAllocation": "目前配置",
     "currentAllocationDescription": "從你今日的持有部位開始",
     "noCurrentHoldings": "目前沒有持有部位",
-    "moreTemplates": "更多範本",
-    "buildFromScratch": "從頭建立"
+    "buildFromScratch": "從頭建立",
+    "exampleWeights": "範例權重",
+    "exampleDescription": "作為量化起點使用，之後再檢視並編輯權重。",
+    "disclosure": "僅為範例權重。這些不是建議，Wealthfolio 也未評估是否適合你。"
   },
   "mode": {
     "cashFlowOnly": "僅現金流",
