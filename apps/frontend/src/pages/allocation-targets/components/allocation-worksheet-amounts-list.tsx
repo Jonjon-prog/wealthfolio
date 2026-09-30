@@ -1,13 +1,4 @@
-import {
-  Button,
-  Icons,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-  useAmountFormatting,
-  useNumberFormatting,
-} from "@wealthfolio/ui";
+import { Button, Icons, useAmountFormatting, useNumberFormatting } from "@wealthfolio/ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -475,7 +466,7 @@ function AmountRow({
                 </button>
               )}
             </div>
-            {position.isAdded ? (
+            {position.isAdded && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -485,30 +476,6 @@ function AmountRow({
               >
                 <Icons.X className="h-3.5 w-3.5" />
               </Button>
-            ) : (
-              position.value > AMOUNT_EPSILON &&
-              allowSells && (
-                <TooltipProvider delayDuration={150}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
-                        disabled={projectedValue <= AMOUNT_EPSILON}
-                        aria-label={t("allocation:worksheet.reducePositionToZero")}
-                        onClick={() => actions.onReduceToZero(position)}
-                      >
-                        <Icons.MinusCircle className="h-3.5 w-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {t("allocation:worksheet.reducePositionToZero")}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )
             )}
           </div>
           {/* A final percentage is typed; the amount it comes to stays in view. */}
@@ -530,6 +497,19 @@ function AmountRow({
                     price: formatPrice(unitPrice, currency),
                   })
                 : t("allocation:worksheet.perUnit", { price: formatPrice(unitPrice, currency) })}
+            </p>
+          )}
+          {/* Emptying a position in one go, in words so it cannot be read as a unit step. */}
+          {!position.isAdded && position.value > AMOUNT_EPSILON && allowSells && (
+            <p className="mt-0.5 text-right text-[10px]">
+              <button
+                type="button"
+                disabled={projectedValue <= AMOUNT_EPSILON}
+                onClick={() => actions.onReduceToZero(position)}
+                className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-40"
+              >
+                {t("allocation:worksheet.reduceToZero")}
+              </button>
             </p>
           )}
         </div>

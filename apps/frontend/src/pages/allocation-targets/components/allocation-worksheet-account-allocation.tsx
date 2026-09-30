@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Account, WorksheetAccountFunding } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+import { stepByUnits } from "./allocation-worksheet-amounts";
 import {
   allocationProgress,
   AMOUNT_EPSILON,
@@ -47,8 +48,16 @@ export function AccountAllocation({
   onAmountChange,
 }: AccountAllocationProps) {
   const { t } = useTranslation();
-  const { formatAmount } = useAmountFormatting();
+  const { formatAmount, currencyFractionDigits } = useAmountFormatting();
   const { formatQuantity } = useNumberFormatting();
+  const fractionDigits = currencyFractionDigits(currency);
+  // The same unit steps as the row: the account's amount moves, the units follow.
+  const canStep = unitPrice !== undefined && unitPrice > 0;
+  const stepAccount = (accountId: string, amount: number, step: 1 | -1) => {
+    if (!unitPrice) return;
+    const next = Math.max(0, stepByUnits(amount, unitPrice, step, wholeSharesOnly, fractionDigits));
+    onAmountChange(accountId, formatDecimalInput(next, fractionDigits));
+  };
   const [showOtherAccounts, setShowOtherAccounts] = useState(false);
   const requested = Math.abs(changeAmount);
   const hasEnteredAmount = accounts.some(
@@ -195,8 +204,23 @@ export function AccountAllocation({
                     </span>
                   ) : (
                     <>
-                      <div className="border-input bg-background focus-within:ring-ring flex h-9 w-40 items-center rounded-md border px-2.5 focus-within:ring-1">
-                        <span className="text-muted-foreground mr-1.5 text-xs">{currency}</span>
+                      <div className="border-input bg-background focus-within:ring-ring flex h-9 w-48 items-center rounded-md border px-1 focus-within:ring-1">
+                        {canStep && (
+                          <button
+                            type="button"
+                            aria-label={t("allocation:worksheet.removeOneUnitIn", {
+                              account: account.name,
+                            })}
+                            disabled={currentAmount <= AMOUNT_EPSILON}
+                            onClick={() => stepAccount(account.id, currentAmount, -1)}
+                            className="text-muted-foreground hover:text-foreground flex h-6 w-6 shrink-0 items-center justify-center rounded disabled:opacity-30"
+                          >
+                            <Icons.Minus className="h-3 w-3" />
+                          </button>
+                        )}
+                        <span className="text-muted-foreground ml-1 mr-1.5 text-xs">
+                          {currency}
+                        </span>
                         <input
                           aria-label={t("allocation:worksheet.accountAmountLabel", {
                             account: account.name,
@@ -211,6 +235,18 @@ export function AccountAllocation({
                           placeholder="0"
                           className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
                         />
+                        {canStep && (
+                          <button
+                            type="button"
+                            aria-label={t("allocation:worksheet.addOneUnitIn", {
+                              account: account.name,
+                            })}
+                            onClick={() => stepAccount(account.id, currentAmount, 1)}
+                            className="text-muted-foreground hover:text-foreground ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded"
+                          >
+                            <Icons.Plus className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                       {rowRemaining > AMOUNT_EPSILON && (
                         <Button
@@ -231,7 +267,9 @@ export function AccountAllocation({
                   <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
                     {t("allocation:worksheet.accountUnitsSummary", {
                       quantity: formatQuantity(
-                        wholeSharesOnly ? Math.floor(currentUnits) : currentUnits,
+                        wholeSharesOnly
+                          ? Math.floor(currentUnits)
+                          : Math.round(currentUnits * 100) / 100,
                       ),
                     })}
                   </span>

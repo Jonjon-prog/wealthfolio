@@ -116,7 +116,7 @@ export function ReviewPanel({
                 onClick={() => onOpenRow(line.assetId)}
                 className="shrink-0 underline underline-offset-4"
               >
-                {t("allocation:worksheet.openInAmounts")}
+                {t("allocation:worksheet.showPosition")}
               </button>
             </li>
           ))}
