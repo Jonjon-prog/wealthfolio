@@ -108,35 +108,36 @@ fn portfolio_history_backfill_needed(context: &Arc<ServiceContext>) -> bool {
 }
 
 impl NativeProfiles {
-    pub fn new(root: String) -> Result<Self, String> {
-        Self::open(root, false)
+    pub fn new(root: String, identifier: &str) -> Result<Self, String> {
+        Self::open(root, identifier, false)
     }
 
-    pub fn start_new(root: String) -> Result<Self, String> {
-        Self::open(root, true)
+    pub fn start_new(root: String, identifier: &str) -> Result<Self, String> {
+        Self::open(root, identifier, true)
     }
 
-    fn open(root: String, start_new: bool) -> Result<Self, String> {
+    fn open(root: String, identifier: &str, start_new: bool) -> Result<Self, String> {
         let (root, legacy) =
-            match crate::data_dir::development_override(std::env::var_os("WF_DATA_DIR"))? {
-                Some(root) => {
-                    let database = root.join("app.db");
-                    (root, database)
-                }
-                None => {
-                    let database = wealthfolio_storage_sqlite::db::get_db_path(&root);
-                    (root.into(), database.into())
-                }
-            };
+            crate::data_dir::profile_paths(root, identifier, std::env::var_os("WF_DATA_DIR"))?;
         let registry = if start_new {
-            ProfileRegistry::start_new(root, legacy, shared_secret_store())
+            ProfileRegistry::start_new(root, legacy, shared_secret_store(identifier))
         } else {
-            ProfileRegistry::open(root, legacy, shared_secret_store())
+            ProfileRegistry::open(root, legacy, shared_secret_store(identifier))
         }
         .map_err(|e| e.to_string())?;
         for id in registry.pending_deletions().map_err(|e| e.to_string())? {
-            if registry.finish_delete(id).is_err() {
-                log::warn!("Profile deletion cleanup needs a retry.");
+            if let Err(error) = registry.finish_delete(id) {
+                let (kind, io_kind, os_code) = match error {
+                    ProfileError::StorageIo { kind, os_code } => {
+                        ("storage_io", Some(kind), os_code)
+                    }
+                    ProfileError::Unavailable(_) => ("storage_unavailable", None, None),
+                    ProfileError::Invalid(_) => ("invalid_deletion_record", None, None),
+                    _ => ("other", None, None),
+                };
+                log::warn!(
+                    "Profile deletion cleanup needs a retry (profile={id}, kind={kind}, ioKind={io_kind:?}, osCode={os_code:?})"
+                );
             }
         }
         Ok(Self {
@@ -244,7 +245,13 @@ impl NativeProfiles {
             registry.verify(id, proof.as_deref().map(String::as_str))
         })
         .await
-        .map_err(|_| "Profile verification failed.".to_string())?
+        .map_err(|error| {
+            log::error!(
+                "Profile verification task failed (panic={})",
+                matches!(error, tauri::Error::JoinError(ref join) if join.is_panic())
+            );
+            "Profile verification failed.".to_string()
+        })?
         .map_err(|e| e.to_string())?;
         self.registry
             .sessions
@@ -622,7 +629,13 @@ pub async fn set_profile_password(
         )
     })
     .await
-    .map_err(|_| "Profile password update failed.".to_string())?
+    .map_err(|error| {
+        log::error!(
+            "Profile password update task failed (panic={})",
+            matches!(error, tauri::Error::JoinError(ref join) if join.is_panic())
+        );
+        "Profile password update failed.".to_string()
+    })?
     .map_err(|e| e.to_string())?;
     drop(state);
     let _ = handle.state::<NativeProfiles>().lock(&handle).await;
@@ -650,7 +663,13 @@ pub async fn recover_profile_password(
         registry.set_password(profile_id, Some(&recovery), Some(&password))
     })
     .await
-    .map_err(|_| "Profile recovery failed.".to_string())?
+    .map_err(|error| {
+        log::error!(
+            "Profile recovery task failed (panic={})",
+            matches!(error, tauri::Error::JoinError(ref join) if join.is_panic())
+        );
+        "Profile recovery failed.".to_string()
+    })?
     .map_err(|e| e.to_string())?;
     let _ = state.lock(&handle).await;
     result.ok_or_else(|| "Profile recovery failed.".into())
