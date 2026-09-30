@@ -466,8 +466,8 @@ pub struct AdjustmentScaling {
     pub cash_factor: Option<Decimal>,
     /// Step 2 — reductions scaled to fit the target's turnover cap.
     pub reduction_factor: Option<Decimal>,
-    /// Step 4 — increases that depend on reduction proceeds, scaled to the
-    /// funding those proceeds actually raised.
+    /// Step 4 — every positive net adjustment, scaled by one factor when the
+    /// increases exceed the cash and the proceeds the reductions raise.
     pub increase_factor: Option<Decimal>,
 }
 
