@@ -437,42 +437,47 @@ function CalculationControl({
     <div id="worksheet-calculation" className="min-w-0 space-y-5 p-5 sm:p-6">
       <div>
         <Eyebrow>{t("allocation:worksheet.modeLabel")}</Eyebrow>
-        <div className="border-border bg-muted/20 mt-2 inline-flex rounded-full border p-1">
-          {modes.map((option) => {
-            const disabled = option.value === "rebalance" && !allowSells;
-            const button = (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={mode === option.value}
-                disabled={disabled}
-                onClick={() => onModeChange(option.value)}
-                className={cn(
-                  "rounded-full px-4 py-1.5 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                  mode === option.value
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {option.label}
-              </button>
-            );
-            if (!disabled) return button;
-            return (
-              <TooltipProvider key={option.value} delayDuration={150}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>{button}</span>
-                  </TooltipTrigger>
-                  <TooltipContent>{t("allocation:mode.enableSellsTip")}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            );
-          })}
+        {/* The hint sits beside the switch rather than under it, to keep Setup short. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="border-border bg-muted/20 inline-flex shrink-0 rounded-full border p-1">
+            {modes.map((option) => {
+              const disabled = option.value === "rebalance" && !allowSells;
+              const button = (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={mode === option.value}
+                  disabled={disabled}
+                  onClick={() => onModeChange(option.value)}
+                  className={cn(
+                    "rounded-full px-4 py-1.5 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                    mode === option.value
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+              if (!disabled) return button;
+              return (
+                <TooltipProvider key={option.value} delayDuration={150}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>{button}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{t("allocation:mode.enableSellsTip")}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              );
+            })}
+          </div>
+          {activeMode && (
+            <p className="text-muted-foreground min-w-0 flex-1 basis-56 text-xs leading-relaxed">
+              {activeMode.hint}
+            </p>
+          )}
         </div>
-        {activeMode && (
-          <p className="text-muted-foreground mt-2 text-xs leading-relaxed">{activeMode.hint}</p>
-        )}
       </div>
 
       <div>
