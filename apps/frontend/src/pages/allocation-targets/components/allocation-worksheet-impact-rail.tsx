@@ -5,10 +5,6 @@ import type { AllocationWorksheetResult, CalculatedAdjustments, DriftReport } fr
 import { cn } from "@/lib/utils";
 
 import {
-  allocationTargetColorForRow,
-  buildAllocationTargetColorMap,
-} from "./allocation-target-colors";
-import {
   activeTarget,
   categoryEmphasis,
   changeInCategory,
@@ -23,6 +19,7 @@ import {
   formatSignedAmount,
   UNCLASSIFIED_CATEGORY_ID,
   UNRESOLVED_REASON_KEYS,
+  type ImpactClass,
   type PositionCategoryExposure,
 } from "./allocation-worksheet-utils";
 
@@ -34,19 +31,6 @@ export interface ImpactRailRow {
   change: number;
   /** What the security holds of each class across the target's scope. */
   valueIn: Readonly<Record<string, number>>;
-}
-
-export interface ImpactClass {
-  categoryId: string;
-  categoryName: string;
-  color: string;
-  currentBps: number;
-  projectedBps: number;
-  targetBps: number;
-  projectedDifferenceBps: number;
-  effectiveBandBps: number;
-  currentValue: number;
-  projectedValue: number;
 }
 
 type UnresolvedAmount = CalculatedAdjustments["unresolved"][number];
@@ -65,46 +49,6 @@ interface ImpactRailProps {
   onCalculate: () => void;
   onReviewIssue: () => void;
   onClassifySecurity: (lineId: string) => void;
-}
-
-/**
- * Every class the worksheet can move, in the preview's figures once there is
- * one. The rows' class dots take their colours from the same list.
- */
-export function impactClasses(
-  report: DriftReport,
-  result: AllocationWorksheetResult | null,
-  defaultBandBps: number,
-): ImpactClass[] {
-  const driftByCategory = new Map(report.rows.map((row) => [row.categoryId, row]));
-  const sourceRows =
-    result?.categories ??
-    report.rows.map((row) => ({
-      categoryId: row.categoryId,
-      categoryName: row.categoryName,
-      currentBps: row.currentBps,
-      projectedBps: row.currentBps,
-      targetBps: row.targetBps,
-      projectedDifferenceBps: row.driftBps,
-      currentValue: row.currentValue,
-      projectedValue: row.currentValue,
-    }));
-  const visibleRows = sourceRows.filter(
-    (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
-  );
-  const colorMap = buildAllocationTargetColorMap(visibleRows);
-  return visibleRows.map((row, index) => ({
-    categoryId: row.categoryId,
-    categoryName: row.categoryName,
-    currentBps: row.currentBps,
-    projectedBps: row.projectedBps,
-    targetBps: row.targetBps,
-    projectedDifferenceBps: row.projectedDifferenceBps,
-    currentValue: row.currentValue,
-    projectedValue: row.projectedValue,
-    color: allocationTargetColorForRow(row, colorMap, index),
-    effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? defaultBandBps,
-  }));
 }
 
 function formatWeight(bps: number): string {

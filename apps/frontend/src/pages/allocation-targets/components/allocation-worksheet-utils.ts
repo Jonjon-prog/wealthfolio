@@ -2,10 +2,17 @@ import type { useAmountFormatting } from "@wealthfolio/ui";
 
 import type {
   AllocationRule,
+  AllocationWorksheetResult,
   CalculatedAdjustments,
+  DriftReport,
   UnresolvedReason,
   WorksheetMode,
 } from "@/lib/types";
+
+import {
+  allocationTargetColorForRow,
+  buildAllocationTargetColorMap,
+} from "./allocation-target-colors";
 
 export const AMOUNT_EPSILON = 0.01;
 
@@ -272,4 +279,57 @@ export function generationInputsKey(inputs: WorksheetGenerationInputs): string {
       .sort(([left], [right]) => left.localeCompare(right)),
     inputs.eligibleAssetIds === undefined ? null : [...inputs.eligibleAssetIds].sort(),
   ]);
+}
+
+export interface ImpactClass {
+  categoryId: string;
+  categoryName: string;
+  color: string;
+  currentBps: number;
+  projectedBps: number;
+  targetBps: number;
+  projectedDifferenceBps: number;
+  effectiveBandBps: number;
+  currentValue: number;
+  projectedValue: number;
+}
+
+/**
+ * Every class the worksheet can move, in the preview's figures once there is
+ * one. The rows' class dots take their colours from the same list.
+ */
+export function impactClasses(
+  report: DriftReport,
+  result: AllocationWorksheetResult | null,
+  defaultBandBps: number,
+): ImpactClass[] {
+  const driftByCategory = new Map(report.rows.map((row) => [row.categoryId, row]));
+  const sourceRows =
+    result?.categories ??
+    report.rows.map((row) => ({
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      currentBps: row.currentBps,
+      projectedBps: row.currentBps,
+      targetBps: row.targetBps,
+      projectedDifferenceBps: row.driftBps,
+      currentValue: row.currentValue,
+      projectedValue: row.currentValue,
+    }));
+  const visibleRows = sourceRows.filter(
+    (row) => row.currentBps > 0 || row.projectedBps > 0 || row.targetBps > 0,
+  );
+  const colorMap = buildAllocationTargetColorMap(visibleRows);
+  return visibleRows.map((row, index) => ({
+    categoryId: row.categoryId,
+    categoryName: row.categoryName,
+    currentBps: row.currentBps,
+    projectedBps: row.projectedBps,
+    targetBps: row.targetBps,
+    projectedDifferenceBps: row.projectedDifferenceBps,
+    currentValue: row.currentValue,
+    projectedValue: row.projectedValue,
+    color: allocationTargetColorForRow(row, colorMap, index),
+    effectiveBandBps: driftByCategory.get(row.categoryId)?.effectiveBandBps ?? defaultBandBps,
+  }));
 }

@@ -65,7 +65,7 @@ import { useEligibleHoldingsSelection } from "../hooks/use-eligible-holdings";
 import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amounts-list";
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
 import { rowStatus } from "./allocation-worksheet-amounts";
-import { impactClasses, ImpactRail } from "./allocation-worksheet-impact-rail";
+import { ImpactRail } from "./allocation-worksheet-impact-rail";
 import { csvFile, toCsv, toTsv, worksheetExportRows } from "./allocation-worksheet-export";
 import { ReviewPanel } from "./allocation-worksheet-review";
 import {
@@ -77,6 +77,7 @@ import {
   formatDecimalInput,
   formatSignedAmount,
   generationInputsKey,
+  impactClasses,
   parseDecimalInput,
   planningTotal,
   soleHoldingAccountId,
