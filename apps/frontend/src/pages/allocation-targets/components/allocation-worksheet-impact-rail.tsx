@@ -450,14 +450,10 @@ function ImpactClassRow({
           className="border-muted-foreground bg-background absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full border"
           style={{ left: `${currentAt}%` }}
         />
-        {/* Keeps its class colour, which links it to the rows; an amber ring says it
-            stays outside its range. */}
+        {/* A plain dot in its class colour, which links it to the rows; the amber
+            projected figure says when it stays outside its range. */}
         <span
-          className={cn(
-            "absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full",
-            isOutsideRange &&
-              "outline outline-2 outline-offset-1 outline-amber-500 dark:outline-[#EAB308]",
-          )}
+          className="absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full"
           style={{ left: `${projectedAt}%`, background: item.color }}
         />
       </span>
