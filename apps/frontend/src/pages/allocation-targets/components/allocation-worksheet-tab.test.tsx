@@ -744,7 +744,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
     await user.click(screen.getByRole("button", { name: "Copy table" }));
     const copied = await navigator.clipboard.readText();
-    expect(copied).toContain("Brokerage\tVTI\tTotal market\tIncrease\t1000.00\t10");
+    expect(copied).toContain("Brokerage\tVTI\tTotal market\t1000.00\t10");
 
     // Saved through the runtime: a native save dialog in the app, a download on the web.
     await user.click(screen.getByRole("button", { name: "Export CSV" }));
@@ -752,7 +752,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const [file, fileName] = saveFileMock.mock.calls[0] as unknown as [Blob, string];
     expect(fileName).toBe("rebalancing-worksheet-2026-01-01.csv");
     const csv = await file.text();
-    expect(csv).toContain(`"Brokerage","VTI","Total market","Increase","1000.00","10"`);
+    expect(csv).toContain(`"Brokerage","VTI","Total market","1000.00","10"`);
   });
 
   it("holds export back while a change is not in the review, and says why", async () => {

@@ -67,8 +67,6 @@ describe("allocation copy contract (spec §7 and §10)", () => {
     );
 
     expect(offending).toEqual([]);
-    expect(enAllocation.worksheet.increase).toBe("Increase");
-    expect(enAllocation.worksheet.reduce).toBe("Reduce");
   });
 
   it("names the two modes and the two actions that regenerate", () => {

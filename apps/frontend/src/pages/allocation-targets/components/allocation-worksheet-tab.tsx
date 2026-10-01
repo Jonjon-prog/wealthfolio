@@ -25,6 +25,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
   useAmountFormatting,
+  useNumberFormatting,
 } from "@wealthfolio/ui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
@@ -1003,6 +1004,8 @@ export function AllocationWorksheetTab({
 }: AllocationWorksheetTabProps) {
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
+  // The export writes numbers the way the user reads them (see toCsv).
+  const { decimalSeparator } = useNumberFormatting();
   const navigate = useNavigate();
   const worksheet = useAllocationWorksheet();
   const calculator = useCalculatedAdjustments();
@@ -1936,9 +1939,7 @@ export function AllocationWorksheetTab({
             ? t("allocation:worksheet.exportOutOfDate")
             : t("allocation:worksheet.exportPricesChanged"),
         note: t("allocation:worksheet.exportNote"),
-        status: t("allocation:worksheet.status"),
         category: t("allocation:worksheet.exportCategory"),
-        direction: t("allocation:worksheet.direction"),
         symbol: t("activity:table_symbol"),
         security: t("allocation:worksheet.security"),
         account: t("allocation:worksheet.account"),
@@ -1947,10 +1948,7 @@ export function AllocationWorksheetTab({
         price: t("allocation:worksheet.unitPrice"),
         priceDate: t("allocation:worksheet.exportPriceDate"),
         warnings: t("allocation:worksheet.exportWarnings"),
-        statusAdjustment: t("allocation:worksheet.exportStatusAdjustment"),
         statusUnresolved: t("allocation:worksheet.exportStatusUnresolved"),
-        increase: t("allocation:worksheet.increase"),
-        reduce: t("allocation:worksheet.reduce"),
         unknownAccount: t("allocation:worksheet.unknownAccount"),
         total: t("allocation:worksheet.accountTotal"),
         cashLeft: t("allocation:result.cashRemaining"),
@@ -1962,7 +1960,7 @@ export function AllocationWorksheetTab({
       // The runtime's own save: a native dialog in the app, a download on the web.
       try {
         await openFileSaveDialog(
-          csvFile(toCsv(table)),
+          csvFile(toCsv(table, decimalSeparator)),
           `rebalancing-worksheet-${result.calculatedAt.slice(0, 10)}.csv`,
         );
       } catch {
@@ -1971,7 +1969,7 @@ export function AllocationWorksheetTab({
       return;
     }
     try {
-      await navigator.clipboard.writeText(toTsv(table));
+      await navigator.clipboard.writeText(toTsv(table, decimalSeparator));
       toast.success(t("allocation:worksheet.tableCopied"));
     } catch {
       toast.error(t("allocation:worksheet.copyFailed"));

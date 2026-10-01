@@ -32,13 +32,11 @@ export interface WorksheetExportLabels {
   eligibleValue: string;
   /** Sentences saying which amounts the calculation scaled, if any. */
   scaling: readonly string[];
-  /** Said in the header when inputs changed after the calculation. */
+  /** Said with the context when inputs changed after the calculation. */
   outOfDate?: string;
-  /** Labels each sentence in the header, so every header row reads label, value. */
+  /** Heads the last column and labels each sentence of the context. */
   note: string;
-  status: string;
   category: string;
-  direction: string;
   symbol: string;
   security: string;
   account: string;
@@ -47,10 +45,7 @@ export interface WorksheetExportLabels {
   price: string;
   priceDate: string;
   warnings: string;
-  statusAdjustment: string;
   statusUnresolved: string;
-  increase: string;
-  reduce: string;
   unknownAccount: string;
   total: string;
   cashLeft: string;
@@ -104,13 +99,41 @@ function signedAmount(line: AllocationWorksheetLineResult): number {
   return line.direction === "increase" ? line.estimatedAmount : -line.estimatedAmount;
 }
 
+/** Wide enough for a security's name, which shares the column. */
+const TEXT_WIDTH = 70;
+
 /**
- * The export table (§8), laid out like the review: a header describing what
- * the worksheet was calculated from, one row per security and account grouped
- * by account, the amounts the calculation could not place, each account's
- * total and the cash it has left, then the warnings and the limitations.
- * Amounts are signed and come first; quantities are estimates. Nothing reads
- * like an order ticket.
+ * Breaks a sentence into lines inside its cell. A spreadsheet sizes a column
+ * to its longest line, so one long sentence would otherwise widen the whole
+ * table. Scripts written without spaces break anywhere.
+ */
+export function wrapText(text: string, width = TEXT_WIDTH): string {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    if (word.length > width) {
+      if (line) lines.push(line);
+      const pieces = word.match(new RegExp(`.{1,${Math.floor(width / 2)}}`, "gu")) ?? [word];
+      lines.push(...pieces.slice(0, -1));
+      line = pieces[pieces.length - 1];
+    } else if (line && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.join("\n");
+}
+
+/**
+ * The export table (§8), laid out to be read first and kept narrow: the lines
+ * grouped by account, the amounts the calculation could not place, each
+ * account's total and the cash it has left, then what the worksheet was
+ * calculated from, the warnings and the limitations. Amounts are signed, so a
+ * reduction reads as a negative amount; quantities are estimates. Nothing
+ * reads like an order ticket.
  */
 export function worksheetExportRows(
   input: WorksheetExportInput,
@@ -135,30 +158,16 @@ export function worksheetExportRows(
   );
 
   const rows: ExportCell[][] = [
-    [labels.title],
-    [labels.target, result.targetName],
-    [labels.calculatedAt, localDateTime(result.calculatedAt)],
-    [labels.accounts, input.accountIds.map(accountName).join(", ")],
-    [labels.mode, labels.modeValue],
-    [labels.rule, labels.ruleValue],
-    [labels.eligible, labels.eligibleValue],
-    [`${labels.trackedCash} (${currency})`, decimal(input.trackedCashToUse)],
-    [`${labels.externalCash} (${currency})`, decimal(input.externalCash)],
-    ...labels.scaling.map((sentence) => [labels.note, sentence]),
-    ...(labels.outOfDate ? [[labels.note, labels.outOfDate]] : []),
-    [],
     [
       labels.account,
       labels.symbol,
       labels.security,
-      labels.direction,
       `${labels.amount} (${currency})`,
       labels.quantity,
       `${labels.price} (${currency})`,
-      labels.priceDate,
       labels.category,
-      labels.status,
-      labels.warnings,
+      labels.priceDate,
+      labels.note,
     ],
   ];
 
@@ -167,30 +176,26 @@ export function worksheetExportRows(
       accountName(line.accountId),
       line.symbol,
       line.name,
-      line.direction === "increase" ? labels.increase : labels.reduce,
       decimal(signedAmount(line)),
       round(line.direction === "increase" ? line.quantity : -line.quantity, 6),
       storedPrice(line.unitPrice),
-      line.quoteSource.timestamp.slice(0, 10),
       lineCategory(line),
-      labels.statusAdjustment,
+      line.quoteSource.timestamp.slice(0, 10),
       (warningsByLine.get(line.lineId) ?? []).join("; "),
     ]);
   }
-  // Part of the picture, so part of the file rather than only on screen.
+  // Part of the picture, so part of the table rather than only on screen.
   for (const item of calculated?.unresolved ?? []) {
     rows.push([
-      "",
       "",
       "",
       "",
       decimal(item.amount),
       "",
       "",
-      "",
       item.categoryName,
-      labels.statusUnresolved,
       "",
+      labels.statusUnresolved,
     ]);
   }
 
@@ -214,36 +219,70 @@ export function worksheetExportRows(
     }
   }
 
-  if (result.warnings.length > 0) {
-    rows.push([], [labels.warnings], ...result.warnings.map((warning) => [warning.message]));
-  }
-  rows.push([], [labels.limitationsTitle], [labels.limitations]);
+  // The context reads label, value: the label first, the value under the
+  // security names, where a sentence is no wider than they are.
+  const context = (label: string, value: ExportCell): ExportCell[] => [
+    label,
+    "",
+    typeof value === "string" ? wrapText(value) : value,
+  ];
+  rows.push(
+    [],
+    [labels.title],
+    context(labels.target, result.targetName),
+    context(labels.calculatedAt, localDateTime(result.calculatedAt)),
+    context(labels.accounts, input.accountIds.map(accountName).join(", ")),
+    context(labels.mode, labels.modeValue),
+    context(labels.rule, labels.ruleValue),
+    context(labels.eligible, labels.eligibleValue),
+    context(`${labels.trackedCash} (${currency})`, decimal(input.trackedCashToUse)),
+    context(`${labels.externalCash} (${currency})`, decimal(input.externalCash)),
+    ...labels.scaling.map((sentence) => context(labels.note, sentence)),
+    ...(labels.outOfDate ? [context(labels.note, labels.outOfDate)] : []),
+  );
+  result.warnings.forEach((warning, index) => {
+    rows.push(context(index === 0 ? labels.warnings : "", warning.message));
+  });
+  rows.push(context(labels.limitationsTitle, labels.limitations));
   return rows;
 }
 
 /** A text a spreadsheet would run as a formula is kept as text. */
 const FORMULA_PREFIX = /^[=+\-@\t\r]/;
 
-function textCell(value: ExportCell): string {
+function textCell(value: ExportCell, decimalSeparator: string): string {
   if (typeof value === "object") {
     // A sign is part of the number, not a formula.
     const fixed = value.decimal.toFixed(value.digits);
-    return Number(fixed) === 0 ? (0).toFixed(value.digits) : fixed;
+    const text = Number(fixed) === 0 ? (0).toFixed(value.digits) : fixed;
+    return text.replace(".", decimalSeparator);
   }
-  const text = String(value);
-  return typeof value === "string" && FORMULA_PREFIX.test(text) ? `'${text}` : text;
+  if (typeof value === "number") return String(value).replace(".", decimalSeparator);
+  return FORMULA_PREFIX.test(value) ? `'${value}` : value;
 }
 
-export function toCsv(rows: readonly ExportCell[][]): string {
+/**
+ * A spreadsheet reads a number only in its own format, so numbers carry the
+ * user's decimal mark, without group separators. Where that mark is a comma,
+ * columns are separated by semicolons, as spreadsheets there expect.
+ */
+export function toCsv(rows: readonly ExportCell[][], decimalSeparator = "."): string {
+  const separator = decimalSeparator === "," ? ";" : ",";
   return rows
-    .map((row) => row.map((cell) => `"${textCell(cell).replaceAll('"', '""')}"`).join(","))
+    .map((row) =>
+      row
+        .map((cell) => `"${textCell(cell, decimalSeparator).replaceAll('"', '""')}"`)
+        .join(separator),
+    )
     .join("\n");
 }
 
 /** The same table for the clipboard, so it pastes into a spreadsheet as cells. */
-export function toTsv(rows: readonly ExportCell[][]): string {
+export function toTsv(rows: readonly ExportCell[][], decimalSeparator = "."): string {
   return rows
-    .map((row) => row.map((cell) => textCell(cell).replace(/[\t\r\n]+/g, " ")).join("\t"))
+    .map((row) =>
+      row.map((cell) => textCell(cell, decimalSeparator).replace(/[\t\r\n]+/g, " ")).join("\t"),
+    )
     .join("\n");
 }
 
