@@ -255,7 +255,7 @@
     "fundingShort": "em falta: a planilha pede mais do que as contas podem financiar.",
     "fxConversionSource": "Conversão de moeda: {{from}} → {{to}} a {{rate}} · {{date}}",
     "generateFailed": "Não foi possível calcular os ajustes.",
-    "holdsThisSecurity": "detém este ativo",
+    "holdsThisSecurity": "Detém este ativo",
     "increaseAccountAllocationHint": "Várias contas poderiam receber este aumento. Aloque-o você mesmo; nada é atribuído por padrão.",
     "increasesScaled": "Os aumentos foram reduzidos a {{percent}}% para caber no financiamento disponível.",
     "inputsChanged": "Os dados de entrada mudaram desde que estes ajustes foram calculados. Recalcule a partir da meta para atualizá-los. Suas edições permanecem até lá.",

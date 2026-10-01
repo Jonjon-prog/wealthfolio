@@ -255,7 +255,7 @@
     "fundingShort": "de déficit: la hoja pide más de lo que las cuentas pueden financiar.",
     "fxConversionSource": "Conversión de divisa: {{from}} → {{to}} a {{rate}} · {{date}}",
     "generateFailed": "No se pudieron calcular los ajustes.",
-    "holdsThisSecurity": "tiene este valor",
+    "holdsThisSecurity": "Tiene este valor",
     "increaseAccountAllocationHint": "Varias cuentas podrían recibir este aumento. Asígnalo tú; no se asigna nada por defecto.",
     "increasesScaled": "Los aumentos se escalaron al {{percent}} % para ajustarse a la financiación disponible.",
     "inputsChanged": "Los datos de entrada cambiaron desde que se calcularon estos ajustes. Recalcula desde el objetivo para actualizarlos. Tus cambios se mantienen hasta entonces.",

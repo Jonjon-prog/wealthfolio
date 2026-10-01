@@ -249,7 +249,7 @@
     "fundingShort": "short: the worksheet asks for more than the accounts can fund.",
     "fxConversionSource": "Currency conversion: {{from}} → {{to}} at {{rate}} · {{date}}",
     "generateFailed": "Adjustments could not be calculated.",
-    "holdsThisSecurity": "holds this",
+    "holdsThisSecurity": "Holds this",
     "increaseAccountAllocationHint": "Several accounts could receive this increase. Place it yourself; nothing is assigned by default.",
     "increasesScaled": "Increases were scaled to {{percent}}% to fit the available funding.",
     "inputsChanged": "Inputs changed since these adjustments were calculated. Recalculate from target to update them. Your edits stay until you do.",

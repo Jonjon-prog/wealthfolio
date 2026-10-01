@@ -255,7 +255,7 @@
     "fundingShort": "mancanti: il foglio richiede più di quanto i conti possano finanziare.",
     "fxConversionSource": "Conversione valutaria: {{from}} → {{to}} a {{rate}} · {{date}}",
     "generateFailed": "Impossibile calcolare le rettifiche.",
-    "holdsThisSecurity": "detiene questo titolo",
+    "holdsThisSecurity": "Detiene questo titolo",
     "increaseAccountAllocationHint": "Più conti potrebbero ricevere questo aumento. Assegnalo tu; per impostazione predefinita non viene assegnato nulla.",
     "increasesScaled": "Gli aumenti sono stati ridotti al {{percent}}% per rientrare nel finanziamento disponibile.",
     "inputsChanged": "I dati di input sono cambiati da quando sono state calcolate queste rettifiche. Ricalcola dall'obiettivo per aggiornarle. Le tue modifiche restano fino ad allora.",

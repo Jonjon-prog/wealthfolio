@@ -249,7 +249,7 @@
     "fundingShort": "fehlen: Das Arbeitsblatt verlangt mehr, als die Konten finanzieren können.",
     "fxConversionSource": "Währungsumrechnung: {{from}} → {{to}} zu {{rate}} · {{date}}",
     "generateFailed": "Die Anpassungen konnten nicht berechnet werden.",
-    "holdsThisSecurity": "hält dieses Wertpapier",
+    "holdsThisSecurity": "Hält dieses Wertpapier",
     "increaseAccountAllocationHint": "Mehrere Konten könnten diese Erhöhung aufnehmen. Platzieren Sie sie selbst; standardmäßig wird nichts zugewiesen.",
     "increasesScaled": "Erhöhungen wurden auf {{percent}} % skaliert, um in die verfügbare Finanzierung zu passen.",
     "inputsChanged": "Die Eingaben haben sich seit der Berechnung dieser Anpassungen geändert. Berechnen Sie sie vom Ziel neu, um sie zu aktualisieren. Ihre Bearbeitungen bleiben bis dahin erhalten.",

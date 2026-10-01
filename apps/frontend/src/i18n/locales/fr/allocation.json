@@ -255,7 +255,7 @@
     "fundingShort": "manquants : la feuille demande plus que ce que les comptes peuvent financer.",
     "fxConversionSource": "Conversion de devise : {{from}} → {{to}} à {{rate}} · {{date}}",
     "generateFailed": "Les ajustements n'ont pas pu être calculés.",
-    "holdsThisSecurity": "détient ce titre",
+    "holdsThisSecurity": "Détient ce titre",
     "increaseAccountAllocationHint": "Plusieurs comptes pourraient recevoir cette augmentation. Placez-la vous-même ; rien n'est attribué par défaut.",
     "increasesScaled": "Les augmentations ont été ramenées à {{percent}} % pour tenir dans le financement disponible.",
     "inputsChanged": "Les paramètres ont changé depuis le calcul de ces ajustements. Recalculez depuis la cible pour les mettre à jour. Vos modifications restent en place d'ici là.",
