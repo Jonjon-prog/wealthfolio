@@ -34,7 +34,6 @@ import type {
   AllocationTargetConstraint,
   ConstraintSubjectType,
   AccountScope,
-  RebalanceGoal,
   TargetScopeType,
   TaxonomyCategory,
 } from "@/lib/types";
@@ -567,9 +566,6 @@ function TargetEditor({
     target ? target.relativeFactorBps / 100 : 20,
   );
   const [allowSells, setAllowSells] = useState(target?.allowSells ?? true);
-  const [rebalanceGoal, setRebalanceGoal] = useState<RebalanceGoal>(
-    target?.rebalanceGoal ?? "nearest_band",
-  );
   const [minTradeAmount, setMinTradeAmount] = useState(target?.minTradeAmount ?? "0");
   const [wholeSharesOnly, setWholeSharesOnly] = useState(target?.wholeSharesOnly ?? false);
   const [maxTurnoverPctDisplay, setMaxTurnoverPctDisplay] = useState(
@@ -662,7 +658,6 @@ function TargetEditor({
       setBandType(resetTargetBandType);
       setRelativeFactorPct(resetTargetRelativeFactorBps / 100);
       setAllowSells(target?.allowSells ?? false);
-      setRebalanceGoal(target?.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target?.minTradeAmount ?? "0");
       setWholeSharesOnly(target?.wholeSharesOnly ?? false);
       setMaxTurnoverPctDisplay(
@@ -677,7 +672,6 @@ function TargetEditor({
       setBandType("hybrid");
       setRelativeFactorPct(20);
       setAllowSells(true);
-      setRebalanceGoal("nearest_band");
       setMinTradeAmount("0");
       setWholeSharesOnly(false);
       setMaxTurnoverPctDisplay("");
@@ -697,7 +691,6 @@ function TargetEditor({
     resetTargetTaxonomyId,
     onUnsavedChange,
     target?.allowSells,
-    target?.rebalanceGoal,
     target?.minTradeAmount,
     target?.wholeSharesOnly,
   ]);
@@ -772,7 +765,9 @@ function TargetEditor({
         bandType,
         relativeFactorBps: Math.round(relativeFactorPct * 100),
         allowSells,
-        rebalanceGoal,
+        // No longer offered: the worksheet always calculates toward the exact
+        // target (§4.2). The stored value is kept as it was.
+        rebalanceGoal: target?.rebalanceGoal ?? "nearest_band",
         minTradeAmount: minTradeAmount === "" ? "0" : minTradeAmount,
         wholeSharesOnly,
         maxTurnoverBps:
@@ -826,7 +821,6 @@ function TargetEditor({
       setBandType(target.bandType ?? "absolute");
       setRelativeFactorPct((target.relativeFactorBps ?? 2000) / 100);
       setAllowSells(target.allowSells ?? false);
-      setRebalanceGoal(target.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target.minTradeAmount ?? "0");
       setWholeSharesOnly(target.wholeSharesOnly ?? false);
       setMaxTurnoverPctDisplay(
@@ -841,7 +835,6 @@ function TargetEditor({
       setDriftBandPct(1);
       setBandType("hybrid");
       setRelativeFactorPct(20);
-      setRebalanceGoal("nearest_band");
       setMinTradeAmount("0");
       setWholeSharesOnly(false);
       setWeights([]);
@@ -1041,30 +1034,6 @@ function TargetEditor({
                   {allowSells
                     ? t("allocation:editor.modeSellNote")
                     : t("allocation:editor.modeBuyNote")}
-                </p>
-              </div>
-
-              <div>
-                <div className="text-foreground mb-2 text-[12.5px] font-medium">
-                  {t("allocation:editor.goal")}
-                </div>
-                <AnimatedToggleGroup<RebalanceGoal>
-                  value={rebalanceGoal}
-                  onValueChange={(v) => {
-                    setRebalanceGoal(v);
-                    markDirty();
-                  }}
-                  items={[
-                    { value: "nearest_band", label: t("allocation:editor.nearestBand") },
-                    { value: "exact_target", label: t("allocation:editor.exactTarget") },
-                  ]}
-                  rounded="lg"
-                  className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
-                />
-                <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
-                  {rebalanceGoal === "exact_target"
-                    ? t("allocation:editor.goalExactNote")
-                    : t("allocation:editor.goalNearestNote")}
                 </p>
               </div>
 
