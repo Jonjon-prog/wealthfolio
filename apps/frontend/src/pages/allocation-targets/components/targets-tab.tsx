@@ -1015,7 +1015,7 @@ function TargetEditor({
             <div className="divide-border/50 divide-y [&>*:first-child]:pt-0 [&>*:last-child]:pb-0 [&>*]:py-4">
               <div>
                 <div className="text-foreground mb-2 text-[12.5px] font-medium">
-                  {t("allocation:editor.mode")}
+                  {t("allocation:editor.reductions")}
                 </div>
                 <AnimatedToggleGroup<"buy_only" | "allow_sells">
                   value={allowSells ? "allow_sells" : "buy_only"}
@@ -1024,16 +1024,16 @@ function TargetEditor({
                     markDirty();
                   }}
                   items={[
-                    { value: "buy_only", label: t("allocation:editor.buyOnly") },
-                    { value: "allow_sells", label: t("allocation:editor.allowSells") },
+                    { value: "buy_only", label: t("allocation:editor.reductionsOff") },
+                    { value: "allow_sells", label: t("allocation:editor.reductionsOn") },
                   ]}
                   rounded="lg"
                   className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
                 />
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
                   {allowSells
-                    ? t("allocation:editor.modeSellNote")
-                    : t("allocation:editor.modeBuyNote")}
+                    ? t("allocation:editor.reductionsOnNote")
+                    : t("allocation:editor.reductionsOffNote")}
                 </p>
               </div>
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import enAllocation from "@/i18n/locales/en/allocation.json";
+import enInsights from "@/i18n/locales/en/insights.json";
 
 import { BUILT_IN_PRESETS, modelPresetTitle } from "./model-preset-data";
 
@@ -17,6 +18,9 @@ function strings(catalog: Catalog, prefix = ""): [string, string][] {
 
 const allocationStrings = strings(enAllocation);
 const worksheetStrings = allocationStrings.filter(([key]) => key.startsWith("worksheet."));
+/** The Insights card that compares the portfolio with its target. */
+const targetCardStrings = strings(enInsights.insights.rails, "insights.rails");
+const targetCopy = [...allocationStrings, ...targetCardStrings];
 
 /** Stating what the app does not do may name it. */
 const DISCLOSURES = new Set(["worksheet.firstUseDisclosure"]);
@@ -31,6 +35,9 @@ describe("allocation copy contract (spec §7 and §10)", () => {
     expect(Object.keys(enAllocation.mode)).toEqual(["enableSellsTip"]);
     expect(enAllocation.worksheet).not.toHaveProperty("acknowledgeWarnings");
     expect(enAllocation.worksheet).not.toHaveProperty("acknowledgeExport");
+    for (const key of ["suggested_moves", "add", "trim"]) {
+      expect(enInsights.insights.rails).not.toHaveProperty(key);
+    }
   });
 
   it("avoids the words §7 rules out", () => {
@@ -41,19 +48,21 @@ describe("allocation copy contract (spec §7 and §10)", () => {
       /\ballocation strategy\b/i,
       /\bmissing trades?\b/i,
       /\b(cash-flow only|sell to rebalance)\b/i,
+      /\bno (action|rebalancing) (required|needed)\b/i,
+      /\bplan\b/i,
     ];
 
-    const offending = allocationStrings.filter(([, text]) =>
+    const offending = targetCopy.filter(([, text]) =>
       avoided.some((pattern) => pattern.test(text)),
     );
 
     expect(offending).toEqual([]);
   });
 
-  it("words the worksheet as increases and reductions, never as orders", () => {
-    const orderWords = /\b(buys?|sells?|trades?|orders?)\b/i;
+  it("words target copy as increases and reductions, never as orders", () => {
+    const orderWords = /\b(buys?|sells?|selling|sold|trades?|orders?)\b/i;
 
-    const offending = worksheetStrings.filter(
+    const offending = targetCopy.filter(
       ([key, text]) => !DISCLOSURES.has(key) && orderWords.test(text),
     );
 

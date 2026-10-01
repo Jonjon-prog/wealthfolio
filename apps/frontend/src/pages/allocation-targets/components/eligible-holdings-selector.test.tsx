@@ -100,8 +100,8 @@ describe("EligibleHoldingsSelector", () => {
   it("selects each unique non-cash instrument initially and groups it by type", () => {
     render(<Harness holdings={holdings} />);
 
-    expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
-      "All holdings selected",
+    expect(screen.getByRole("button", { name: /Eligible securities/ })).toHaveTextContent(
+      "All securities selected",
     );
 
     expect(groupEligibleHoldings(getEligibleHoldings(holdings)).map((group) => group.key)).toEqual([
@@ -116,7 +116,7 @@ describe("EligibleHoldingsSelector", () => {
   it("says which accounts hold a security, merging its rows into one choice", async () => {
     const user = userEvent.setup();
     render(<Harness holdings={holdings} />);
-    await user.click(screen.getByRole("button", { name: /Eligible holdings/ }));
+    await user.click(screen.getByRole("button", { name: /Eligible securities/ }));
 
     expect(
       getEligibleHoldings(holdings).find((row) => row.assetId === "asset-vti")?.accountIds,
@@ -130,11 +130,11 @@ describe("EligibleHoldingsSelector", () => {
     render(<Harness holdings={holdings} />);
 
     expect(
-      screen.getByRole("button", { name: /Eligible holdings.*All holdings selected/i }),
+      screen.getByRole("button", { name: /Eligible securities.*All securities selected/i }),
     ).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /Eligible holdings.*All holdings selected/i }),
+      screen.getByRole("button", { name: /Eligible securities.*All securities selected/i }),
     );
     const vti = screen.getByRole("option", { name: /VTI.*selected/i });
     expect(vti).toHaveAccessibleName(/selected/i);
@@ -146,19 +146,19 @@ describe("EligibleHoldingsSelector", () => {
   it("opens grouped rows, searches by name, and toggles individual holdings", async () => {
     const user = userEvent.setup();
     render(<Harness holdings={holdings} />);
-    await user.click(screen.getByRole("button", { name: /Eligible holdings/ }));
+    await user.click(screen.getByRole("button", { name: /Eligible securities/ }));
 
     expect(screen.getByText("Equity")).not.toBeInstanceOf(HTMLButtonElement);
     expect(screen.getByText("Bond")).toBeInTheDocument();
     expect(screen.getByText("Other")).toBeInTheDocument();
 
-    const search = screen.getByPlaceholderText("Search holdings");
+    const search = screen.getByPlaceholderText("Search securities");
     await user.type(search, "Vanguard");
     expect(screen.getByText("VTI")).toBeInTheDocument();
     expect(screen.queryByText("BND")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("option", { name: /VTI.*Vanguard Total Stock/i }));
-    expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: /Eligible securities/ })).toHaveTextContent(
       "2 of 3 selected",
     );
   });
@@ -174,7 +174,7 @@ describe("EligibleHoldingsSelector", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Eligible holdings/ }));
+    await user.click(screen.getByRole("button", { name: /Eligible securities/ }));
     expect(
       screen.getByRole("option", { name: /ABC.*Acme Corp.*XNAS.*USD.*selected/i }),
     ).toBeInTheDocument();
@@ -189,13 +189,13 @@ describe("EligibleHoldingsSelector", () => {
         .filter((option) => option.getAttribute("aria-selected") === "true"),
     ).toHaveLength(1);
 
-    await user.click(screen.getByPlaceholderText("Search holdings"));
+    await user.click(screen.getByPlaceholderText("Search securities"));
     await user.keyboard("{ArrowDown}{Enter}");
 
     expect(
       screen.getByRole("option", { name: /ABC.*Acme Corp.*XTSE.*CAD.*not selected/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: /Eligible securities/ })).toHaveTextContent(
       "1 of 2 selected",
     );
   });
@@ -203,10 +203,10 @@ describe("EligibleHoldingsSelector", () => {
   it("supports Clear and Select all and explains the empty state", async () => {
     const user = userEvent.setup();
     render(<Harness holdings={holdings} />);
-    await user.click(screen.getByRole("button", { name: /Eligible holdings/ }));
+    await user.click(screen.getByRole("button", { name: /Eligible securities/ }));
     await user.click(screen.getByRole("button", { name: "Clear" }));
 
-    expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: /Eligible securities/ })).toHaveTextContent(
       "0 of 3 selected",
     );
     expect(
@@ -216,8 +216,8 @@ describe("EligibleHoldingsSelector", () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Select all" }));
-    expect(screen.getByRole("button", { name: /Eligible holdings/ })).toHaveTextContent(
-      "All holdings selected",
+    expect(screen.getByRole("button", { name: /Eligible securities/ })).toHaveTextContent(
+      "All securities selected",
     );
   });
 });

@@ -675,7 +675,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await goTo(user, "Review");
     const held = document.querySelector<HTMLElement>('[data-held-line="vti"]')!;
     expect(held).toHaveTextContent("VTI +$1,200.00");
-    expect(held).toHaveTextContent("Allocate the full $1,200.00 change for VTI");
+    expect(held).toHaveTextContent("Place the full $1,200.00 adjustment for VTI");
 
     await user.click(within(held).getByRole("button", { name: "Show the position" }));
     expect(await screen.findByText("Account allocation")).toBeInTheDocument();
@@ -724,7 +724,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(screen.getByRole("button", { name: "Copy table" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
     expect(
-      screen.getByText("Export is available once every change is in the review."),
+      screen.getByText("Export is available once every adjustment is in the review."),
     ).toBeInTheDocument();
   });
 
@@ -936,7 +936,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Adjust positions");
 
-    expect(collapsedLine()).toHaveTextContent("4 securities with no change");
+    expect(collapsedLine()).toHaveTextContent("4 securities with no adjustment");
     expect(collapsedLine()).toHaveTextContent("$2,000.00");
     // Below the line, in the list's own order.
     expect(rowsAboveLine()).toEqual([]);
@@ -963,7 +963,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     await goTo(user, "Review");
     await goTo(user, "Adjust positions");
     expect(rowsAboveLine()).toEqual([]);
-    expect(collapsedLine()).toHaveTextContent("4 securities with no change");
+    expect(collapsedLine()).toHaveTextContent("4 securities with no adjustment");
   });
 
   it("keeps rows open in a class the calculation left an amount unresolved in", async () => {
@@ -980,7 +980,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
 
     // VTI has a change; IAU has none but is how the Gold amount gets resolved.
     expect(rowOrder()).toEqual(["vti", "iau"]);
-    expect(collapsedLine()).toHaveTextContent("2 securities with no change");
+    expect(collapsedLine()).toHaveTextContent("2 securities with no adjustment");
     expect(railClass("gold")).toHaveTextContent(
       "+$50.00 unresolved: no eligible security selected",
     );

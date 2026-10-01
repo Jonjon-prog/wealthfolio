@@ -308,7 +308,7 @@ export function ImpactRail({
                 <Icons.BarChart className="mr-1.5 h-4 w-4" />
               )}
               {issueMessage
-                ? t("allocation:worksheet.reviewWorksheet")
+                ? t("allocation:worksheet.goToIssue")
                 : t("allocation:worksheet.retryPreview")}
             </Button>
           )}

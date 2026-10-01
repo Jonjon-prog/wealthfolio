@@ -113,7 +113,7 @@ export function DriftDriversCard({
       <CardContent className="flex flex-1 flex-col">
         {oobRows.length === 0 ? (
           <p className="text-muted-foreground py-6 text-center text-[13px]">
-            {t("allocation:drivers.noActionRequired", { status: statusDescription })}
+            {t("allocation:drivers.noneOutsideRange")}
           </p>
         ) : (
           <ul className="space-y-3">
