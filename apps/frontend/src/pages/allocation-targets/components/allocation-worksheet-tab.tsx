@@ -81,6 +81,7 @@ import {
   impactClasses,
   parseDecimalInput,
   planningTotal,
+  PRICE_MOVE_THRESHOLD,
   soleHoldingAccountId,
   UNCLASSIFIED_CATEGORY_ID,
   UNRESOLVED_REASON_KEYS,
@@ -1391,9 +1392,9 @@ export function AllocationWorksheetTab({
     cashKnown &&
     generated.inputsKey !== generationInputsKey(generationInputs),
   );
-  // Prices are an input too (§5): a calculated line the preview now prices
-  // differently no longer matches what was calculated. Only the user's action
-  // recalculates.
+  // A calculated line whose price moved by more than PRICE_MOVE_THRESHOLD no
+  // longer matches what was calculated. An addition to §5's list of inputs;
+  // only the user's action recalculates.
   const pricesChanged = Boolean(
     generated &&
     result &&
@@ -1405,7 +1406,7 @@ export function AllocationWorksheetTab({
   const isOutOfDate = inputsChanged || pricesChanged;
   const outOfDateMessage = inputsChanged
     ? t("allocation:worksheet.inputsChanged")
-    : t("allocation:worksheet.pricesChanged");
+    : t("allocation:worksheet.pricesChanged", { percent: PRICE_MOVE_THRESHOLD * 100 });
   const generationIssue = !rule
     ? t("allocation:worksheet.chooseRuleIssue")
     : changeAccountIds.length === 0
@@ -1886,11 +1887,11 @@ export function AllocationWorksheetTab({
           : [
               t("allocation:worksheet.exportIncludes"),
               isOutOfDate
-                ? t(
-                    inputsChanged
-                      ? "allocation:worksheet.exportOutOfDateNote"
-                      : "allocation:worksheet.exportPricesChangedNote",
-                  )
+                ? inputsChanged
+                  ? t("allocation:worksheet.exportOutOfDateNote")
+                  : t("allocation:worksheet.exportPricesChangedNote", {
+                      percent: PRICE_MOVE_THRESHOLD * 100,
+                    })
                 : "",
             ]
               .filter(Boolean)
@@ -1937,7 +1938,9 @@ export function AllocationWorksheetTab({
           ? undefined
           : inputsChanged
             ? t("allocation:worksheet.exportOutOfDate")
-            : t("allocation:worksheet.exportPricesChanged"),
+            : t("allocation:worksheet.exportPricesChanged", {
+                percent: PRICE_MOVE_THRESHOLD * 100,
+              }),
         note: t("allocation:worksheet.exportNote"),
         category: t("allocation:worksheet.exportCategory"),
         symbol: t("activity:table_symbol"),

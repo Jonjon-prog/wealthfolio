@@ -226,12 +226,20 @@ export function adjustmentsFromCalculated(calculated: CalculatedAdjustments): Po
 }
 
 /**
- * Whether a unit price moved since a calculation used it. The calculation
- * depends on prices, so a move leaves the worksheet no longer matching what was
- * calculated (§5). A hundredth of a percent absorbs float and rounding noise.
+ * How far a unit price may move before the worksheet stops matching its
+ * calculation. Prices move all day and are synced when the app opens; a
+ * smaller move only changes the estimated quantities, which the preview
+ * already shows.
+ */
+export const PRICE_MOVE_THRESHOLD = 0.01;
+
+/**
+ * Whether a unit price moved by more than PRICE_MOVE_THRESHOLD since a
+ * calculation used it. Prices are not among the inputs §5 lists; this check is
+ * an addition to it, proposed on the PR.
  */
 export function unitPriceMoved(now: number, calculatedWith: number): boolean {
-  return Math.abs(now - calculatedWith) > Math.abs(calculatedWith) * 1e-4;
+  return Math.abs(now - calculatedWith) > Math.abs(calculatedWith) * PRICE_MOVE_THRESHOLD;
 }
 
 /** Cash not yet recorded, keyed by the account it would arrive in. */

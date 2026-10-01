@@ -88,10 +88,14 @@ describe("eligible accounts for a change", () => {
 });
 
 describe("a price moved since the calculation", () => {
-  it("counts a real move and ignores float noise", () => {
+  it("counts a move over 1% and ignores the drift prices make within a day", () => {
     expect(unitPriceMoved(149.4861, 147.820084)).toBe(true);
+    expect(unitPriceMoved(101.01, 100)).toBe(true);
+    expect(unitPriceMoved(98.99, 100)).toBe(true);
+    // Synced again since the calculation: 0.07%.
+    expect(unitPriceMoved(59.85, 59.81)).toBe(false);
+    expect(unitPriceMoved(100.99, 100)).toBe(false);
     expect(unitPriceMoved(59.3100006, 59.31)).toBe(false);
-    expect(unitPriceMoved(100, 100)).toBe(false);
   });
 });
 

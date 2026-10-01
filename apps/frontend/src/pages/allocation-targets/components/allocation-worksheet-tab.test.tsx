@@ -386,7 +386,7 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(await navigator.clipboard.readText()).toContain(coverage);
   });
 
-  it("marks the worksheet out of date when a price moved since the calculation", async () => {
+  it("marks the worksheet out of date when a price moved more than 1% since the calculation", async () => {
     generateMock.mockResolvedValue({
       ...calculated,
       adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1" }],
@@ -405,13 +405,44 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     await calculateFromTarget(user);
 
     expect(
-      await screen.findByText(/Prices changed since these adjustments were calculated/, undefined, {
-        timeout: 2000,
-      }),
+      await screen.findByText(
+        /Prices moved more than 1% since these adjustments were calculated/,
+        undefined,
+        {
+          timeout: 2000,
+        },
+      ),
     ).toBeInTheDocument();
     // Reported, never recalculated on its own (§5).
     expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("1200");
     expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the worksheet current when prices only drift within 1%", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1" }],
+    });
+    // Calculated at 100 a unit; prices synced since put VTI at 100.5.
+    previewMock.mockResolvedValue({
+      ...previewResult,
+      lines: [previewLine({ lineId: "l1", unitPrice: 100.5, estimatedAmount: 1206, quantity: 12 })],
+    });
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2000"),
+    );
+
+    await calculateFromTarget(user);
+    previewMock.mockClear();
+    // The preview of the calculated worksheet has answered.
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(screen.queryByText("Updating…")).not.toBeInTheDocument());
+
+    expect(screen.queryByText(/Prices moved more than/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Recalculate from target" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens on Setup and calculates only from its button, then moves on without calculating", async () => {
