@@ -435,13 +435,14 @@ function CalculationControl({
     },
   ];
   const activeMode = modes.find((option) => option.value === mode);
+  const ruleSelected = rule === "current_holding_proportions";
 
+  // One column of labels to read down, each control beside its label and its
+  // description beside the control, to keep Setup short.
   return (
-    <div id="worksheet-calculation" className="min-w-0 space-y-5 p-5 sm:p-6">
-      <div>
-        <Eyebrow>{t("allocation:worksheet.modeLabel")}</Eyebrow>
-        {/* The hint sits beside the switch rather than under it, to keep Setup short. */}
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div id="worksheet-calculation" className="min-w-0 divide-y px-5 py-1 sm:px-6">
+      <SetupRow label={t("allocation:worksheet.modeLabel")}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="border-border bg-muted/20 inline-flex shrink-0 rounded-full border p-1">
             {modes.map((option) => {
               const disabled = option.value === "rebalance" && !allowSells;
@@ -481,51 +482,59 @@ function CalculationControl({
             </p>
           )}
         </div>
-      </div>
+      </SetupRow>
 
-      <div>
-        <Eyebrow>{t("allocation:worksheet.ruleLabel")}</Eyebrow>
-        <button
-          type="button"
-          aria-pressed={rule === "current_holding_proportions"}
-          onClick={() => onRuleChange("current_holding_proportions")}
-          className={cn(
-            "mt-2 flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors",
-            rule === "current_holding_proportions"
-              ? "border-foreground"
-              : "border-border/70 hover:border-foreground/40 border-dashed",
-          )}
-        >
-          <span
-            aria-hidden="true"
+      {/* One rule ships, but it is still chosen explicitly (§4.2), like an account. */}
+      <SetupRow label={t("allocation:worksheet.ruleLabel")}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <button
+            type="button"
+            aria-pressed={ruleSelected}
+            onClick={() => onRuleChange("current_holding_proportions")}
             className={cn(
-              "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-              rule === "current_holding_proportions"
+              "flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 font-mono text-xs transition-colors",
+              ruleSelected
                 ? "border-foreground bg-foreground text-background"
-                : "border-border",
+                : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground",
             )}
           >
-            {rule === "current_holding_proportions" && <Icons.Check className="h-3 w-3" />}
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">
-              {t("allocation:worksheet.ruleCurrentHoldingProportions")}
+            <span
+              aria-hidden="true"
+              className={cn(
+                "flex h-3.5 w-3.5 items-center justify-center rounded-full border",
+                ruleSelected ? "border-background" : "border-current/40",
+              )}
+            >
+              {ruleSelected && <Icons.Check className="h-2.5 w-2.5" />}
             </span>
-            <span className="text-muted-foreground mt-0.5 block text-xs leading-relaxed">
-              {t("allocation:worksheet.ruleCurrentHoldingProportionsHint")}
-            </span>
-          </span>
-        </button>
-      </div>
+            {t("allocation:worksheet.ruleCurrentHoldingProportions")}
+          </button>
+          <p className="text-muted-foreground min-w-0 flex-1 basis-56 text-xs leading-relaxed">
+            {t("allocation:worksheet.ruleCurrentHoldingProportionsHint")}
+          </p>
+        </div>
+      </SetupRow>
 
-      <EligibleHoldingsSelector
-        holdings={holdings}
-        excludedAssetIds={excludedAssetIds}
-        onToggle={onToggleAsset}
-        onSelectAll={onSelectAllAssets}
-        onClear={onClearAssets}
-        accountNames={accountNames}
-      />
+      <SetupRow label={t("allocation:eligibleHoldings.label")}>
+        <EligibleHoldingsSelector
+          holdings={holdings}
+          excludedAssetIds={excludedAssetIds}
+          onToggle={onToggleAsset}
+          onSelectAll={onSelectAllAssets}
+          onClear={onClearAssets}
+          accountNames={accountNames}
+        />
+      </SetupRow>
+    </div>
+  );
+}
+
+/** A Setup input: its label in a column of its own, one column on narrow screens. */
+function SetupRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-x-6 gap-y-2 py-3.5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:items-center">
+      <Eyebrow>{label}</Eyebrow>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
@@ -1978,12 +1987,14 @@ export function AllocationWorksheetTab({
       toast.error(t("allocation:worksheet.copyFailed"));
     }
   }
+  // Amber like the out-of-date notice it answers.
   const recalculateButton = (
     <Button
       size="sm"
       variant="outline"
       disabled={!!generationIssue || calculator.isPending}
       onClick={() => void recalculateFromTarget()}
+      className="border-amber-500/70 bg-amber-50 font-semibold text-amber-900 hover:bg-amber-100 hover:text-amber-950 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60 dark:hover:text-amber-100"
     >
       {calculator.isPending ? (
         <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
@@ -2090,8 +2101,8 @@ export function AllocationWorksheetTab({
                 onClearAssets={eligibility.clear}
                 accountNames={accountNames}
               />
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
-                <div className="min-w-0 flex-1 space-y-2">
+              <div className="bg-muted/30 flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
+                <div className="min-w-0 flex-1 basis-80 space-y-2">
                   {generateError && (
                     <div role="alert">
                       <p className="text-destructive text-xs font-semibold">
@@ -2107,8 +2118,12 @@ export function AllocationWorksheetTab({
                       {generationIssue ?? t("allocation:worksheet.notCalculatedDescription")}
                     </p>
                   ) : (
+                    // Beside the button that answers it, so both read at a glance.
                     isOutOfDate && (
-                      <p className="text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
+                      <p
+                        role="status"
+                        className="rounded-lg border border-amber-400/60 bg-amber-50/80 px-3.5 py-2.5 text-xs leading-relaxed text-amber-950/80 dark:bg-amber-950/15 dark:text-amber-100/80"
+                      >
                         {generationIssue ?? outOfDateMessage}
                       </p>
                     )

@@ -79,19 +79,17 @@ export function EligibleHoldingsSelector({
       });
   const label = t("allocation:eligibleHoldings.label");
 
+  // The visible label is the Setup row's; the trigger still names itself.
   return (
-    <div className="mt-4">
-      <div className="text-muted-foreground font-mono text-xs uppercase tracking-[0.14em]">
-        {t("allocation:eligibleHoldings.label")}
-      </div>
+    <div>
       <Popover>
         <PopoverTrigger asChild>
           <button
             type="button"
             aria-label={t("allocation:eligibleHoldings.triggerLabel", { label, summary })}
-            className="border-border/70 hover:border-foreground/40 mt-1.5 flex w-full items-center justify-between gap-3 rounded-xl border border-dashed px-3 py-2.5 text-left transition-colors"
+            className="border-border hover:border-foreground/40 bg-background flex w-full max-w-[420px] items-center justify-between gap-3 rounded-lg border px-3.5 py-2 text-left transition-colors"
           >
-            <span className="text-foreground min-w-0 truncate font-mono text-sm font-semibold tabular-nums">
+            <span className="text-foreground min-w-0 truncate text-sm font-medium tabular-nums">
               {summary}
             </span>
             <Icons.ChevronDown className="text-muted-foreground h-4 w-4 shrink-0" />
