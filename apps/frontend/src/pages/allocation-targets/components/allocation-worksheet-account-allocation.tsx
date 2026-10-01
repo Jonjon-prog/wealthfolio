@@ -6,9 +6,11 @@ import type { Account, WorksheetAccountFunding } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { stepByUnits } from "./allocation-worksheet-amounts";
+import { StepperField } from "./allocation-worksheet-stepper-field";
 import {
   allocationProgress,
   AMOUNT_EPSILON,
+  amountAtRest,
   decimalInputOrZero,
   formatDecimalInput,
   placementAccountIds,
@@ -49,8 +51,12 @@ export function AccountAllocation({
 }: AccountAllocationProps) {
   const { t } = useTranslation();
   const { formatAmount, currencyFractionDigits } = useAmountFormatting();
-  const { formatQuantity } = useNumberFormatting();
+  const { formatQuantity, decimalSeparator } = useNumberFormatting();
   const fractionDigits = currencyFractionDigits(currency);
+  const [typingAccountId, setTypingAccountId] = useState<string | null>(null);
+  // At the currency's precision except while it is typed in, like the row's field.
+  const atRest = (accountId: string, value: string) =>
+    typingAccountId === accountId ? value : amountAtRest(value, fractionDigits, decimalSeparator);
   // The same unit steps as the row: the account's amount moves, the units follow.
   const canStep = unitPrice !== undefined && unitPrice > 0;
   const stepAccount = (accountId: string, amount: number, step: 1 | -1) => {
@@ -116,16 +122,18 @@ export function AccountAllocation({
           </p>
           <p className="text-muted-foreground mt-1 text-xs">{t(hint, { account: holderName })}</p>
         </div>
+        {/* Colour means a problem here; a complete allocation is not one. */}
         <span
           className={cn(
-            "rounded-full px-2.5 py-1 font-mono text-[11px]",
+            "inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-mono text-[11px]",
             isFullyAllocated
-              ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/35 dark:text-emerald-200"
+              ? "text-foreground border"
               : overallocated > AMOUNT_EPSILON
                 ? "bg-red-100 text-red-900 dark:bg-red-950/35 dark:text-red-200"
                 : "bg-amber-100 text-amber-900 dark:bg-amber-950/35 dark:text-amber-200",
           )}
         >
+          {isFullyAllocated && <Icons.Check className="h-3 w-3" />}
           {isFullyAllocated
             ? t("allocation:worksheet.fullyAllocated")
             : overallocated > AMOUNT_EPSILON
@@ -204,51 +212,44 @@ export function AccountAllocation({
                     </span>
                   ) : (
                     <>
-                      <div className="border-input bg-background focus-within:ring-ring flex h-9 w-48 items-center rounded-md border px-1 focus-within:ring-1">
-                        {canStep && (
-                          <button
-                            type="button"
-                            aria-label={t("allocation:worksheet.removeOneUnitIn", {
-                              account: account.name,
-                            })}
-                            disabled={currentAmount <= AMOUNT_EPSILON}
-                            onClick={() => stepAccount(account.id, currentAmount, -1)}
-                            className="text-muted-foreground hover:text-foreground flex h-6 w-6 shrink-0 items-center justify-center rounded disabled:opacity-30"
-                          >
-                            <Icons.Minus className="h-3 w-3" />
-                          </button>
+                      {/* The row's field and steps, at the row's width. */}
+                      <StepperField
+                        className="w-full flex-none sm:w-[13.5rem]"
+                        prefix={currency}
+                        unitSteps={
+                          canStep
+                            ? {
+                                downLabel: t("allocation:worksheet.removeOneUnitIn", {
+                                  account: account.name,
+                                }),
+                                upLabel: t("allocation:worksheet.addOneUnitIn", {
+                                  account: account.name,
+                                }),
+                                onDown:
+                                  currentAmount > AMOUNT_EPSILON
+                                    ? () => stepAccount(account.id, currentAmount, -1)
+                                    : undefined,
+                                onUp: () => stepAccount(account.id, currentAmount, 1),
+                              }
+                            : undefined
+                        }
+                        aria-label={t("allocation:worksheet.accountAmountLabel", {
+                          account: account.name,
+                        })}
+                        value={atRest(
+                          account.id,
+                          impliedHolder === account.id
+                            ? formatDecimalInput(requested, 6)
+                            : (adjustment.accountAmounts[account.id] ?? ""),
                         )}
-                        <span className="text-muted-foreground ml-1 mr-1.5 text-xs">
-                          {currency}
-                        </span>
-                        <input
-                          aria-label={t("allocation:worksheet.accountAmountLabel", {
-                            account: account.name,
-                          })}
-                          value={
-                            impliedHolder === account.id
-                              ? formatDecimalInput(requested, 6)
-                              : (adjustment.accountAmounts[account.id] ?? "")
-                          }
-                          onChange={(event) => onAmountChange(account.id, event.target.value)}
-                          inputMode="decimal"
-                          placeholder="0"
-                          className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
-                        />
-                        {canStep && (
-                          <button
-                            type="button"
-                            aria-label={t("allocation:worksheet.addOneUnitIn", {
-                              account: account.name,
-                            })}
-                            onClick={() => stepAccount(account.id, currentAmount, 1)}
-                            className="text-muted-foreground hover:text-foreground ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded"
-                          >
-                            <Icons.Plus className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                      {rowRemaining > AMOUNT_EPSILON && (
+                        onFocus={() => setTypingAccountId(account.id)}
+                        onBlur={() => setTypingAccountId(null)}
+                        onChange={(event) => onAmountChange(account.id, event.target.value)}
+                        inputMode="decimal"
+                        placeholder="0"
+                      />
+                      {/* Offered only while some of the change is still unplaced. */}
+                      {!isFullyAllocated && rowRemaining > AMOUNT_EPSILON && (
                         <Button
                           size="sm"
                           variant="ghost"

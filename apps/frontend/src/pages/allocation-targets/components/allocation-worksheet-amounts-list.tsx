@@ -6,6 +6,7 @@ import type { Account, Asset, WorksheetAccountFunding } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { AccountAllocation } from "./allocation-worksheet-account-allocation";
+import { StepperField } from "./allocation-worksheet-stepper-field";
 import {
   activeTarget,
   partialShareBps,
@@ -20,6 +21,7 @@ import {
 import { useHighlight, useHighlightActions } from "./allocation-worksheet-highlight";
 import {
   AMOUNT_EPSILON,
+  amountAtRest,
   decimalInputOrZero,
   formatDecimalInput,
   formatSignedAmount,
@@ -79,9 +81,13 @@ interface AmountsListProps {
   actions: AmountsRowActions;
 }
 
-/** The grid shared by the header and every row: Position · Weight · Change · Status. */
+/**
+ * The grid shared by the header and every row: Position · Weight · Adjustment ·
+ * Status. On a phone the weight sits beside the position and the field and
+ * status take the full width below.
+ */
 const AMOUNTS_GRID =
-  "grid grid-cols-[minmax(0,1fr)_12rem] gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_7rem_12.5rem_9rem] sm:items-center";
+  "grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_6.5rem_13.5rem_10rem] sm:items-start";
 
 /**
  * The list of securities, opened short: rows with nothing to decide collapse
@@ -182,7 +188,7 @@ export function AmountsList({
       <div
         className={cn(
           AMOUNTS_GRID,
-          "text-muted-foreground bg-muted/15 hidden border-b px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] sm:grid",
+          "text-muted-foreground bg-muted/15 hidden border-b px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] sm:grid sm:items-center",
         )}
       >
         <span>{t("allocation:worksheet.position")}</span>
@@ -282,7 +288,7 @@ function AmountRow({
 }: AmountRowProps) {
   const { t } = useTranslation();
   const { formatAmount, formatPrice, currencyFractionDigits } = useAmountFormatting();
-  const { formatQuantity } = useNumberFormatting();
+  const { formatQuantity, decimalSeparator } = useNumberFormatting();
   const {
     position,
     adjustment,
@@ -307,8 +313,12 @@ function AmountRow({
     (state) => state.selected?.kind === "row" && state.selected.assetId === position.assetId,
   );
   const { point, unpoint, select, toggleSelected } = useHighlightActions();
+  const [isTyping, setIsTyping] = useState(false);
   const canPlace = placement !== undefined && placement.accounts.length > 1;
   const fractionDigits = currencyFractionDigits(currency);
+  // A rare action, offered on the row being worked on rather than on every row.
+  const isActive = emphasis === "active" || isSelected || isExpanded;
+  const canReduceToZero = !position.isAdded && position.value > AMOUNT_EPSILON && allowSells;
   // One unit at a time, on the amount: amounts stay primary (§4.6.5).
   const canStep = editMode === "amount" && unitPrice !== undefined && unitPrice > 0;
   const downTo = canStep
@@ -357,15 +367,16 @@ function AmountRow({
         else if (isSelected) toggleSelected(target);
       }}
       className={cn(
-        "cursor-pointer px-4 py-2.5 transition-[opacity,background-color] sm:px-5",
+        "cursor-pointer px-4 py-3 transition-[opacity,background-color] sm:px-5",
         (emphasis === "active" || emphasis === "lit") && "bg-muted/60",
         emphasis === "dim" && "opacity-40",
         isSelected && "ring-foreground ring-[1.5px] ring-inset",
       )}
     >
       <div className={AMOUNTS_GRID}>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex w-7 shrink-0 gap-[3px]" title={classesText}>
+        {/* Symbol above name, so the name is not cut short beside the symbol. */}
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="flex w-5 shrink-0 flex-wrap gap-[3px] pt-[7px]" title={classesText}>
             {position.categoryExposures.map((exposure) =>
               exposure.categoryId === UNCLASSIFIED_CATEGORY_ID ? (
                 <span
@@ -381,91 +392,95 @@ function AmountRow({
               ),
             )}
           </span>
-          <span className="shrink-0 font-mono text-sm font-semibold">{position.symbol}</span>
-          {shareBps !== null && (
-            <span className="border-foreground shrink-0 rounded border px-1 font-mono text-[11px]">
-              {Math.round(shareBps / 100)}%
-            </span>
-          )}
-          <span className="text-muted-foreground truncate text-xs">{position.name}</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[13px] font-semibold leading-5">
+                {position.symbol}
+              </span>
+              {shareBps !== null && (
+                <span className="border-foreground shrink-0 rounded border px-1 font-mono text-[11px]">
+                  {Math.round(shareBps / 100)}%
+                </span>
+              )}
+            </div>
+            <p className="text-muted-foreground truncate text-xs leading-4">{position.name}</p>
+          </div>
           <span id={classesId} className="sr-only">
             {classesText}
           </span>
         </div>
 
-        <span className="text-muted-foreground order-3 font-mono text-[11px] tabular-nums sm:order-none">
-          {isChanged
-            ? `${position.currentPct.toFixed(1)} → ${projectedPct.toFixed(1)}%`
-            : `${position.currentPct.toFixed(1)}%`}
+        {/* The projected weight stands out, so the eye finds what changes without
+            reading the arrow; no colour says which way. */}
+        <span className="text-right font-mono text-xs tabular-nums sm:pt-2 sm:text-left">
+          {isChanged ? (
+            <>
+              <span className="text-muted-foreground">{position.currentPct.toFixed(1)} → </span>
+              <span className="font-semibold">{projectedPct.toFixed(1)}%</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">{position.currentPct.toFixed(1)}%</span>
+          )}
         </span>
 
-        <div className="min-w-0">
+        <div className="col-span-2 min-w-0 sm:col-span-1">
           <div className="flex items-center gap-1">
-            <div className="border-input bg-background flex h-8 min-w-0 flex-1 items-center rounded-md border px-1 focus-within:border-[#557866] focus-within:ring-1 focus-within:ring-[#557866]/30">
-              {canStep && (
-                <button
-                  type="button"
-                  aria-label={t("allocation:worksheet.removeOneUnit", { symbol: position.symbol })}
-                  disabled={stepDown === undefined}
-                  onClick={() => stepDown !== undefined && stepTo(stepDown)}
-                  className="text-muted-foreground hover:text-foreground flex h-6 w-6 shrink-0 items-center justify-center rounded disabled:opacity-30"
-                >
-                  <Icons.Minus className="h-3 w-3" />
-                </button>
-              )}
-              {editMode === "amount" && (
-                <span className="text-muted-foreground ml-1 mr-1.5 text-[11px]">{currency}</span>
-              )}
-              <input
-                aria-label={t("allocation:worksheet.positionInputLabel", {
-                  symbol: position.symbol,
-                })}
-                aria-describedby={classesId}
-                value={displayInput}
-                onChange={(event) => actions.onInputChange(position, event.target.value)}
-                // A tap on the amount field selects the row too, so its classes
-                // stay lit while typing.
-                onPointerDown={(event) => event.pointerType === "touch" && select(target)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    toggleSelected(target);
-                    return;
-                  }
-                  if (
-                    editMode !== "after_percentage" ||
-                    (event.key !== "ArrowUp" && event.key !== "ArrowDown")
-                  ) {
-                    return;
-                  }
-                  event.preventDefault();
-                  const current = decimalInputOrZero(displayInput);
-                  const step = event.shiftKey ? 1 : 0.5;
-                  const next = Math.min(
-                    100,
-                    Math.max(0, current + (event.key === "ArrowUp" ? step : -step)),
-                  );
-                  actions.onInputChange(position, formatDecimalInput(next, 4));
-                }}
-                inputMode="decimal"
-                placeholder={editMode === "amount" ? "±0" : undefined}
-                className="min-w-0 flex-1 bg-transparent text-right font-mono text-xs outline-none"
-              />
-              {editMode === "after_percentage" && (
-                <span className="text-muted-foreground ml-1 text-xs">%</span>
-              )}
-              {canStep && (
-                <button
-                  type="button"
-                  aria-label={t("allocation:worksheet.addOneUnit", { symbol: position.symbol })}
-                  onClick={() =>
-                    stepTo(stepByUnits(changeAmount, unitPrice, 1, wholeSharesOnly, fractionDigits))
-                  }
-                  className="text-muted-foreground hover:text-foreground ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded"
-                >
-                  <Icons.Plus className="h-3 w-3" />
-                </button>
-              )}
-            </div>
+            <StepperField
+              prefix={editMode === "amount" ? currency : undefined}
+              suffix={editMode === "after_percentage" ? "%" : undefined}
+              unitSteps={
+                canStep
+                  ? {
+                      downLabel: t("allocation:worksheet.removeOneUnit", {
+                        symbol: position.symbol,
+                      }),
+                      upLabel: t("allocation:worksheet.addOneUnit", { symbol: position.symbol }),
+                      onDown: stepDown !== undefined ? () => stepTo(stepDown) : undefined,
+                      onUp: () =>
+                        stepTo(
+                          stepByUnits(changeAmount, unitPrice, 1, wholeSharesOnly, fractionDigits),
+                        ),
+                    }
+                  : undefined
+              }
+              aria-label={t("allocation:worksheet.positionInputLabel", {
+                symbol: position.symbol,
+              })}
+              aria-describedby={classesId}
+              value={
+                editMode === "amount" && !isTyping
+                  ? amountAtRest(displayInput, fractionDigits, decimalSeparator)
+                  : displayInput
+              }
+              onFocus={() => setIsTyping(true)}
+              onBlur={() => setIsTyping(false)}
+              onChange={(event) => actions.onInputChange(position, event.target.value)}
+              // A tap on the amount field selects the row too, so its classes
+              // stay lit while typing.
+              onPointerDown={(event) => event.pointerType === "touch" && select(target)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  toggleSelected(target);
+                  return;
+                }
+                if (
+                  editMode !== "after_percentage" ||
+                  (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                const current = decimalInputOrZero(displayInput);
+                const step = event.shiftKey ? 1 : 0.5;
+                const next = Math.min(
+                  100,
+                  Math.max(0, current + (event.key === "ArrowUp" ? step : -step)),
+                );
+                actions.onInputChange(position, formatDecimalInput(next, 4));
+              }}
+              inputMode="decimal"
+              placeholder={editMode === "amount" ? "±0" : undefined}
+            />
             {position.isAdded && (
               <Button
                 variant="ghost"
@@ -499,23 +514,10 @@ function AmountRow({
                 : t("allocation:worksheet.perUnit", { price: formatPrice(unitPrice, currency) })}
             </p>
           )}
-          {/* Emptying a position in one go, in words so it cannot be read as a unit step. */}
-          {!position.isAdded && position.value > AMOUNT_EPSILON && allowSells && (
-            <p className="mt-0.5 text-right text-[10px]">
-              <button
-                type="button"
-                disabled={projectedValue <= AMOUNT_EPSILON}
-                onClick={() => actions.onReduceToZero(position)}
-                className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-40"
-              >
-                {t("allocation:worksheet.reduceToZero")}
-              </button>
-            </p>
-          )}
         </div>
 
-        <div className="order-4 flex min-w-0 items-center justify-between gap-1 text-xs sm:order-none">
-          <div className="min-w-0">
+        <div className="col-span-2 flex min-w-0 items-start justify-between gap-1 text-xs sm:col-span-1 sm:pt-1.5">
+          <div className="min-w-0 space-y-1">
             <RowStatusCell
               status={status}
               accountNames={accountNames}
@@ -530,6 +532,18 @@ function AmountRow({
               }
               isPriceSyncing={isPriceSyncing}
             />
+            {/* Emptying a position in one go, in words so it cannot be read as a
+                unit step, and only on the row being worked on. */}
+            {canReduceToZero && isActive && (
+              <button
+                type="button"
+                disabled={projectedValue <= AMOUNT_EPSILON}
+                onClick={() => actions.onReduceToZero(position)}
+                className="text-foreground block text-[11px] underline underline-offset-2 disabled:pointer-events-none disabled:opacity-40"
+              >
+                {t("allocation:worksheet.reduceToZero")}
+              </button>
+            )}
           </div>
           {/* Placing the change is always reachable, whatever the status says. */}
           {canPlace && (
@@ -634,8 +648,10 @@ function RowStatusCell({
         </span>
       );
     case "rounded":
+      // Expected on almost every line under whole units, so not a problem colour,
+      // and shown whole rather than cut short.
       return (
-        <span className={cn("block truncate", warning)}>
+        <span className="text-muted-foreground block font-mono text-[11px] leading-snug">
           {t("allocation:worksheet.roundedTo", {
             amount: formatSignedAmount(status.amount, currency, formatAmount),
           })}

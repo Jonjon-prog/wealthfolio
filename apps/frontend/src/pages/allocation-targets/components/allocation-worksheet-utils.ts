@@ -102,6 +102,23 @@ export function formatDecimalInput(value: number, maximumFractionDigits = 2): st
     .replace(/\.0+$/, "");
 }
 
+/**
+ * An amount field as it reads when nobody is typing in it: the currency's
+ * precision in the user's decimal mark. A calculated amount carries the float
+ * residue of its price (239.240005); the full value returns on focus, and what
+ * is stored never changes.
+ */
+export function amountAtRest(
+  value: string,
+  fractionDigits: number,
+  decimalSeparator: string,
+): string {
+  const parsed = parseDecimalInput(value);
+  if (value.trim() === "" || !Number.isFinite(parsed)) return value;
+  const fixed = parsed.toFixed(fractionDigits);
+  return (Number(fixed) === 0 ? (0).toFixed(fractionDigits) : fixed).replace(".", decimalSeparator);
+}
+
 export function allocationProgress(
   requested: number,
   assigned: number,

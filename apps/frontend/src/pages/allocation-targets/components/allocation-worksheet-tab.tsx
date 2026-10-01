@@ -917,12 +917,9 @@ function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSum
   return (
     <div className="bg-muted/10 border-b px-4 py-4 sm:px-5">
       <Eyebrow>{t("allocation:worksheet.calculatedSummary")}</Eyebrow>
+      {/* One paragraph rather than a line per note, to give the list below the room. */}
       {notes.length > 0 && (
-        <ul className="text-muted-foreground mt-2 space-y-1 text-xs leading-relaxed">
-          {notes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
+        <p className="text-muted-foreground mt-2 text-[13px] leading-relaxed">{notes.join(" ")}</p>
       )}
       {calculated.unresolved.length > 0 && (
         <div className="mt-3">

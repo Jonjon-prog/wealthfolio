@@ -4,6 +4,7 @@ import type { CalculatedAdjustments } from "@/lib/types";
 import {
   adjustmentsFromCalculated,
   allocationProgress,
+  amountAtRest,
   eligibleAccountIdsForChange,
   externalContributionFor,
   formatDecimalInput,
@@ -84,6 +85,20 @@ describe("eligible accounts for a change", () => {
 
   it("draws a reduction only from the accounts that hold the security", () => {
     expect(eligibleAccountIdsForChange(-500, ["acc-2"], ["acc-1", "acc-2"])).toEqual(["acc-2"]);
+  });
+});
+
+describe("an amount field at rest", () => {
+  it("reads at the currency's precision in the user's decimal mark", () => {
+    expect(amountAtRest("239.240005", 2, ".")).toBe("239.24");
+    expect(amountAtRest("417.9", 2, ",")).toBe("417,90");
+    expect(amountAtRest("-900", 2, ".")).toBe("-900.00");
+    expect(amountAtRest("-0.001", 2, ".")).toBe("0.00");
+  });
+
+  it("leaves an empty or unreadable entry as typed", () => {
+    expect(amountAtRest("", 2, ".")).toBe("");
+    expect(amountAtRest("12a", 2, ".")).toBe("12a");
   });
 });
 
