@@ -396,7 +396,6 @@
     "legendCurrent": "Attuale",
     "legendProjected": "Previsto",
     "legendTarget": "Obiettivo",
-    "legendRange": "Intervallo",
     "addOneUnit": "Aggiungi una quota di {{symbol}}",
     "removeOneUnit": "Rimuovi una quota di {{symbol}}",
     "perUnit": "{{price}} per quota",

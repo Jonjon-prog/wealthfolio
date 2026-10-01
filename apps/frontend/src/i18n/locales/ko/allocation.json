@@ -376,7 +376,6 @@
     "legendCurrent": "현재",
     "legendProjected": "예상",
     "legendTarget": "목표",
-    "legendRange": "범위",
     "addOneUnit": "{{symbol}} 1주 추가",
     "removeOneUnit": "{{symbol}} 1주 빼기",
     "perUnit": "주당 {{price}}",

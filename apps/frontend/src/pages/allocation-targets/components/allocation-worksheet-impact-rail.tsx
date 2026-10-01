@@ -159,8 +159,16 @@ export function ImpactRail({
             <p className="text-muted-foreground font-mono text-[11px] uppercase tracking-[0.16em]">
               {t("allocation:worksheet.portfolioImpact")}
             </p>
+            {/* Updating is routine; an out-of-date preview is amber, as everywhere else. */}
             {(isCalculating || (result && isStale)) && (
-              <span className="rounded-full bg-[#557866]/10 px-2 py-1 font-mono text-[10px] text-[#365747] dark:text-[#9fc0ae]">
+              <span
+                className={cn(
+                  "rounded-full px-2 py-1 font-mono text-[10px]",
+                  isCalculating
+                    ? "bg-muted text-muted-foreground"
+                    : "bg-amber-100 text-amber-900 dark:bg-amber-950/35 dark:text-amber-200",
+                )}
+              >
                 {isCalculating
                   ? t("allocation:worksheet.updatingPreview")
                   : t("allocation:worksheet.previewOutOfDate")}
@@ -176,8 +184,9 @@ export function ImpactRail({
           </p>
           <div className="text-muted-foreground mt-2 space-y-1 font-mono text-xs">
             <p>
+              {/* In %, like every other difference on the allocation pages. */}
               {t("allocation:worksheet.largestDifference", {
-                amount: `${(largestDifference / 100).toFixed(1)}pp`,
+                amount: `${(largestDifference / 100).toFixed(1)}%`,
               })}
             </p>
             {result && (
@@ -206,26 +215,24 @@ export function ImpactRail({
             result && isStale && "opacity-55",
           )}
         >
-          {/* The marks on each track, named with the worksheet's own vocabulary. */}
+          {/* The marks on each track, named with the worksheet's own vocabulary. The
+              segment from current to projected reads as the move. */}
           <p
             data-track-legend
             className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1.5 text-[10px]"
           >
             <span className="inline-flex items-center gap-1">
-              <span className="border-muted-foreground h-2 w-2 rounded-full border" />
-              {t("allocation:worksheet.legendCurrent")}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="bg-muted-foreground h-2 w-2 rounded-full" />
+              <span className="inline-flex items-center">
+                <span className="border-muted-foreground h-2 w-2 rounded-full border" />
+                <span className="bg-muted-foreground h-px w-2.5" />
+                <span className="bg-muted-foreground h-2 w-2 rounded-full" />
+              </span>
+              {t("allocation:worksheet.legendCurrent")} →{" "}
               {t("allocation:worksheet.legendProjected")}
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="bg-foreground h-2.5 w-0.5" />
+              <span className="bg-foreground h-3 w-0.5" />
               {t("allocation:worksheet.legendTarget")}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="dark:bg-muted h-2 w-3 rounded-sm bg-[#e9e2c9]" />
-              {t("allocation:worksheet.legendRange")}
             </span>
           </p>
           {classes.map((item) => {
@@ -378,8 +385,11 @@ function ImpactClassRow({
   const { point, unpoint, toggleSelected } = useHighlightActions();
   const target: HighlightTarget = { kind: "category", categoryId: item.categoryId };
 
-  const bandHalfWidth = (item.effectiveBandBps / halfWindow) * 50;
+  // The range no longer moves the calculation, which aims at the exact target;
+  // it only says whether the class stays flagged, so it is a mark, not a band.
   const isOutsideRange = Math.abs(item.projectedDifferenceBps) > item.effectiveBandBps;
+  const currentAt = trackPosition(item.currentBps, item.targetBps, halfWindow);
+  const projectedAt = trackPosition(item.projectedBps, item.targetBps, halfWindow);
 
   return (
     <button
@@ -404,34 +414,51 @@ function ImpactClassRow({
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.color }} />
           <span className="truncate">{item.categoryName}</span>
         </span>
+        {/* Only the projected figure turns amber when it stays outside its range:
+            the target is not the problem. */}
         <span
-          className={cn(
-            "shrink-0 font-mono text-[11px] tabular-nums",
-            isOutsideRange ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
-          )}
+          className="text-muted-foreground shrink-0 font-mono text-[11px] tabular-nums"
           title={t("allocation:worksheet.classFiguresTitle")}
         >
-          {formatWeight(item.currentBps)} → {formatWeight(item.projectedBps)} /{" "}
-          {formatWeight(item.targetBps)}
+          {formatWeight(item.currentBps)} →{" "}
+          <span
+            data-outside-range={isOutsideRange || undefined}
+            className={cn(
+              "font-semibold",
+              isOutsideRange ? "text-amber-700 dark:text-amber-300" : "text-foreground",
+            )}
+          >
+            {formatWeight(item.projectedBps)}
+          </span>{" "}
+          / {formatWeight(item.targetBps)}
         </span>
       </span>
       <span className="relative mt-1.5 block h-3" aria-hidden>
-        <span className="bg-border absolute left-0 right-0 top-[5.5px] h-px" />
+        <span className="bg-border/60 absolute left-0 right-0 top-[5.5px] h-px" />
+        {/* The move, in the class's colour, so no legend is needed to read it. */}
         <span
-          className="dark:bg-muted absolute top-px h-2.5 rounded-sm bg-[#e9e2c9]"
-          style={{ left: `${50 - bandHalfWidth}%`, width: `${bandHalfWidth * 2}%` }}
-        />
-        <span className="bg-foreground absolute left-1/2 top-0 h-3 w-0.5" />
-        <span
-          className="border-muted-foreground bg-background absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full border"
-          style={{ left: `${trackPosition(item.currentBps, item.targetBps, halfWindow)}%` }}
-        />
-        <span
-          className="absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full"
+          className="absolute top-[5px] h-0.5"
           style={{
-            left: `${trackPosition(item.projectedBps, item.targetBps, halfWindow)}%`,
+            left: `${Math.min(currentAt, projectedAt)}%`,
+            width: `${Math.abs(projectedAt - currentAt)}%`,
             background: item.color,
           }}
+        />
+        {/* The one fixed mark in the column, taller than the dots. */}
+        <span className="bg-foreground absolute -top-0.5 left-1/2 h-4 w-0.5 -translate-x-1/2" />
+        <span
+          className="border-muted-foreground bg-background absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full border"
+          style={{ left: `${currentAt}%` }}
+        />
+        {/* Keeps its class colour, which links it to the rows; an amber ring says it
+            stays outside its range. */}
+        <span
+          className={cn(
+            "absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full",
+            isOutsideRange &&
+              "outline outline-2 outline-offset-1 outline-amber-500 dark:outline-[#EAB308]",
+          )}
+          style={{ left: `${projectedAt}%`, background: item.color }}
         />
       </span>
       {shareText && (

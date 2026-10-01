@@ -396,7 +396,6 @@
     "legendCurrent": "Actuel",
     "legendProjected": "Projeté",
     "legendTarget": "Cible",
-    "legendRange": "Plage",
     "addOneUnit": "Ajouter une part de {{symbol}}",
     "removeOneUnit": "Retirer une part de {{symbol}}",
     "perUnit": "{{price}} la part",

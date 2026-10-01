@@ -1131,10 +1131,10 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     await goTo(user, "Adjust positions");
 
     const legend = document.querySelector<HTMLElement>("[data-track-legend]")!;
-    expect(legend).toHaveTextContent("Current");
-    expect(legend).toHaveTextContent("Projected");
+    expect(legend).toHaveTextContent("Current → Projected");
     expect(legend).toHaveTextContent("Target");
-    expect(legend).toHaveTextContent("Range");
+    // The range no longer moves the calculation, so it is not drawn.
+    expect(legend).not.toHaveTextContent("Range");
   });
 
   it("lights the rows touching a class, and says how many sit in the collapsed group", async () => {

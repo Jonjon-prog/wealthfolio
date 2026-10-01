@@ -385,7 +385,6 @@
     "legendCurrent": "目前",
     "legendProjected": "預計",
     "legendTarget": "目標",
-    "legendRange": "區間",
     "addOneUnit": "增加一單位 {{symbol}}",
     "removeOneUnit": "減少一單位 {{symbol}}",
     "perUnit": "每單位 {{price}}",

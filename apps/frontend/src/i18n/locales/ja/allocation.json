@@ -376,7 +376,6 @@
     "legendCurrent": "現在",
     "legendProjected": "予測",
     "legendTarget": "目標",
-    "legendRange": "範囲",
     "addOneUnit": "{{symbol}}を1単位追加",
     "removeOneUnit": "{{symbol}}を1単位減らす",
     "perUnit": "1単位 {{price}}",

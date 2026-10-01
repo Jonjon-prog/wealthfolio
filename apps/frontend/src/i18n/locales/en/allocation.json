@@ -385,7 +385,6 @@
     "legendCurrent": "Current",
     "legendProjected": "Projected",
     "legendTarget": "Target",
-    "legendRange": "Range",
     "addOneUnit": "Add one unit of {{symbol}}",
     "removeOneUnit": "Remove one unit of {{symbol}}",
     "perUnit": "{{price}} per unit",

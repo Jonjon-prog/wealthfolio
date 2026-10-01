@@ -396,7 +396,6 @@
     "legendCurrent": "Atual",
     "legendProjected": "Projetado",
     "legendTarget": "Meta",
-    "legendRange": "Faixa",
     "addOneUnit": "Adicionar uma unidade de {{symbol}}",
     "removeOneUnit": "Remover uma unidade de {{symbol}}",
     "perUnit": "{{price}} por unidade",
