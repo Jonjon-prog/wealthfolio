@@ -4,7 +4,17 @@ import type {
   CalculatedAdjustments,
 } from "@/lib/types";
 
-export type ExportCell = string | number;
+/** A number written with a fixed count of decimals, the way sums are read. */
+export interface DecimalCell {
+  decimal: number;
+  digits: number;
+}
+
+export type ExportCell = string | number | DecimalCell;
+
+function decimal(value: number, digits = 2): DecimalCell {
+  return { decimal: value, digits };
+}
 
 /** Every text the table carries, already translated by the caller. */
 export interface WorksheetExportLabels {
@@ -24,9 +34,12 @@ export interface WorksheetExportLabels {
   scaling: readonly string[];
   /** Said in the header when inputs changed after the calculation. */
   outOfDate?: string;
+  /** Labels each sentence in the header, so every header row reads label, value. */
+  note: string;
   status: string;
   category: string;
   direction: string;
+  symbol: string;
   security: string;
   account: string;
   amount: string;
@@ -39,6 +52,8 @@ export interface WorksheetExportLabels {
   increase: string;
   reduce: string;
   unknownAccount: string;
+  total: string;
+  cashLeft: string;
   limitationsTitle: string;
   limitations: string;
 }
@@ -68,10 +83,34 @@ function round(value: number, digits: number): number {
 }
 
 /**
- * The export table (§8): a header describing what the worksheet was calculated
- * from, one row per security and account, the amounts the calculation could
- * not place, then the warnings and the limitations. Amounts are signed and
- * come first; quantities are estimates. Nothing reads like an order ticket.
+ * Prices are stored as 32-bit floats and widened, so 59.71 arrives as
+ * 59.709999. Seven significant digits is what the stored value holds.
+ */
+function storedPrice(value: number): number {
+  return Number(value.toPrecision(7));
+}
+
+/** Local date and time to the minute, as the user would write it. */
+function localDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+function signedAmount(line: AllocationWorksheetLineResult): number {
+  return line.direction === "increase" ? line.estimatedAmount : -line.estimatedAmount;
+}
+
+/**
+ * The export table (§8), laid out like the review: a header describing what
+ * the worksheet was calculated from, one row per security and account grouped
+ * by account, the amounts the calculation could not place, each account's
+ * total and the cash it has left, then the warnings and the limitations.
+ * Amounts are signed and come first; quantities are estimates. Nothing reads
+ * like an order ticket.
  */
 export function worksheetExportRows(
   input: WorksheetExportInput,
@@ -79,6 +118,8 @@ export function worksheetExportRows(
 ): ExportCell[][] {
   const { result, calculated } = input;
   const currency = result.baseCurrency;
+  const accountName = (accountId: string) =>
+    input.accountNames.get(accountId) ?? labels.unknownAccount;
   const warningsByLine = new Map<string, string[]>();
   for (const warning of result.warnings) {
     if (!warning.lineId) continue;
@@ -87,57 +128,90 @@ export function worksheetExportRows(
       warning.message,
     ]);
   }
+  const lines = [...result.lines].sort(
+    (left, right) =>
+      accountName(left.accountId).localeCompare(accountName(right.accountId)) ||
+      left.symbol.localeCompare(right.symbol),
+  );
 
   const rows: ExportCell[][] = [
     [labels.title],
     [labels.target, result.targetName],
-    [labels.calculatedAt, result.calculatedAt],
-    [
-      labels.accounts,
-      input.accountIds
-        .map((accountId) => input.accountNames.get(accountId) ?? labels.unknownAccount)
-        .join(", "),
-    ],
+    [labels.calculatedAt, localDateTime(result.calculatedAt)],
+    [labels.accounts, input.accountIds.map(accountName).join(", ")],
     [labels.mode, labels.modeValue],
     [labels.rule, labels.ruleValue],
-    [`${labels.trackedCash} (${currency})`, round(input.trackedCashToUse, 2)],
-    [`${labels.externalCash} (${currency})`, round(input.externalCash, 2)],
     [labels.eligible, labels.eligibleValue],
-    ...labels.scaling.map((sentence) => [sentence]),
-    ...(labels.outOfDate ? [[labels.outOfDate]] : []),
+    [`${labels.trackedCash} (${currency})`, decimal(input.trackedCashToUse)],
+    [`${labels.externalCash} (${currency})`, decimal(input.externalCash)],
+    ...labels.scaling.map((sentence) => [labels.note, sentence]),
+    ...(labels.outOfDate ? [[labels.note, labels.outOfDate]] : []),
     [],
     [
-      labels.status,
-      labels.category,
-      labels.direction,
-      labels.security,
       labels.account,
+      labels.symbol,
+      labels.security,
+      labels.direction,
       `${labels.amount} (${currency})`,
       labels.quantity,
       `${labels.price} (${currency})`,
       labels.priceDate,
+      labels.category,
+      labels.status,
       labels.warnings,
     ],
   ];
 
-  for (const line of result.lines) {
-    const signed = line.direction === "increase" ? line.estimatedAmount : -line.estimatedAmount;
+  for (const line of lines) {
     rows.push([
-      labels.statusAdjustment,
-      lineCategory(line),
+      accountName(line.accountId),
+      line.symbol,
+      line.name,
       line.direction === "increase" ? labels.increase : labels.reduce,
-      `${line.symbol} — ${line.name}`,
-      input.accountNames.get(line.accountId) ?? labels.unknownAccount,
-      round(signed, 2),
+      decimal(signedAmount(line)),
       round(line.direction === "increase" ? line.quantity : -line.quantity, 6),
-      round(line.unitPrice, 6),
+      storedPrice(line.unitPrice),
       line.quoteSource.timestamp.slice(0, 10),
+      lineCategory(line),
+      labels.statusAdjustment,
       (warningsByLine.get(line.lineId) ?? []).join("; "),
     ]);
   }
   // Part of the picture, so part of the file rather than only on screen.
   for (const item of calculated?.unresolved ?? []) {
-    rows.push([labels.statusUnresolved, item.categoryName, "", "", "", round(item.amount, 2)]);
+    rows.push([
+      "",
+      "",
+      "",
+      "",
+      decimal(item.amount),
+      "",
+      "",
+      "",
+      item.categoryName,
+      labels.statusUnresolved,
+      "",
+    ]);
+  }
+
+  // A table of its own rather than total rows among the lines, so a sum or a
+  // filter over the amounts column counts each line once.
+  const accountIds = [...new Set(lines.map((line) => line.accountId))];
+  const fundingByAccount = new Map(
+    result.accountFunding.map((funding) => [funding.accountId, funding]),
+  );
+  if (accountIds.length > 0) {
+    rows.push(
+      [],
+      [labels.account, `${labels.total} (${currency})`, `${labels.cashLeft} (${currency})`],
+    );
+    for (const accountId of accountIds) {
+      const net = lines
+        .filter((line) => line.accountId === accountId)
+        .reduce((sum, line) => sum + signedAmount(line), 0);
+      const funding = fundingByAccount.get(accountId);
+      rows.push([accountName(accountId), decimal(net), funding ? decimal(funding.remaining) : ""]);
+    }
   }
 
   if (result.warnings.length > 0) {
@@ -151,6 +225,11 @@ export function worksheetExportRows(
 const FORMULA_PREFIX = /^[=+\-@\t\r]/;
 
 function textCell(value: ExportCell): string {
+  if (typeof value === "object") {
+    // A sign is part of the number, not a formula.
+    const fixed = value.decimal.toFixed(value.digits);
+    return Number(fixed) === 0 ? (0).toFixed(value.digits) : fixed;
+  }
   const text = String(value);
   return typeof value === "string" && FORMULA_PREFIX.test(text) ? `'${text}` : text;
 }

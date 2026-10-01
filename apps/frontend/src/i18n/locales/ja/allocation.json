@@ -393,6 +393,7 @@
     "reduceToZero": "ゼロにする",
     "addOneUnitIn": "{{account}}で1単位追加",
     "removeOneUnitIn": "{{account}}で1単位減らす",
-    "accountTotal": "合計"
+    "accountTotal": "合計",
+    "exportNote": "注記"
   }
 }

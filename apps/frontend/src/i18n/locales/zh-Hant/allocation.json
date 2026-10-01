@@ -403,6 +403,7 @@
     "reduceToZero": "減至零",
     "addOneUnitIn": "在 {{account}} 增加一單位",
     "removeOneUnitIn": "在 {{account}} 減少一單位",
-    "accountTotal": "合計"
+    "accountTotal": "合計",
+    "exportNote": "備註"
   }
 }

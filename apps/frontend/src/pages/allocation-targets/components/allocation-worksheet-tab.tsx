@@ -1935,9 +1935,11 @@ export function AllocationWorksheetTab({
           : inputsChanged
             ? t("allocation:worksheet.exportOutOfDate")
             : t("allocation:worksheet.exportPricesChanged"),
+        note: t("allocation:worksheet.exportNote"),
         status: t("allocation:worksheet.status"),
         category: t("allocation:worksheet.exportCategory"),
         direction: t("allocation:worksheet.direction"),
+        symbol: t("activity:table_symbol"),
         security: t("allocation:worksheet.security"),
         account: t("allocation:worksheet.account"),
         amount: t("allocation:worksheet.exportAmount"),
@@ -1950,6 +1952,8 @@ export function AllocationWorksheetTab({
         increase: t("allocation:worksheet.increase"),
         reduce: t("allocation:worksheet.reduce"),
         unknownAccount: t("allocation:worksheet.unknownAccount"),
+        total: t("allocation:worksheet.accountTotal"),
+        cashLeft: t("allocation:result.cashRemaining"),
         limitationsTitle: t("allocation:worksheet.limitationsTitle"),
         limitations: t("allocation:worksheet.fullDisclosure"),
       },

@@ -403,6 +403,7 @@
     "reduceToZero": "Auf null reduzieren",
     "addOneUnitIn": "Einen Anteil in {{account}} hinzufügen",
     "removeOneUnitIn": "Einen Anteil in {{account}} entfernen",
-    "accountTotal": "Gesamt"
+    "accountTotal": "Gesamt",
+    "exportNote": "Hinweis"
   }
 }
