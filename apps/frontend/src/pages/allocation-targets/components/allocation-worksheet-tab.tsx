@@ -1378,8 +1378,15 @@ export function AllocationWorksheetTab({
         eligibleAssetIds: eligibility.eligibleAssetIds,
       }
     : null;
+  // The cash the accounts record comes back with the first preview, after the
+  // worksheet opens. Until then a default that follows it is unknown rather
+  // than zero, and an unknown input has not changed.
+  const cashKnown = trackedCash !== null || availableCash !== undefined;
   const inputsChanged = Boolean(
-    generated && generationInputs && generated.inputsKey !== generationInputsKey(generationInputs),
+    generated &&
+    generationInputs &&
+    cashKnown &&
+    generated.inputsKey !== generationInputsKey(generationInputs),
   );
   // Prices are an input too (§5): a calculated line the preview now prices
   // differently no longer matches what was calculated. Only the user's action

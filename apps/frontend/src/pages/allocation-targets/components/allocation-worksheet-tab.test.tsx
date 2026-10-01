@@ -443,6 +443,43 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("1200");
   });
 
+  it("does not call the worksheet out of date while the recorded cash is still being read", async () => {
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2000"),
+    );
+    await calculateFromTarget(user);
+    // Leave only once the saved draft holds the calculation.
+    await waitFor(() => {
+      const saved = Array.from({ length: localStorage.length }, (_, index) =>
+        localStorage.getItem(localStorage.key(index) ?? ""),
+      );
+      expect(saved.some((value) => value?.includes('"inputsKey"'))).toBe(true);
+    });
+    cleanup();
+
+    // Coming back: the cash the accounts record arrives with the first preview.
+    let answerPreview: (result: AllocationWorksheetResult) => void = () => undefined;
+    previewMock.mockImplementation(
+      () => new Promise<AllocationWorksheetResult>((resolve) => (answerPreview = resolve)),
+    );
+    await renderWorksheet();
+    await waitFor(() => expect(previewMock).toHaveBeenCalled(), { timeout: 2000 });
+
+    expect(screen.queryByText(/Inputs changed since these adjustments/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Recalculate from target" }),
+    ).not.toBeInTheDocument();
+
+    previewMock.mockResolvedValue(previewResult);
+    answerPreview(previewResult);
+    await waitFor(
+      () => expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2000"),
+      { timeout: 2000 },
+    );
+    expect(screen.queryByText(/Inputs changed since these adjustments/)).not.toBeInTheDocument();
+  });
+
   it("opens any panel from the stepper before a calculation, and calculates nothing", async () => {
     const user = await renderWorksheet();
 
