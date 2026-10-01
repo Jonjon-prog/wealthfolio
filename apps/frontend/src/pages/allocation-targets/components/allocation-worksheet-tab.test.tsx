@@ -467,8 +467,14 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
   it("opens on Setup on every visit, even once the worksheet is calculated", async () => {
     const user = await renderWorksheet();
     await calculateFromTarget(user);
-    // The draft is saved shortly after the change.
-    await waitFor(() => expect(localStorage.length).toBeGreaterThan(1));
+    // The draft is saved shortly after the change; leave once it holds the
+    // calculation, not on an earlier save.
+    await waitFor(() => {
+      const saved = Array.from({ length: localStorage.length }, (_, index) =>
+        localStorage.getItem(localStorage.key(index) ?? ""),
+      );
+      expect(saved.some((value) => value?.includes('"inputsKey"'))).toBe(true);
+    });
     cleanup();
 
     const again = await renderWorksheet();
