@@ -183,7 +183,7 @@ export function ReviewPanel({
           const isShort = funding !== undefined && funding.remaining < -AMOUNT_EPSILON;
           return (
             <section key={accountId} data-review-account={accountId} className="border-b">
-              <div className="bg-muted/15 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 py-2.5 sm:px-5">
+              <div className="bg-muted/15 px-4 py-2.5 sm:px-5">
                 <p className="min-w-0 text-xs">
                   <span className="font-semibold">
                     {accountNames.get(accountId) ?? t("allocation:worksheet.unknownAccount")}
@@ -191,30 +191,8 @@ export function ReviewPanel({
                   <span className="text-muted-foreground">
                     {" · "}
                     {t("allocation:worksheet.lineCount", { count: lines.length })}
-                    {" · "}
-                    <span className="font-mono tabular-nums">
-                      {formatSignedAmount(net, currency, formatAmount)}
-                    </span>
                   </span>
                 </p>
-                {funding && (
-                  <p
-                    className={cn(
-                      "shrink-0 font-mono text-xs tabular-nums",
-                      isShort
-                        ? "font-semibold text-amber-800 dark:text-amber-200"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {isShort
-                      ? t("allocation:worksheet.fundingNeeded", {
-                          amount: formatAmount(-funding.remaining, currency),
-                        })
-                      : t("allocation:worksheet.accountCashLeft", {
-                          amount: formatAmount(funding.remaining, currency),
-                        })}
-                  </p>
-                )}
               </div>
               <ul className="divide-y">
                 {lines.map((line) => {
@@ -277,6 +255,38 @@ export function ReviewPanel({
                   );
                 })}
               </ul>
+              {/* Read like a sum: the total under the amounts, then what the
+                  account's own cash leaves or lacks. */}
+              <div
+                data-review-total
+                className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_8rem_7rem_9rem] sm:items-center sm:px-5"
+              >
+                <p className="text-muted-foreground text-xs">
+                  {t("allocation:worksheet.accountTotal")}
+                </p>
+                <p className="border-foreground/60 border-t pt-1 text-right font-mono text-xs font-semibold tabular-nums">
+                  {formatSignedAmount(net, currency, formatAmount)}
+                </p>
+                <span className="hidden sm:block" />
+                {funding && (
+                  <p
+                    className={cn(
+                      "col-span-2 text-right font-mono text-xs tabular-nums sm:col-span-1",
+                      isShort
+                        ? "font-semibold text-amber-800 dark:text-amber-200"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {isShort
+                      ? t("allocation:worksheet.fundingNeeded", {
+                          amount: formatAmount(-funding.remaining, currency),
+                        })
+                      : t("allocation:worksheet.accountCashLeft", {
+                          amount: formatAmount(funding.remaining, currency),
+                        })}
+                  </p>
+                )}
+              </div>
             </section>
           );
         })}

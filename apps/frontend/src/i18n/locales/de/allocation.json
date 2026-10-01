@@ -402,6 +402,7 @@
     "showPosition": "Position anzeigen",
     "reduceToZero": "Auf null reduzieren",
     "addOneUnitIn": "Einen Anteil in {{account}} hinzufügen",
-    "removeOneUnitIn": "Einen Anteil in {{account}} entfernen"
+    "removeOneUnitIn": "Einen Anteil in {{account}} entfernen",
+    "accountTotal": "Gesamt"
   }
 }

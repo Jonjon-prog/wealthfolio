@@ -402,6 +402,7 @@
     "showPosition": "Show the position",
     "reduceToZero": "Reduce to zero",
     "addOneUnitIn": "Add one unit in {{account}}",
-    "removeOneUnitIn": "Remove one unit in {{account}}"
+    "removeOneUnitIn": "Remove one unit in {{account}}",
+    "accountTotal": "Total"
   }
 }

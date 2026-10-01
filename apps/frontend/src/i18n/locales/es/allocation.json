@@ -414,6 +414,7 @@
     "showPosition": "Ver la posición",
     "reduceToZero": "Reducir a cero",
     "addOneUnitIn": "Añadir una participación en {{account}}",
-    "removeOneUnitIn": "Quitar una participación en {{account}}"
+    "removeOneUnitIn": "Quitar una participación en {{account}}",
+    "accountTotal": "Total"
   }
 }

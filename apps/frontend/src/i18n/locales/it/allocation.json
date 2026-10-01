@@ -414,6 +414,7 @@
     "showPosition": "Mostra la posizione",
     "reduceToZero": "Azzera",
     "addOneUnitIn": "Aggiungi una quota in {{account}}",
-    "removeOneUnitIn": "Rimuovi una quota in {{account}}"
+    "removeOneUnitIn": "Rimuovi una quota in {{account}}",
+    "accountTotal": "Totale"
   }
 }

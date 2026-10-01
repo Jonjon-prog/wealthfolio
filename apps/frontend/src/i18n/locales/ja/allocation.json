@@ -392,6 +392,7 @@
     "showPosition": "ポジションを表示",
     "reduceToZero": "ゼロにする",
     "addOneUnitIn": "{{account}}で1単位追加",
-    "removeOneUnitIn": "{{account}}で1単位減らす"
+    "removeOneUnitIn": "{{account}}で1単位減らす",
+    "accountTotal": "合計"
   }
 }

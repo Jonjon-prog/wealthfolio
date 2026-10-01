@@ -414,6 +414,7 @@
     "showPosition": "Voir la position",
     "reduceToZero": "Ramener à zéro",
     "addOneUnitIn": "Ajouter une part dans {{account}}",
-    "removeOneUnitIn": "Retirer une part dans {{account}}"
+    "removeOneUnitIn": "Retirer une part dans {{account}}",
+    "accountTotal": "Total"
   }
 }

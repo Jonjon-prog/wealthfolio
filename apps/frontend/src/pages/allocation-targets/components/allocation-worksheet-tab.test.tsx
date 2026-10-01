@@ -696,11 +696,18 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const brokerage = await waitFor(
       () => document.querySelector<HTMLElement>('[data-review-account="acc-1"]')!,
     );
-    expect(brokerage).toHaveTextContent("Brokerage · 1 entry · +$1,000.00");
-    expect(brokerage).toHaveTextContent("Funding needed: $300.00");
+    expect(brokerage).toHaveTextContent("Brokerage · 1 entry");
+    // The account's figures close its group, like a sum under its lines.
+    const totalOf = (group: HTMLElement) =>
+      group.querySelector<HTMLElement>("[data-review-total]")!;
+    expect(totalOf(brokerage)).toHaveTextContent("Total+$1,000.00Funding needed: $300.00");
+    expect(
+      within(brokerage).getByText("VTI").compareDocumentPosition(totalOf(brokerage)) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const retirement = document.querySelector<HTMLElement>('[data-review-account="acc-2"]')!;
-    expect(retirement).toHaveTextContent("Retirement · 1 entry · −$200.00");
-    expect(retirement).toHaveTextContent("$200.00 left");
+    expect(retirement).toHaveTextContent("Retirement · 1 entry");
+    expect(totalOf(retirement)).toHaveTextContent("Total−$200.00$200.00 left");
   });
 
   it("lists a change that cannot be placed yet, and leads back to its row", async () => {

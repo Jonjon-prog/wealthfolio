@@ -392,6 +392,7 @@
     "showPosition": "查看持仓",
     "reduceToZero": "减至零",
     "addOneUnitIn": "在 {{account}} 增加一份",
-    "removeOneUnitIn": "在 {{account}} 减少一份"
+    "removeOneUnitIn": "在 {{account}} 减少一份",
+    "accountTotal": "合计"
   }
 }

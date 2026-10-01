@@ -392,6 +392,7 @@
     "showPosition": "포지션 보기",
     "reduceToZero": "0으로 줄이기",
     "addOneUnitIn": "{{account}}에 1주 추가",
-    "removeOneUnitIn": "{{account}}에서 1주 빼기"
+    "removeOneUnitIn": "{{account}}에서 1주 빼기",
+    "accountTotal": "합계"
   }
 }
