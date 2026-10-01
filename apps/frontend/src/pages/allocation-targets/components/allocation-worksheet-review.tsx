@@ -206,7 +206,7 @@ export function ReviewPanel({
                         <span className="font-mono font-semibold">{line.symbol}</span>
                         <span className="text-muted-foreground"> · {line.name}</span>
                       </p>
-                      <p className="text-right font-mono text-xs font-semibold tabular-nums">
+                      <p className="text-right font-mono text-xs tabular-nums">
                         {formatSignedAmount(signedLineAmount(line), currency, formatAmount)}
                       </p>
                       <TooltipProvider delayDuration={150}>
@@ -255,26 +255,28 @@ export function ReviewPanel({
                   );
                 })}
               </ul>
-              {/* Read like a sum: the total under the amounts, then what the
-                  account's own cash leaves or lacks. */}
+              {/* Read like a sum: lines in normal weight, the total semibold under
+                  a rule that sits exactly on the amounts column, then what the
+                  account's own cash leaves or lacks. Every cell starts at the
+                  same height, so the total lines up with its label. */}
               <div
                 data-review-total
-                className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_8rem_7rem_9rem] sm:items-center sm:px-5"
+                className="border-foreground/25 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-t px-4 pb-2.5 sm:grid-cols-[minmax(0,1fr)_8rem_7rem_9rem] sm:px-5"
               >
-                <p className="text-muted-foreground text-xs">
+                <p className="pt-2 text-xs font-semibold">
                   {t("allocation:worksheet.accountTotal")}
                 </p>
-                <p className="border-foreground/60 border-t pt-1 text-right font-mono text-xs font-semibold tabular-nums">
+                <p className="border-foreground border-t-[1.5px] pt-2 text-right font-mono text-xs font-semibold tabular-nums">
                   {formatSignedAmount(net, currency, formatAmount)}
                 </p>
                 <span className="hidden sm:block" />
                 {funding && (
                   <p
                     className={cn(
-                      "col-span-2 text-right font-mono text-xs tabular-nums sm:col-span-1",
+                      "col-span-2 mt-1.5 justify-self-end text-right font-mono text-xs font-semibold tabular-nums sm:col-span-1",
                       isShort
-                        ? "font-semibold text-amber-800 dark:text-amber-200"
-                        : "text-muted-foreground",
+                        ? "rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                        : "text-foreground",
                     )}
                   >
                     {isShort
