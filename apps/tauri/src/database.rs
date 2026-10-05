@@ -301,7 +301,10 @@ impl DatabaseRuntime {
         }
     }
 
-    pub async fn shutdown(&self, handle: &AppHandle) -> std::result::Result<(), String> {
+    pub async fn shutdown<R: tauri::Runtime>(
+        &self,
+        handle: &AppHandle<R>,
+    ) -> std::result::Result<(), String> {
         self.suspended.store(true, Ordering::SeqCst);
         if let Some(live) = self.lock(&self.live)?.as_ref() {
             live.context.active.store(false, Ordering::SeqCst);
@@ -669,10 +672,10 @@ impl DatabaseRuntime {
 
     /// Real services for IPC tests, without starting native windows or background workers.
     #[cfg(test)]
-    pub(crate) async fn initialize_for_test(&self) {
+    pub(crate) async fn initialize_for_test(&self, key: Option<Arc<DbEncryptionKey>>) {
         std::fs::create_dir_all(&self.app_data_dir).unwrap();
         let owner = Arc::new(DatabaseOwner::acquire(&self.db_path).unwrap());
-        let access = DbAccess::plaintext(&self.db_path);
+        let access = DbAccess::new(&self.db_path, key);
         let init = initialize_context(
             &self.app_data_dir,
             &access,
@@ -903,7 +906,10 @@ impl DatabaseRuntime {
 
     /// Releases every handle on the database, in the order that makes the
     /// ownership proof meaningful.
-    async fn teardown(&self, handle: &AppHandle) -> std::result::Result<(), String> {
+    async fn teardown<R: tauri::Runtime>(
+        &self,
+        handle: &AppHandle<R>,
+    ) -> std::result::Result<(), String> {
         let live = self.lock(&self.live)?.take();
         let Some(live) = live else {
             // Nothing was installed, so no worker can be starting a server right
@@ -1213,16 +1219,11 @@ fn start_workers(
             crate::mcp::start_if_enabled(&mcp_handle, &mcp_context).await;
         }));
 
-        // Periodic market data sync (6h interval, 2min initial delay).
-        let periodic_quote_service = Arc::clone(&context.quote_service);
-        workers.push(tauri::async_runtime::spawn(async move {
-            wealthfolio_core::quotes::scheduler::run_periodic_sync(
-                periodic_quote_service,
-                std::time::Duration::from_secs(120),
-                std::time::Duration::from_secs(6 * 3600),
-            )
-            .await;
-        }));
+        // Periodic market data sync plus portfolio update (6h, 2min delay).
+        workers.push(crate::portfolio_jobs::spawn_periodic_update(
+            handle.clone(),
+            Arc::clone(context),
+        ));
     }
 
     // Background device sync engine (self-skips when the device is not READY).

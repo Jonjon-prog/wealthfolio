@@ -21,6 +21,7 @@ mod activities_model_tests;
 pub use activities_constants::*;
 pub use activities_errors::ActivityError;
 pub use activities_model::import_type;
+pub use activities_model::{effective_activity_type, stored_type_override, type_override};
 pub use activities_model::{
     into_field_mapping_values, normalize_context_kind_value, parse_decimal_string_tolerant,
     Activity, ActivityBulkIdentifierMapping, ActivityBulkMutationError,
@@ -32,9 +33,10 @@ pub use activities_model::{
     BulkUpsertResult, FieldMappingValue, ImportActivitiesResult, ImportActivitiesSummary,
     ImportAssetCandidate, ImportAssetPreviewItem, ImportAssetPreviewStatus, ImportMapping,
     ImportMappingData, ImportTemplate, ImportTemplateData, ImportTemplateScope, IncomeData,
-    InternalTransferPairRequest, InternalTransferPairResponse, NewActivity,
+    InternalTransferPairRequest, InternalTransferPairResponse, LinkedTransfer, NewActivity,
     PrepareActivitiesResult, SaveBrokerSyncProfileRulesRequest, Sort, TemplateKind,
-    TransferMatchCandidate, TransferMatchCandidateRequest,
+    TransferMatchCandidate, TransferMatchCandidateRequest, UnlinkedTransfer, UnlinkedTransfers,
+    UnlinkedTransfersRequest,
 };
 pub use activities_service::ActivityService;
 pub use activities_traits::{ActivityRepositoryTrait, ActivityServiceTrait};
@@ -53,5 +55,5 @@ pub use import_run_model::{
 };
 pub use transfer_pairs::{
     is_contribution_neutral_same_account_cash_fx_conversion, is_same_account_cash_fx_conversion,
-    InvalidTransferGroup, TransferPair, TransferPairResolution,
+    InvalidTransferGroup, TransferLinkState, TransferPair, TransferPairResolution,
 };

@@ -3,6 +3,7 @@
 //!
 //! These boot the real router on a loopback port (the MCP transport
 //! answers over SSE, so `oneshot` is not enough) with auth enabled.
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
 use std::net::SocketAddr;
 
@@ -287,7 +288,7 @@ async fn mcp_pat_lifecycle() {
     let session = mcp_initialize(&server, &pat).await;
 
     // tools/list -> the read-only catalog: 16 read tools + get_import_mapping
-    // (also activities:read) = 17.
+    // and find_transfer_matches (also activities:read) = 18.
     let response = mcp_post(
         &server,
         Some(&pat),
@@ -300,8 +301,8 @@ async fn mcp_pat_lifecycle() {
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_eq!(
         tools.len(),
-        17,
-        "read-only catalog must expose 17 tools (incl. get_import_mapping): {tools:?}"
+        18,
+        "read-only catalog must expose 18 tools (incl. get_import_mapping): {tools:?}"
     );
 
     // (h) tools/call succeeds and writes an audit row (awaited before the
@@ -489,9 +490,16 @@ async fn mcp_write_scoped_token_sees_write_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         tools.len(),
-        28,
-        "full-scope token must see all 28 tools: {names:?}"
+        31,
+        "full-scope token must see all 31 tools: {names:?}"
     );
+    for name in [
+        "find_transfer_matches",
+        "link_transfer_activities",
+        "unlink_transfer_activities",
+    ] {
+        assert!(names.contains(&name), "{name} visible");
+    }
     assert!(
         names.contains(&"commit_activity_import"),
         "import tool visible"
@@ -523,53 +531,9 @@ async fn mcp_write_scoped_token_sees_write_tools() {
 /// Manual quotes keep this deterministic and independent of market providers.
 #[tokio::test]
 async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
-    async fn post_api(
-        server: &TestServer,
-        cookie: &str,
-        path: &str,
-        body: serde_json::Value,
-    ) -> serde_json::Value {
-        let response = server
-            .client
-            .post(format!("{}/api/v1/{path}", server.base))
-            .header(header::COOKIE, format!("wf_session={cookie}"))
-            .json(&body)
-            .send()
-            .await
-            .unwrap();
-        let status = response.status();
-        let value: serde_json::Value = response.json().await.unwrap();
-        assert!(status.is_success(), "{path}: {status} {value}");
-        value
-    }
-
-    async fn call_import(
-        server: &TestServer,
-        pat: &str,
-        session: &str,
-        name: &str,
-        activities: serde_json::Value,
-    ) -> serde_json::Value {
-        let response = mcp_post(
-            server,
-            Some(pat),
-            Some(session),
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": name, "method": "tools/call",
-                "params": { "name": name, "arguments": { "activities": activities } }
-            }),
-        )
-        .await;
-        assert_eq!(response.status(), 200);
-        let result = parse_sse_data(&response.text().await.unwrap());
-        assert!(result.get("error").is_none(), "{result}");
-        assert_ne!(result["result"]["isError"], true, "{result}");
-        result["result"]["structuredContent"].clone()
-    }
-
     let server = spawn_server(true, false).await;
     let cookie = login(&server).await;
-    let account = post_api(
+    let account = api_post(
         &server,
         &cookie,
         "accounts",
@@ -583,7 +547,7 @@ async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
     let mut crypto_ids = Vec::new();
     for symbol in ["BNB", "PEPE"] {
         for kind in ["EQUITY", "CRYPTO"] {
-            let asset = post_api(
+            let asset = api_post(
                 &server,
                 &cookie,
                 "assets",
@@ -617,12 +581,12 @@ async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
     for row in activities.as_array_mut().unwrap() {
         row["accountId"] = account["id"].clone();
     }
-    let preview = call_import(
+    let preview = mcp_call_tool(
         &server,
         pat,
         &session,
         "prepare_activity_import",
-        activities.clone(),
+        serde_json::json!({ "activities": activities.clone() }),
     )
     .await;
     assert_eq!(preview["summary"]["valid"], 3, "{preview}");
@@ -642,11 +606,18 @@ async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
             .unwrap()
             .extend(reviewed.as_object().unwrap().clone());
     }
-    let committed = call_import(&server, pat, &session, "commit_activity_import", activities).await;
+    let committed = mcp_call_tool(
+        &server,
+        pat,
+        &session,
+        "commit_activity_import",
+        serde_json::json!({ "activities": activities }),
+    )
+    .await;
     assert_eq!(committed["summary"]["imported"], 3, "{committed}");
     assert_eq!(committed["summary"]["assetsCreated"], 0, "{committed}");
 
-    let stored = post_api(
+    let stored = api_post(
         &server,
         &cookie,
         "activities/search",
@@ -686,6 +657,740 @@ async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
         assets.iter().filter(|a| a["kind"] == "INVESTMENT").count(),
         4
     );
+}
+
+/// POSTs JSON to the cookie-authenticated REST API and returns the body.
+async fn api_post(
+    server: &TestServer,
+    cookie: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> serde_json::Value {
+    let response = server
+        .client
+        .post(format!("{}/api/v1/{path}", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert!(status.is_success(), "{path}: {status} {value}");
+    value
+}
+
+/// Calls an MCP tool and returns its structured result, failing on tool errors.
+async fn mcp_call_tool(
+    server: &TestServer,
+    pat: &str,
+    session: &str,
+    name: &str,
+    arguments: serde_json::Value,
+) -> serde_json::Value {
+    let response = mcp_post(
+        server,
+        Some(pat),
+        Some(session),
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": name, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+    let result = parse_sse_data(&response.text().await.unwrap());
+    assert!(result.get("error").is_none(), "{result}");
+    assert_ne!(result["result"]["isError"], true, "{name}: {result}");
+    result["result"]["structuredContent"].clone()
+}
+
+/// Mints a read/draft/write activity token and opens an MCP session.
+async fn activity_writer_session(server: &TestServer, cookie: &str) -> (String, String) {
+    let (status, token) = create_pat(
+        server,
+        cookie,
+        serde_json::json!({
+            "name": "activity writer",
+            "scopes": ["activities:read", "activities:draft", "activities:write"]
+        }),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let pat = token["token"].as_str().unwrap().to_string();
+    let session = mcp_initialize(server, &pat).await;
+    (pat, session)
+}
+
+async fn create_eur_account(server: &TestServer, cookie: &str, name: &str) -> serde_json::Value {
+    api_post(
+        server,
+        cookie,
+        "accounts",
+        serde_json::json!({
+            "name": name, "accountType": "SECURITIES", "currency": "EUR",
+            "isDefault": false, "isActive": true, "trackingMode": "TRANSACTIONS"
+        }),
+    )
+    .await
+}
+
+async fn stored_activities(
+    server: &TestServer,
+    cookie: &str,
+    account: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let stored = api_post(
+        server,
+        cookie,
+        "activities/search",
+        serde_json::json!({ "page": 0, "pageSize": 10, "accountIdFilter": account["id"] }),
+    )
+    .await;
+    stored["data"].as_array().unwrap().clone()
+}
+
+/// Disables every market-data provider. Symbol search, quote-currency and
+/// profile lookups all go through them, so the test makes no outbound requests.
+async fn disable_market_data_providers(server: &TestServer, cookie: &str) {
+    let providers: Vec<serde_json::Value> = server
+        .client
+        .get(format!("{}/api/v1/providers/settings", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!providers.is_empty());
+    for provider in providers {
+        let response = server
+            .client
+            .put(format!("{}/api/v1/providers/settings", server.base))
+            .header(header::COOKIE, format!("wf_session={cookie}"))
+            .json(&serde_json::json!({
+                "providerId": provider["id"], "priority": provider["priority"], "enabled": false
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "{provider}");
+    }
+}
+
+/// Regression guard for #1375 / #1602, fixed on main by ad574a2b5 (imports)
+/// and 92df6b700 (draft commits): MCP writes for a security that is not stored
+/// yet must create the asset and link the activity to it, not save an activity
+/// with no asset while reporting success. Providers are disabled, so every
+/// identity is resolved from the rows alone.
+#[tokio::test]
+async fn mcp_writes_link_activities_to_newly_created_assets() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+
+    // Import: symbol-only rows, as an agent maps them from a statement.
+    let crypto_account = api_post(
+        &server,
+        &cookie,
+        "accounts",
+        serde_json::json!({
+            "name": "Import crypto", "accountType": "CRYPTOCURRENCY", "currency": "EUR",
+            "isDefault": false, "isActive": true, "trackingMode": "TRANSACTIONS"
+        }),
+    )
+    .await;
+    let suffix_account = create_eur_account(&server, &cookie, "Import ticker").await;
+    let securities_account = create_eur_account(&server, &cookie, "Import securities").await;
+    for (account, row, symbol) in [
+        // A ticker as in the reports, its suffix naming the venue.
+        (
+            &suffix_account,
+            serde_json::json!({
+                "symbol": "ZZSUF.PA", "instrumentType": "EQUITY", "quoteCcy": "EUR"
+            }),
+            "ZZSUF",
+        ),
+        (
+            &crypto_account,
+            serde_json::json!({
+                "symbol": "ZZCOIN", "instrumentType": "CRYPTO", "quoteMode": "MANUAL"
+            }),
+            "ZZCOIN",
+        ),
+        (
+            &securities_account,
+            serde_json::json!({
+                "symbol": "ZZIMPORT", "exchangeMic": "XPAR", "instrumentType": "EQUITY",
+                "quoteCcy": "EUR", "quoteMode": "MANUAL"
+            }),
+            "ZZIMPORT",
+        ),
+    ] {
+        let mut row = row;
+        row.as_object_mut().unwrap().extend(
+            serde_json::json!({
+                "accountId": account["id"], "activityType": "BUY", "date": "2026-07-27",
+                "currency": "EUR", "quantity": 2, "unitPrice": 10.0
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        let preview = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "prepare_activity_import",
+            serde_json::json!({ "activities": [row.clone()] }),
+        )
+        .await;
+        assert_eq!(preview["summary"]["valid"], 1, "{preview}");
+        let committed = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "commit_activity_import",
+            serde_json::json!({ "activities": [row] }),
+        )
+        .await;
+        assert_eq!(committed["summary"]["imported"], 1, "{committed}");
+        assert_eq!(committed["summary"]["assetsCreated"], 1, "{committed}");
+        let imported = stored_activities(&server, &cookie, account).await;
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0]["assetSymbol"], symbol, "{imported:?}");
+    }
+
+    // Draft commit: the shape record_activity returns for a resolved security
+    // that has no stored asset yet, including its non-UUID draft asset id.
+    let account = create_eur_account(&server, &cookie, "Draft").await;
+    let draft = serde_json::json!({
+        "accountId": account["id"], "activityType": "BUY", "activityDate": "2026-08-28",
+        "symbol": "ZZDRAFT", "assetId": "ZZDRAFT:XPAR", "assetName": "Synthetic ETF",
+        "exchangeMic": "XPAR", "quoteCcy": "EUR", "instrumentType": "ETF",
+        "currency": "EUR", "quantity": 3, "unitPrice": 18.9,
+        "priceSource": "user", "pricingMode": "MARKET", "isCustomAsset": false
+    });
+    let created = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "commit_activity_draft",
+        serde_json::json!({ "draft": draft }),
+    )
+    .await;
+    let drafted = stored_activities(&server, &cookie, &account).await;
+    assert_eq!(drafted.len(), 1);
+    assert_eq!(drafted[0]["assetSymbol"], "ZZDRAFT", "{drafted:?}");
+    assert_eq!(created["created"]["assetId"], drafted[0]["assetId"]);
+}
+
+/// When validation rejects a row, commit_activity_import must not import it
+/// (nor the rest of the batch) and report success. An unknown ticker that
+/// carries a quoteCcy passes the importer's lighter checks, so it used to be
+/// imported, create an asset, and be listed as failed at once. With providers
+/// disabled the ticker cannot be found, as an unknown one would not be.
+#[tokio::test]
+async fn mcp_import_commits_nothing_when_a_row_fails_validation() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+    let account = create_eur_account(&server, &cookie, "Rejected").await;
+    let rows = serde_json::json!([
+        { "accountId": account["id"], "activityType": "BUY", "date": "2026-07-27",
+          "symbol": "ZZQXNOPE", "quoteCcy": "EUR", "currency": "EUR",
+          "quantity": 1, "unitPrice": 10.0 },
+        { "accountId": account["id"], "activityType": "DEPOSIT", "date": "2026-07-27",
+          "currency": "EUR", "amount": 100.0 }
+    ]);
+    let preview = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "prepare_activity_import",
+        serde_json::json!({ "activities": rows.clone() }),
+    )
+    .await;
+    assert_eq!(preview["summary"]["invalid"], 1, "{preview}");
+
+    let committed = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "commit_activity_import",
+        serde_json::json!({ "activities": rows }),
+    )
+    .await;
+    assert_eq!(committed["summary"]["success"], false, "{committed}");
+    assert_eq!(committed["summary"]["total"], 2, "{committed}");
+    assert_eq!(committed["summary"]["imported"], 0, "{committed}");
+    assert_eq!(committed["summary"]["skipped"], 2, "{committed}");
+    assert_eq!(committed["summary"]["assetsCreated"], 0, "{committed}");
+    assert_eq!(
+        committed["failed"].as_array().unwrap().len(),
+        1,
+        "{committed}"
+    );
+    assert_eq!(committed["failed"][0]["symbol"], "ZZQXNOPE", "{committed}");
+    assert!(stored_activities(&server, &cookie, &account)
+        .await
+        .is_empty());
+}
+
+/// A row the check passes can still fail while being written: a split with a
+/// zero ratio fails its account's batch. The importer skips those rows and
+/// still reported success; the other accounts' rows are imported.
+#[tokio::test]
+async fn mcp_import_reports_rows_that_fail_while_being_written() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+    let split_account = create_eur_account(&server, &cookie, "Split").await;
+    let cash_account = create_eur_account(&server, &cookie, "Cash").await;
+    let rows = serde_json::json!([
+        { "accountId": split_account["id"], "activityType": "SPLIT", "date": "2026-07-27",
+          "symbol": "ZZSPLIT", "exchangeMic": "XPAR", "instrumentType": "EQUITY",
+          "quoteCcy": "EUR", "quoteMode": "MANUAL", "currency": "EUR", "amount": 0 },
+        { "accountId": cash_account["id"], "activityType": "DEPOSIT", "date": "2026-07-27",
+          "currency": "EUR", "amount": 100.0 }
+    ]);
+    let preview = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "prepare_activity_import",
+        serde_json::json!({ "activities": rows.clone() }),
+    )
+    .await;
+    assert_eq!(preview["summary"]["invalid"], 0, "{preview}");
+
+    let committed = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "commit_activity_import",
+        serde_json::json!({ "activities": rows }),
+    )
+    .await;
+    assert_eq!(committed["summary"]["success"], false, "{committed}");
+    assert_eq!(committed["summary"]["imported"], 1, "{committed}");
+    assert_eq!(
+        committed["failed"][0]["activityType"], "SPLIT",
+        "{committed}"
+    );
+    assert_eq!(
+        stored_activities(&server, &cookie, &cash_account)
+            .await
+            .len(),
+        1
+    );
+}
+
+/// #1698: an agent finds unlinked transfers with the candidates the Link
+/// Transfer dialog suggests, links confirmed pairs (each on its own, so a bad
+/// pair does not block the rest) and unlinks a pair linked by mistake.
+#[tokio::test]
+async fn mcp_finds_links_and_unlinks_transfers() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+    let chequing = create_eur_account(&server, &cookie, "Chequing").await;
+    let savings = create_eur_account(&server, &cookie, "Savings").await;
+    let transfer = |account: &serde_json::Value, activity_type: &str, date: &str, amount: &str| {
+        api_post(
+            &server,
+            &cookie,
+            "activities",
+            serde_json::json!({
+                "accountId": account["id"], "activityType": activity_type,
+                "activityDate": date, "currency": "EUR", "amount": amount
+            }),
+        )
+    };
+    let out_id =
+        transfer(&chequing, "TRANSFER_OUT", "2026-04-01T12:00:00Z", "100").await["id"].clone();
+    let in_id =
+        transfer(&savings, "TRANSFER_IN", "2026-04-01T12:00:00Z", "100").await["id"].clone();
+    let other_id =
+        transfer(&savings, "TRANSFER_IN", "2026-04-02T12:00:00Z", "250").await["id"].clone();
+    // A pending transfer stays out of the scan and cannot be linked.
+    let pending = api_post(
+        &server,
+        &cookie,
+        "activities",
+        serde_json::json!({
+            "accountId": chequing["id"], "activityType": "TRANSFER_OUT", "status": "PENDING",
+            "activityDate": "2026-04-02T12:00:00Z", "currency": "EUR", "amount": "250"
+        }),
+    )
+    .await;
+    assert_eq!(pending["status"], "PENDING", "{pending}");
+
+    let found = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "find_transfer_matches",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(found["total"], 3, "{found}");
+    let outgoing = found["transfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|transfer| transfer["activity"]["id"] == out_id)
+        .unwrap_or_else(|| panic!("{found}"));
+    assert_eq!(outgoing["activity"]["accountName"], "Chequing");
+    assert_eq!(outgoing["linkState"], "needs_counterpart", "{outgoing}");
+    assert_eq!(
+        outgoing["candidates"][0]["activity"]["id"], in_id,
+        "{outgoing}"
+    );
+    assert_eq!(outgoing["candidates"][0]["confidence"], "high");
+    assert_eq!(
+        outgoing["candidates"].as_array().unwrap().len(),
+        1,
+        "{outgoing}"
+    );
+
+    // The second pair reuses the now-linked outgoing side and the third has a
+    // pending side; each fails alone.
+    let linked = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "link_transfer_activities",
+        serde_json::json!({ "pairs": [
+            { "activityAId": out_id, "activityBId": in_id },
+            { "activityAId": other_id, "activityBId": out_id },
+            { "activityAId": other_id, "activityBId": pending["id"] }
+        ]}),
+    )
+    .await;
+    assert_eq!(linked["linked"].as_array().unwrap().len(), 1, "{linked}");
+    assert_eq!(linked["linked"][0]["transferOutId"], out_id);
+    assert_eq!(linked["linked"][0]["transferInId"], in_id);
+    assert_eq!(linked["errors"][0]["index"], 1, "{linked}");
+    assert_eq!(linked["errors"][1]["index"], 2, "{linked}");
+    assert!(
+        linked["errors"][1]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not posted")),
+        "{linked}"
+    );
+
+    let lookup = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "find_transfer_matches",
+        serde_json::json!({ "activityId": out_id }),
+    )
+    .await;
+    assert_eq!(lookup["total"], 0, "{lookup}");
+    assert_eq!(lookup["linkedTo"], in_id, "{lookup}");
+    let remaining = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "find_transfer_matches",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(remaining["total"], 1, "{remaining}");
+
+    let unlinked = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "unlink_transfer_activities",
+        serde_json::json!({ "pairs": [{ "activityAId": in_id, "activityBId": out_id }] }),
+    )
+    .await;
+    assert_eq!(
+        unlinked["unlinked"].as_array().unwrap().len(),
+        1,
+        "{unlinked}"
+    );
+    assert!(
+        unlinked["errors"].as_array().unwrap().is_empty(),
+        "{unlinked}"
+    );
+    let lookup = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "find_transfer_matches",
+        serde_json::json!({ "activityId": out_id }),
+    )
+    .await;
+    assert_eq!(lookup["total"], 1, "{lookup}");
+    assert!(lookup.get("linkedTo").is_none(), "{lookup}");
+    // Unlinking marks both sides as money from or to outside the portfolio.
+    assert_eq!(lookup["transfers"][0]["linkState"], "external", "{lookup}");
+}
+
+/// A lookup names the other side of every linked pair the shared link state
+/// sees: a pair with one leg later marked external, and a pair whose other
+/// side's account was archived, which must not show up as needing a link,
+/// in the scan or in the Health Center. Linking the first pair again repairs it.
+#[tokio::test]
+async fn mcp_transfer_lookups_see_every_linked_pair() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+    let chequing = create_eur_account(&server, &cookie, "Chequing").await;
+    let savings = create_eur_account(&server, &cookie, "Savings").await;
+    let closed = create_eur_account(&server, &cookie, "Closed").await;
+    let transfer = |account: &serde_json::Value, activity_type: &str, amount: &str| {
+        api_post(
+            &server,
+            &cookie,
+            "activities",
+            serde_json::json!({
+                "accountId": account["id"], "activityType": activity_type,
+                "activityDate": "2026-04-01T12:00:00Z", "currency": "EUR", "amount": amount
+            }),
+        )
+    };
+    let out_id = transfer(&chequing, "TRANSFER_OUT", "100").await["id"].clone();
+    let in_id = transfer(&savings, "TRANSFER_IN", "100").await["id"].clone();
+    let kept_id = transfer(&chequing, "TRANSFER_OUT", "60").await["id"].clone();
+    let archived_id = transfer(&closed, "TRANSFER_IN", "60").await["id"].clone();
+    let linked = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "link_transfer_activities",
+        serde_json::json!({ "pairs": [
+            { "activityAId": out_id, "activityBId": in_id },
+            { "activityAId": kept_id, "activityBId": archived_id }
+        ]}),
+    )
+    .await;
+    assert_eq!(linked["linked"].as_array().unwrap().len(), 2, "{linked}");
+
+    // Mark one leg of the first pair as money from outside the portfolio.
+    let response = server
+        .client
+        .put(format!("{}/api/v1/activities", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .json(&serde_json::json!({
+            "id": in_id, "accountId": savings["id"], "activityType": "TRANSFER_IN",
+            "activityDate": "2026-04-01T12:00:00Z", "currency": "EUR", "amount": "100",
+            "metadata": "{\"flow\":{\"is_external\":true}}"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "{}",
+        response.text().await.unwrap()
+    );
+    // Archive the account holding the other side of the second pair.
+    let response = server
+        .client
+        .put(format!(
+            "{}/api/v1/accounts/{}",
+            server.base,
+            closed["id"].as_str().unwrap()
+        ))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .json(&serde_json::json!({
+            "id": closed["id"], "name": "Closed", "accountType": "SECURITIES",
+            "isDefault": false, "isActive": true, "isArchived": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    let archived: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(archived["isArchived"], true, "{archived}");
+
+    let lookup = |activity_id: serde_json::Value| {
+        mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "find_transfer_matches",
+            serde_json::json!({ "activityId": activity_id }),
+        )
+    };
+    for (activity_id, counterpart, state) in [
+        (&out_id, &in_id, "linked"),
+        (&in_id, &out_id, "linked_but_marked_external"),
+        (&kept_id, &archived_id, "linked"),
+    ] {
+        let found = lookup(activity_id.clone()).await;
+        assert_eq!(found["total"], 0, "{found}");
+        assert_eq!(&found["linkedTo"], counterpart, "{found}");
+        assert_eq!(found["linkedState"], state, "{found}");
+    }
+    let scan = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "find_transfer_matches",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(scan["total"], 0, "{scan}");
+    assert_eq!(transfer_issue_legs(&server, &cookie).await, 1);
+
+    let relinked = mcp_call_tool(
+        &server,
+        &pat,
+        &session,
+        "link_transfer_activities",
+        serde_json::json!({ "pairs": [{ "activityAId": in_id, "activityBId": out_id }] }),
+    )
+    .await;
+    assert_eq!(
+        relinked["linked"].as_array().unwrap().len(),
+        1,
+        "{relinked}"
+    );
+    let found = lookup(in_id.clone()).await;
+    assert_eq!(found["linkedTo"], out_id, "{found}");
+    assert_eq!(found["linkedState"], "linked", "{found}");
+    assert_eq!(transfer_issue_legs(&server, &cookie).await, 0);
+}
+
+/// Runs the Health Center checks and counts the transfer legs they flag.
+async fn transfer_issue_legs(server: &TestServer, cookie: &str) -> u64 {
+    let status = api_post(server, cookie, "health/check", serde_json::json!({})).await;
+    status["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|issue| {
+            issue["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("invalid_transfer_group:"))
+        })
+        .map(|issue| issue["affectedCount"].as_u64().unwrap())
+        .sum()
+}
+
+/// Part of #1701: a bare date is a calendar day. West of UTC, UTC midnight
+/// falls on the previous local day, so a bare date is stored at the day's
+/// midnight in the configured timezone. The instant stays on the same UTC day,
+/// so the UTC-based date filter and duplicate keys keep matching, and nothing
+/// changes at or east of UTC. The preview shows the date as submitted.
+#[tokio::test]
+async fn mcp_writes_place_bare_dates_on_their_local_day() {
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    disable_market_data_providers(&server, &cookie).await;
+    let (pat, session) = activity_writer_session(&server, &cookie).await;
+    // Midnight in Toronto (EDT) is 04:00 UTC; Paris keeps UTC midnight.
+    for (timezone, stored_time) in [("America/Toronto", "04:00"), ("Europe/Paris", "00:00")] {
+        let response = server
+            .client
+            .put(format!("{}/api/v1/settings", server.base))
+            .header(header::COOKIE, format!("wf_session={cookie}"))
+            .json(&serde_json::json!({ "timezone": timezone }))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let account = create_eur_account(&server, &cookie, timezone).await;
+        let deposit = |date: &str, amount: f64| {
+            serde_json::json!({
+                "accountId": account["id"], "activityType": "DEPOSIT", "date": date,
+                "currency": "EUR", "amount": amount
+            })
+        };
+
+        let preview = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "prepare_activity_import",
+            serde_json::json!({ "activities": [deposit("2026-04-01", 105.31)] }),
+        )
+        .await;
+        assert_eq!(preview["rows"][0]["date"], "2026-04-01", "{preview}");
+        let committed = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "commit_activity_import",
+            serde_json::json!({ "activities": [deposit("2026-04-01", 105.31)] }),
+        )
+        .await;
+        assert_eq!(committed["summary"]["imported"], 1, "{committed}");
+        mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "commit_activity_draft",
+            serde_json::json!({ "draft": {
+                "accountId": account["id"], "activityType": "DEPOSIT", "activityDate": "2026-04-02",
+                "currency": "EUR", "amount": 50.0,
+                "priceSource": "none", "pricingMode": "MARKET", "isCustomAsset": false
+            }}),
+        )
+        .await;
+        let mut dates: Vec<String> = stored_activities(&server, &cookie, &account)
+            .await
+            .iter()
+            .map(|activity| activity["date"].as_str().unwrap().to_string())
+            .collect();
+        dates.sort();
+        assert_eq!(
+            dates,
+            vec![
+                format!("2026-04-01T{stored_time}:00+00:00"),
+                format!("2026-04-02T{stored_time}:00+00:00")
+            ],
+            "{timezone}"
+        );
+
+        // The UTC-based date filter still finds the day's activity.
+        let found = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "search_activities",
+            serde_json::json!({
+                "accountId": account["id"], "dateFrom": "2026-04-01", "dateTo": "2026-04-01"
+            }),
+        )
+        .await;
+        assert_eq!(
+            found["activities"].as_array().unwrap().len(),
+            1,
+            "{timezone}: {found}"
+        );
+
+        // A row an earlier version stored at UTC midnight is still a duplicate.
+        let committed = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "commit_activity_import",
+            serde_json::json!({ "activities": [deposit("2026-04-03T00:00:00Z", 7.0)] }),
+        )
+        .await;
+        assert_eq!(committed["summary"]["imported"], 1, "{committed}");
+        let preview = mcp_call_tool(
+            &server,
+            &pat,
+            &session,
+            "prepare_activity_import",
+            serde_json::json!({ "activities": [deposit("2026-04-03", 7.0)] }),
+        )
+        .await;
+        assert_eq!(preview["summary"]["duplicates"], 1, "{timezone}: {preview}");
+    }
 }
 
 #[tokio::test]

@@ -337,6 +337,7 @@ async fn build_data_export_content(
                     None,
                     None,
                 )
+                .await
                 .map_err(|e| format!("Failed to load portfolio history for export: {}", e))?;
             format_records(&records, format).map_err(|e| e.to_string())
         }
@@ -827,10 +828,12 @@ pub(crate) fn finish_database_maintenance(
         .emit(event, ())
         .map_err(|e| format!("Failed to emit {} event: {}", event, e))?;
 
+    // Request the restart rather than wait for it: `restart` parks this async
+    // worker forever, stranding the profile worker it just started, which the
+    // exit release then waits on until its deadline.
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    app_handle.restart();
+    app_handle.request_restart();
 
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     Ok(())
 }
 

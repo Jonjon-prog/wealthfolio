@@ -33,6 +33,7 @@
 //! - Drafts stay in the review queue until explicitly approved and posted.
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use log::debug;
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
@@ -52,11 +53,13 @@ use crate::activities::activities_model::*;
 use crate::activities::csv_parser::{self, ParseConfig, ParsedCsvResult};
 use crate::activities::idempotency::{compute_activity_idempotency_key, compute_idempotency_key};
 use crate::activities::{
-    ActivityRepositoryTrait, ActivityServiceTrait, TransferPair, TransferPairResolution,
+    ActivityRepositoryTrait, ActivityServiceTrait, TransferLinkState, TransferPair,
+    TransferPairResolution,
 };
 use crate::activities::{
     ImportRun, ImportRunMode, ImportRunRepositoryTrait, ImportRunSummary, ImportRunType, ReviewMode,
 };
+use crate::assets::loan::LOAN_PAYMENT_TAG_KEY;
 use crate::assets::{
     canonicalize_market_identity, normalize_quote_ccy_code, parse_crypto_pair_symbol,
     parse_symbol_with_known_exchange, resolve_bond_aliases, resolve_import_quote_ccy_precedence,
@@ -72,7 +75,7 @@ use crate::fx::FxServiceTrait;
 use crate::portfolio::economic_events::{ActivityCashInputs, ActivityEconomicsResolver};
 use crate::quotes::constants::DATA_SOURCE_MANUAL;
 use crate::quotes::{Quote, QuoteServiceTrait};
-use crate::utils::time_utils::parse_user_timezone_or_default;
+use crate::utils::time_utils::{calendar_day_instant, parse_user_timezone_or_default};
 use crate::Result;
 use log::warn;
 
@@ -1098,8 +1101,11 @@ impl ActivityService {
         DateTime::parse_from_rfc3339(activity_date)
             .map(|dt| dt.with_timezone(&Utc))
             .or_else(|_| {
-                NaiveDate::parse_from_str(activity_date, "%Y-%m-%d")
-                    .map(|date| Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap()))
+                NaiveDate::parse_from_str(activity_date, "%Y-%m-%d").map(|date| {
+                    Utc.from_utc_datetime(
+                        &date.and_hms_opt(0, 0, 0).expect("00:00:00 is a valid time"),
+                    )
+                })
             })
             .ok()
     }
@@ -1196,9 +1202,44 @@ impl ActivityService {
         self
     }
 
+    fn configured_timezone(&self) -> Tz {
+        let configured_timezone = self
+            .timezone
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        parse_user_timezone_or_default(&configured_timezone)
+    }
+
+    /// Validates a submitted activity date and normalizes it for storage. A bare
+    /// `YYYY-MM-DD` names a calendar day: it is stored at [`calendar_day_instant`]
+    /// in the configured timezone, so the day it shows there is the day given.
+    /// UTC midnight, which is where a bare date used to land, falls on the
+    /// previous day west of UTC. Timestamps keep their instant.
     fn validate_and_normalize_activity_date(&self, activity_date: &str) -> Result<String> {
-        let configured_timezone = self.timezone.read().unwrap().clone();
-        let timezone = parse_user_timezone_or_default(&configured_timezone);
+        let activity_date = activity_date.trim();
+        let timezone = self.configured_timezone();
+        if let Ok(day) = NaiveDate::parse_from_str(activity_date, "%Y-%m-%d") {
+            validate_activity_date_in_timezone(activity_date, timezone)?;
+            let instant = calendar_day_instant(day, timezone);
+            // At or east of UTC that is UTC midnight: keep the date as given.
+            return Ok(if instant.time() == chrono::NaiveTime::MIN {
+                activity_date.to_string()
+            } else {
+                instant.with_timezone(&timezone).to_rfc3339()
+            });
+        }
+        Self::validate_activity_timestamp(activity_date, timezone)
+    }
+
+    /// Validates a synced activity date and keeps a bare date as received.
+    /// Broker dates follow the broker's own day convention, and a re-sync
+    /// upserts rows already stored that way.
+    fn validate_synced_activity_date(&self, activity_date: &str) -> Result<String> {
+        Self::validate_activity_timestamp(activity_date, self.configured_timezone())
+    }
+
+    fn validate_activity_timestamp(activity_date: &str, timezone: Tz) -> Result<String> {
         validate_activity_date_in_timezone(activity_date, timezone)?;
 
         // Preserve the submitted timestamp whenever its own calendar date is
@@ -1361,6 +1402,145 @@ impl ActivityService {
             "low"
         };
         (score, confidence.to_string())
+    }
+
+    /// Counterparts `source` could be linked with, best first: posted transfers
+    /// of the opposite direction, not already in a pair, within `window_days`.
+    fn transfer_match_candidates<'a>(
+        source: &Activity,
+        opposite_type: &str,
+        activities: impl IntoIterator<Item = &'a Activity>,
+        transfer_resolution: &TransferPairResolution,
+        window_days: i64,
+        limit: usize,
+    ) -> Vec<TransferMatchCandidate> {
+        let mut candidates: Vec<TransferMatchCandidate> = activities
+            .into_iter()
+            .filter(|candidate| {
+                candidate.id != source.id
+                    && candidate.is_posted()
+                    && transfer_resolution
+                        .pair_for_activity(&candidate.id)
+                        .is_none()
+                    && candidate.effective_type() == opposite_type
+            })
+            .filter_map(|candidate| {
+                let day_diff = Self::transfer_date_diff_days(source, candidate);
+                if day_diff > window_days {
+                    return None;
+                }
+                Self::build_transfer_match_candidate(source, candidate, day_diff)
+            })
+            .collect();
+
+        candidates.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| {
+                    left.activity
+                        .activity_date
+                        .cmp(&right.activity.activity_date)
+                })
+                .then_with(|| left.activity.id.cmp(&right.activity.id))
+        });
+        candidates.truncate(limit);
+        candidates
+    }
+
+    /// The scan behind `find_unlinked_transfers`. A pair can cross into an
+    /// archived account, so pairs are resolved over every account. Transfers
+    /// come from the active accounts the Health Center checks, and candidates
+    /// from the non-archived accounts the Link Transfer dialog offers.
+    fn scan_unlinked_transfers(
+        activity_repository: &dyn ActivityRepositoryTrait,
+        account_service: &dyn AccountServiceTrait,
+        request: UnlinkedTransfersRequest,
+    ) -> Result<UnlinkedTransfers> {
+        let every_activity = activity_repository.get_activities_including_archived_accounts()?;
+        let transfer_resolution = TransferPairResolution::from_activities(&every_activity);
+        let account_ids = |accounts: Vec<Account>| -> HashSet<String> {
+            accounts.into_iter().map(|account| account.id).collect()
+        };
+        let active_account_ids = account_ids(account_service.get_active_non_archived_accounts()?);
+        let open_account_ids = account_ids(account_service.get_non_archived_accounts()?);
+        let window_days = request.window_days.unwrap_or(7).clamp(0, 90);
+        let candidate_limit = request.candidate_limit.unwrap_or(3).clamp(1, 25);
+        let limit = request.limit.unwrap_or(25).clamp(1, 100);
+
+        let in_scope = |activity: &Activity, state: TransferLinkState| {
+            let date = activity.activity_date.date_naive();
+            state.is_unlinked()
+                && request
+                    .link_states
+                    .as_deref()
+                    .is_none_or(|states| states.contains(&state))
+                && request
+                    .activity_id
+                    .as_deref()
+                    .is_none_or(|id| activity.id == id)
+                && request
+                    .account_id
+                    .as_deref()
+                    .is_none_or(|id| activity.account_id == id)
+                && request.start_date.is_none_or(|start| date >= start)
+                && request.end_date.is_none_or(|end| date <= end)
+        };
+        let mut sources: Vec<(&Activity, TransferLinkState, &'static str)> = every_activity
+            .iter()
+            .filter(|activity| {
+                activity.is_posted() && active_account_ids.contains(&activity.account_id)
+            })
+            .filter_map(|activity| {
+                let state = transfer_resolution.link_state(activity)?;
+                let opposite_type = Self::opposite_transfer_type(activity.effective_type())?;
+                in_scope(activity, state).then_some((activity, state, opposite_type))
+            })
+            .collect();
+        sources.sort_by(|(left, _, _), (right, _, _)| {
+            right
+                .activity_date
+                .cmp(&left.activity_date)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let total = sources.len();
+        let transfers = sources
+            .into_iter()
+            .skip(request.offset.unwrap_or(0))
+            .take(limit)
+            .map(|(source, link_state, opposite_type)| UnlinkedTransfer {
+                activity: source.clone(),
+                link_state,
+                candidates: Self::transfer_match_candidates(
+                    source,
+                    opposite_type,
+                    every_activity
+                        .iter()
+                        .filter(|candidate| open_account_ids.contains(&candidate.account_id)),
+                    &transfer_resolution,
+                    window_days,
+                    candidate_limit,
+                ),
+            })
+            .collect();
+        let linked = request.activity_id.as_deref().and_then(|id| {
+            let pair = transfer_resolution.pair_for_activity(id)?;
+            let (activity, counterpart) = if pair.transfer_in.id == id {
+                (&pair.transfer_in, &pair.transfer_out)
+            } else {
+                (&pair.transfer_out, &pair.transfer_in)
+            };
+            Some(LinkedTransfer {
+                counterpart_id: counterpart.id.clone(),
+                link_state: transfer_resolution.link_state(activity)?,
+            })
+        });
+        Ok(UnlinkedTransfers {
+            transfers,
+            total,
+            linked,
+        })
     }
 
     fn build_transfer_match_candidate(
@@ -2156,7 +2336,11 @@ impl ActivityService {
         let timestamp = if let Ok(dt) = DateTime::parse_from_rfc3339(activity_date) {
             dt.with_timezone(&Utc)
         } else if let Ok(date) = NaiveDate::parse_from_str(activity_date, "%Y-%m-%d") {
-            Utc.from_utc_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+            Utc.from_utc_datetime(
+                &date
+                    .and_hms_opt(12, 0, 0)
+                    .expect("12:00:00 is a valid time"),
+            )
         } else {
             debug!(
                 "Could not parse activity date '{}' for quote creation",
@@ -2231,17 +2415,32 @@ impl ActivityService {
     /// keys winning. Non-object payloads (either side) fall back to plain
     /// replacement - there is nothing meaningful to merge into.
     fn merge_metadata_patch(existing: Option<&serde_json::Value>, patch: &str) -> String {
-        let Ok(serde_json::Value::Object(patch_map)) =
+        let Ok(serde_json::Value::Object(mut patch_map)) =
             serde_json::from_str::<serde_json::Value>(patch)
         else {
             return patch.to_string();
         };
-        let Some(serde_json::Value::Object(existing_map)) = existing else {
-            return patch.to_string();
+        // Only the loan payment actions write a withdrawal's loan tag; an edit
+        // carrying a stale or new copy of it never changes the stored one.
+        patch_map.remove(LOAN_PAYMENT_TAG_KEY);
+        let mut merged = match existing {
+            Some(serde_json::Value::Object(existing_map)) => existing_map.clone(),
+            _ => serde_json::Map::new(),
         };
-        let mut merged = existing_map.clone();
         merged.extend(patch_map);
         serde_json::Value::Object(merged).to_string()
+    }
+
+    /// New activities never start as loan payments; linking tags them afterwards.
+    fn without_loan_payment_tag(metadata: Option<String>) -> Option<String> {
+        let text = metadata?;
+        match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(mut map)) if map.contains_key(LOAN_PAYMENT_TAG_KEY) => {
+                map.remove(LOAN_PAYMENT_TAG_KEY);
+                Some(serde_json::Value::Object(map).to_string())
+            }
+            _ => Some(text),
+        }
     }
 
     /// Infers the asset kind and instrument type from symbol, exchange, and input values.
@@ -2566,6 +2765,7 @@ impl ActivityService {
     async fn prepare_new_activity(&self, mut activity: NewActivity) -> Result<NewActivity> {
         activity.activity_date =
             self.validate_and_normalize_activity_date(&activity.activity_date)?;
+        activity.metadata = Self::without_loan_payment_tag(activity.metadata.take());
         activity.subtype = NewActivity::canonicalize_subtype_for_activity(
             &activity.activity_type,
             activity.subtype.as_deref(),
@@ -3935,6 +4135,16 @@ impl ActivityService {
                 activities_with_status.push(activity);
                 continue;
             }
+            // Flag a date the import would reject, so the check agrees with it.
+            // The checked row keeps the day as submitted; the import stores it.
+            match self.validate_and_normalize_activity_date(&activity.date) {
+                Ok(_) => activity.date = activity.date.trim().to_string(),
+                Err(error) => {
+                    Self::add_activity_error(&mut activity, "activityDate", &error.to_string());
+                    activities_with_status.push(activity);
+                    continue;
+                }
+            }
             self.hydrate_import_activity_from_asset_id(&mut activity);
             Self::normalize_import_activity_subtype(&mut activity);
 
@@ -4413,6 +4623,11 @@ impl ActivityServiceTrait for ActivityService {
         self.activity_repository.get_activities()
     }
 
+    fn get_activities_including_archived_accounts(&self) -> Result<Vec<Activity>> {
+        self.activity_repository
+            .get_activities_including_archived_accounts()
+    }
+
     /// Retrieves activities by account ID
     fn get_activities_by_account_id(&self, account_id: &str) -> Result<Vec<Activity>> {
         self.activity_repository
@@ -4756,41 +4971,30 @@ impl ActivityServiceTrait for ActivityService {
             return Ok(Vec::new());
         }
 
-        let window_days = request.window_days.unwrap_or(7).clamp(0, 90);
-        let limit = request.limit.unwrap_or(25).clamp(1, 100);
+        Ok(Self::transfer_match_candidates(
+            &source,
+            opposite_type,
+            &all_activities,
+            &transfer_resolution,
+            request.window_days.unwrap_or(7).clamp(0, 90),
+            request.limit.unwrap_or(25).clamp(1, 100),
+        ))
+    }
 
-        let mut candidates: Vec<TransferMatchCandidate> = all_activities
-            .into_iter()
-            .filter(|candidate| {
-                candidate.id != source.id
-                    && candidate.is_posted()
-                    && transfer_resolution
-                        .pair_for_activity(&candidate.id)
-                        .is_none()
-                    && candidate.effective_type() == opposite_type
-            })
-            .filter_map(|candidate| {
-                let day_diff = Self::transfer_date_diff_days(&source, &candidate);
-                if day_diff > window_days {
-                    return None;
-                }
-                Self::build_transfer_match_candidate(&source, &candidate, day_diff)
-            })
-            .collect();
-
-        candidates.sort_by(|left, right| {
-            right
-                .score
-                .cmp(&left.score)
-                .then_with(|| {
-                    left.activity
-                        .activity_date
-                        .cmp(&right.activity.activity_date)
-                })
-                .then_with(|| left.activity.id.cmp(&right.activity.id))
-        });
-        candidates.truncate(limit);
-        Ok(candidates)
+    async fn find_unlinked_transfers(
+        &self,
+        request: UnlinkedTransfersRequest,
+    ) -> Result<UnlinkedTransfers> {
+        let activity_repository = Arc::clone(&self.activity_repository);
+        let account_service = Arc::clone(&self.account_service);
+        crate::portfolio::coordinator::blocking(move || {
+            Self::scan_unlinked_transfers(
+                activity_repository.as_ref(),
+                account_service.as_ref(),
+                request,
+            )
+        })
+        .await
     }
 
     async fn save_internal_transfer_pair(
@@ -6493,8 +6697,12 @@ impl ActivityService {
             .into_iter()
             .map(|activity| {
                 let mut activity = Self::normalize_activity_for_preparation(activity);
-                if let Ok(date) = self.validate_and_normalize_activity_date(&activity.activity_date)
-                {
+                let date = if mode.is_sync() {
+                    self.validate_synced_activity_date(&activity.activity_date)
+                } else {
+                    self.validate_and_normalize_activity_date(&activity.activity_date)
+                };
+                if let Ok(date) = date {
                     activity.activity_date = date;
                 }
                 activity

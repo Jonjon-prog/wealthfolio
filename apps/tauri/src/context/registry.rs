@@ -20,7 +20,6 @@ use wealthfolio_spending::insight::InsightService;
 use wealthfolio_spending::settings::SpendingSettingsService;
 use wealthfolio_storage_sqlite::{
     agent::{McpAuditRepository, PatRepository},
-    portfolio::snapshot::SnapshotRepository,
     sync::AppSyncRepository,
 };
 
@@ -59,7 +58,6 @@ pub struct ServiceContext {
     pub performance_service: Arc<dyn portfolio::performance::PerformanceServiceTrait>,
     pub income_service: Arc<dyn portfolio::income::IncomeServiceTrait>,
     pub snapshot_service: Arc<dyn portfolio::snapshot::SnapshotServiceTrait>,
-    pub snapshot_repository: Arc<SnapshotRepository>,
     pub lots_repository: Arc<dyn LotRepositoryTrait>,
     pub app_sync_repository: Arc<AppSyncRepository>,
     pub holdings_service: Arc<dyn portfolio::holdings::HoldingsServiceTrait>,
@@ -70,6 +68,7 @@ pub struct ServiceContext {
     pub allocation_worksheet_service:
         Arc<dyn portfolio::allocation_targets::AllocationWorksheetServiceTrait>,
     pub valuation_service: Arc<dyn portfolio::valuation::ValuationServiceTrait>,
+    pub portfolio_coordinator: Arc<portfolio::coordinator::PortfolioCoordinator>,
     pub net_worth_service: Arc<dyn portfolio::net_worth::NetWorthServiceTrait>,
     pub sync_service: Arc<dyn BrokerSyncServiceTrait>,
     pub alternative_asset_service: Arc<dyn AlternativeAssetServiceTrait>,
@@ -99,19 +98,31 @@ pub struct ServiceContext {
 
 impl ServiceContext {
     pub fn get_base_currency(&self) -> String {
-        self.base_currency.read().unwrap().clone()
+        self.base_currency
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn get_timezone(&self) -> String {
-        self.timezone.read().unwrap().clone()
+        self.timezone
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn update_base_currency(&self, new_currency: String) {
-        *self.base_currency.write().unwrap() = new_currency;
+        *self
+            .base_currency
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = new_currency;
     }
 
     pub fn update_timezone(&self, new_timezone: String) {
-        *self.timezone.write().unwrap() = new_timezone;
+        *self
+            .timezone
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = new_timezone;
     }
 
     pub fn settings_service(&self) -> Arc<dyn settings::SettingsServiceTrait> {
@@ -186,10 +197,6 @@ impl ServiceContext {
         Arc::clone(&self.snapshot_service)
     }
 
-    pub fn snapshot_repository(&self) -> Arc<SnapshotRepository> {
-        Arc::clone(&self.snapshot_repository)
-    }
-
     pub fn holdings_service(&self) -> Arc<dyn portfolio::holdings::HoldingsServiceTrait> {
         Arc::clone(&self.holdings_service)
     }
@@ -220,6 +227,10 @@ impl ServiceContext {
 
     pub fn valuation_service(&self) -> Arc<dyn portfolio::valuation::ValuationServiceTrait> {
         Arc::clone(&self.valuation_service)
+    }
+
+    pub fn portfolio_coordinator(&self) -> Arc<portfolio::coordinator::PortfolioCoordinator> {
+        Arc::clone(&self.portfolio_coordinator)
     }
 
     pub fn sync_service(&self) -> Arc<dyn BrokerSyncServiceTrait> {

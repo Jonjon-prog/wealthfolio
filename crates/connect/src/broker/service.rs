@@ -338,7 +338,10 @@ impl BrokerSyncService {
 
     fn user_today(&self) -> NaiveDate {
         user_today(parse_user_timezone_or_default(
-            &self.timezone.read().unwrap(),
+            &self
+                .timezone
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
         ))
     }
 }
@@ -1402,7 +1405,6 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
             self.event_sink.emit(DomainEvent::HoldingsChanged {
                 account_ids: vec![account_id.clone()],
                 asset_ids: new_asset_ids.clone(),
-                earliest_snapshot_date: today,
             });
         }
 
