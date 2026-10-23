@@ -21,6 +21,9 @@
     "nameRequired": "名前は必須です",
     "namePlaceholder": "カテゴリ名",
     "icon": "アイコン",
+    "parent": "親カテゴリー",
+    "topLevel": "なし（最上位）",
+    "parentLockedByBudget": "移動する前にこのカテゴリーの予算目標を削除してください。予算は最上位カテゴリーにのみ適用されます。",
     "color": "色",
     "hex": "16進数",
     "create": "カテゴリを作成",
@@ -49,6 +52,13 @@
     "searchCategories": "カテゴリを検索...",
     "noCategoriesFound": "カテゴリが見つかりません。",
     "clearCategory": "カテゴリをクリア"
+  },
+  "activityTypes": {
+    "balanceTransferCashAdvance": "残高移行 / キャッシング",
+    "charge": "カード利用",
+    "interestCharge": "支払利息",
+    "refundCredit": "返金 / クレジット",
+    "reimbursementRefund": "払い戻し / 返金"
   },
   "rules": {
     "editTitle": "ルールを編集",
@@ -98,6 +108,7 @@
     "selectCategory": "カテゴリを選択",
     "priorityLabel": "優先度",
     "priorityHint": "優先度の高いルールから順に判定されます(0〜100)。",
+    "priorityInvalid": "優先度は0以上の整数で入力してください",
     "updateRule": "ルールを更新",
     "createRule": "ルールを作成",
     "scopeLabel": "適用対象",
@@ -403,6 +414,7 @@
     "customSubtitle": "選択した期間の取引"
   },
   "split": {
+    "staleTaxonomy": "これらの分割には以前のカテゴリ種別が使われています。この取引には適用されなくなりました。",
     "title": "取引を分割",
     "transactionFallback": "取引",
     "remainingOf": "{{amount}}のうち残り",
@@ -411,7 +423,11 @@
     "removeLine": "分割明細{{number}}を削除",
     "addLine": "明細を追加",
     "distributeEvenly": "均等に配分",
-    "clearSplit": "分割をクリア"
+    "clearSplit": "分割をクリア",
+    "replaceWithCategory": "分割を1つのカテゴリに置換",
+    "replaceDescription_one": "{{count}}件の分割を{{category}}に置き換えますか？既存の分割は削除されます。",
+    "replaceDescription_other": "{{count}}件の分割を{{category}}に置き換えますか？既存の分割は削除されます。",
+    "categoryProtected": "分割は保護されています。分割エディタで編集するか、明示的に置き換えてください。"
   },
   "hierarchy": {
     "noCategorizedSpending": "この期間に分類済みの支出はありません。",
@@ -704,12 +720,7 @@
     "noIncome": "この期間、選択中の口座に収入はありません。",
     "spent": "支出",
     "saved": "貯蓄",
-    "incomeSaving": "収入と貯蓄",
-    "nonSpendingCashflow": "{{period}}の支出以外のキャッシュフロー。",
-    "moneyIn": "入金",
-    "incomeSources": "収入源",
     "setAside": "積立",
-    "savingDestinations": "貯蓄先",
     "sortSpent": "支出額",
     "sortChange": "変化",
     "sortName": "名前",
@@ -728,6 +739,48 @@
     "openTransactions": "取引一覧を開く →",
     "moreCount_other": "他{{count}}件",
     "vsRange": "{{from}} – {{to}} と比較"
+  },
+  "moneyFlow": {
+    "title": "お金の流れ",
+    "subtitle": "{{period}}のお金の出どころと行き先。",
+    "focusSubtitle": "{{period}}のすべてのカテゴリ。",
+    "focusSubcategoriesSubtitle": "{{period}}のすべてのサブカテゴリ。",
+    "back": "すべての流れ",
+    "backTo": "{{name}}に戻る",
+    "chartLabel": "お金の流れの図。矢印キーで項目を移動できます。",
+    "nodeAria": "{{name}}、{{amount}}",
+    "nodeActionAria": "{{name}}、{{amount}}。{{action}}",
+    "shareOfIncome": "収入の{{pct}}",
+    "shareOfTotal": "合計の{{pct}}",
+    "clickTransactions": "クリックして取引を表示",
+    "clickCategories": "クリックしてすべてのカテゴリを表示",
+    "clickSubcategories": "クリックしてサブカテゴリを表示",
+    "action": {
+      "categories": "すべてのカテゴリを表示",
+      "subcategories": "サブカテゴリを表示",
+      "transactions": "取引を表示"
+    },
+    "node": {
+      "total": "合計",
+      "shortfall": "不足",
+      "refunds": "純返金",
+      "surplus": "残り",
+      "uncategorizedIncome": "未分類の収入",
+      "netSpending": "純支出"
+    },
+    "hint": {
+      "total": "入金に純返金と不足分を加えた合計。常に出金と一致します。",
+      "totalOut": "返金前の、支出と積立の合計です。",
+      "shortfall": "入金を超えた支出と貯蓄。",
+      "refunds": "返金が支出を上回ったカテゴリ。",
+      "saved": "貯蓄口座や投資口座へ移したお金。",
+      "surplus": "入金のうち、支出も積立もしていない分。",
+      "uncategorized": "まだカテゴリがない支出。",
+      "net": "返金後にこのカテゴリにかかった金額。",
+      "direct": "サブカテゴリではなく、カテゴリ自体に割り当てられた金額。"
+    },
+    "groupRefunds": "純返金{{amount}}を差し引く前の金額です。",
+    "categoryRefunds": "純返金{{refunds}}を差し引く前の金額です。純支出：{{net}}。"
   },
   "budgetChart": {
     "overBudget": "予算超過",
@@ -976,6 +1029,13 @@
     "dataUnavailable": "予算データを利用できません",
     "migrationNeeded": "現在のローカルデータベースは、支出機能の更新マイグレーション適用前に作成されています。",
     "addSource_other": "収入源を追加({{count}}件利用可能)",
-    "overridesTitle_other": "個別設定 · {{count}}"
+    "overridesTitle_other": "個別設定 · {{count}}",
+    "sourceMonth": "コピー元の月"
+  },
+  "splitEditReview": {
+    "title": "分割の削除を確認",
+    "hiddenCategory": "既存のカテゴリ割り当ては保持され、分割の削除後に適用される場合があります。",
+    "confirm": "保存して分割を削除",
+    "removed_other": "この変更により {{count}} 件の分割が削除されます。"
   }
 }

@@ -1,9 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { CategoryAllocation } from "@/lib/types";
-import { allocationTargetColor } from "./allocation-target-colors";
+import {
+  allocationTargetColorForRow,
+  type AllocationTargetColorMap,
+} from "./allocation-target-colors";
 import type { ModelPreset } from "./model-preset-data";
-import { BUILT_IN_PRESETS, CATEGORY_LABELS, modelPresetTitle } from "./model-preset-data";
+import { BUILT_IN_PRESETS, modelPresetTitle } from "./model-preset-data";
 
 interface PresetBarProps {
   weights: Record<string, number>;
@@ -15,7 +18,10 @@ function PresetBar({ weights, colorMap }: PresetBarProps) {
   return (
     <div className="flex h-3.5 w-full overflow-hidden rounded-sm">
       {nonZero.map(([key, pct]) => (
-        <div key={key} style={{ width: `${pct}%`, background: colorMap[key] ?? "#878580" }} />
+        <div
+          key={key}
+          style={{ width: `${pct}%`, background: colorMap[key] ?? "var(--chart-stone)" }}
+        />
       ))}
     </div>
   );
@@ -26,6 +32,7 @@ interface ModelPresetPickerProps {
   selected: string | null;
   onSelect: (presetId: string) => void;
   currentCategories: CategoryAllocation[];
+  colorByCategory: AllocationTargetColorMap;
   compact?: boolean;
 }
 
@@ -34,6 +41,7 @@ export function ModelPresetPicker({
   selected,
   onSelect,
   currentCategories,
+  colorByCategory,
   compact = false,
 }: ModelPresetPickerProps) {
   const { t } = useTranslation();
@@ -42,15 +50,6 @@ export function ModelPresetPicker({
     name: category.categoryName,
     sortOrder,
   }));
-  const categoryNames = Object.fromEntries(
-    categories.map((category) => [category.id, category.name]),
-  );
-  const currentColorMap = Object.fromEntries(
-    currentCategories.map((category, index) => [
-      category.categoryId,
-      allocationTargetColor(category.categoryId, category.categoryName, index),
-    ]),
-  );
 
   const currentPreset: ModelPreset = {
     id: "current",
@@ -60,16 +59,11 @@ export function ModelPresetPicker({
     ),
   };
 
-  function categoryLabel(categoryId: string): string {
-    return categoryNames[categoryId] ?? CATEGORY_LABELS[categoryId] ?? categoryId;
-  }
-
   function colorMapForWeights(weights: Record<string, number>): Record<string, string> {
     return Object.fromEntries(
       Object.keys(weights).map((categoryId, index) => [
         categoryId,
-        currentColorMap[categoryId] ??
-          allocationTargetColor(categoryId, categoryLabel(categoryId), index),
+        allocationTargetColorForRow({ categoryId }, colorByCategory, index),
       ]),
     );
   }
@@ -95,7 +89,7 @@ export function ModelPresetPicker({
         type="button"
         onClick={() => onSelect(preset.id)}
         className={cn(
-          "bg-card/70 group relative flex flex-col overflow-hidden rounded-lg border text-left shadow-sm transition-colors",
+          "bg-card/70 group relative flex flex-col overflow-hidden rounded-lg border text-start shadow-sm transition-colors",
           compact ? "min-h-36 px-3.5 py-3.5" : "min-h-48 px-4 py-5",
           selected === preset.id
             ? "border-foreground bg-card"
@@ -104,20 +98,20 @@ export function ModelPresetPicker({
       >
         <div className="via-muted-foreground/20 pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
         <div className="flex items-start justify-between gap-3">
-          <span className="bg-muted text-muted-foreground shrink-0 rounded-md px-2 py-1 text-[10px] font-medium">
+          <span className="bg-muted text-muted-foreground text-2xs shrink-0 rounded-md px-2 py-1 font-medium">
             {current
               ? t("allocation:presets.currentAllocation")
               : t("allocation:presets.exampleWeights")}
           </span>
           {selected === preset.id && (
-            <span className="bg-foreground text-background flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px]">
+            <span className="bg-foreground text-background text-2xs flex h-5 w-5 shrink-0 items-center justify-center rounded-full">
               ✓
             </span>
           )}
         </div>
         <span
           className={cn(
-            "text-foreground text-[15px] font-semibold leading-tight",
+            "text-foreground text-base font-semibold leading-tight",
             compact ? "mt-3" : "mt-4",
           )}
         >
@@ -125,7 +119,7 @@ export function ModelPresetPicker({
         </span>
         <p
           className={cn(
-            "text-muted-foreground mt-2 text-[12px] leading-relaxed",
+            "text-muted-foreground mt-2 text-xs leading-relaxed",
             compact ? "max-h-9 min-h-9 overflow-hidden" : "min-h-10",
           )}
         >
@@ -171,7 +165,7 @@ export function ModelPresetPicker({
               type="button"
               onClick={() => onSelect(preset.id)}
               className={cn(
-                "inline-flex h-8 max-w-full items-center gap-2 rounded-full border px-3 text-[12px] font-semibold transition-colors",
+                "inline-flex h-8 max-w-full items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors",
                 selected === preset.id
                   ? "border-foreground bg-foreground text-background"
                   : "bg-card hover:border-muted-foreground/50",
@@ -179,21 +173,21 @@ export function ModelPresetPicker({
               title={title}
             >
               <span className="truncate">{title}</span>
-              {selected === preset.id && <span className="text-[10px]">✓</span>}
+              {selected === preset.id && <span className="text-2xs">✓</span>}
             </button>
           ))}
           <button
             type="button"
             onClick={() => onSelect("scratch")}
             className={cn(
-              "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-semibold transition-colors",
+              "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors",
               scratchSelected
                 ? "border-foreground bg-foreground text-background"
                 : "bg-card hover:border-muted-foreground/50",
             )}
           >
             {t("allocation:presets.buildFromScratch")}
-            {scratchSelected && <span className="text-[10px]">✓</span>}
+            {scratchSelected && <span className="text-2xs">✓</span>}
           </button>
         </div>
       )}

@@ -635,11 +635,9 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button size="sm" variant="ghost">
-          <Icons.Plus className="mr-1.5 h-4 w-4" />
-          {t("allocation:worksheet.addPosition")}
-        </Button>
+      <PopoverTrigger render={<Button size="sm" variant="ghost" />}>
+        <Icons.Plus className="mr-1.5 h-4 w-4" />
+        {t("allocation:worksheet.addPosition")}
       </PopoverTrigger>
       <PopoverContent className="w-[340px] max-w-[calc(100vw-2rem)] p-0" align="start">
         <Command>

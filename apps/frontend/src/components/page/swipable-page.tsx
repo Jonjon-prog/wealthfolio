@@ -47,7 +47,7 @@ function NavigationPills({
   const layoutId = React.useId();
 
   return (
-    <nav className="bg-muted/60 inline-flex items-center rounded-full p-1">
+    <nav className="bg-muted/60 inline-flex items-center rounded-(--segmented-radius) p-1">
       {views.map((view) => {
         const isActive = currentView === view.value;
         const IconComponent = view.icon;
@@ -58,7 +58,7 @@ function NavigationPills({
             type="button"
             onClick={() => onViewChange(view.value)}
             className={cn(
-              "relative flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-colors duration-200",
+              "rounded-(--segmented-radius) relative flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm font-medium transition-colors duration-200",
               "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2",
               isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground/80",
             )}
@@ -67,7 +67,8 @@ function NavigationPills({
             {isActive && (
               <motion.div
                 layoutId={`nav-pill-${layoutId}`}
-                className="bg-background absolute inset-0 rounded-full shadow-sm"
+                data-slot="segmented-thumb"
+                className="absolute inset-0 rounded-(--segmented-radius) bg-(--segmented-thumb) bg-(image:--segmented-thumb-image) shadow-(--segmented-thumb-shadow)"
                 initial={false}
                 transition={{
                   type: "spring",
@@ -104,7 +105,7 @@ function MobileNavigation({
   return (
     <div
       className={cn(
-        "bg-muted/50 flex items-center gap-0.5 rounded-full p-1 backdrop-blur-sm",
+        "bg-muted/50 rounded-(--segmented-radius) flex items-center gap-0.5 p-1 backdrop-blur-sm",
         compact && "w-fit min-w-0 max-w-full",
       )}
     >
@@ -118,7 +119,7 @@ function MobileNavigation({
             type="button"
             onClick={() => onViewChange(item.value)}
             className={cn(
-              "relative flex cursor-pointer items-center justify-center gap-1.5 rounded-full py-1.5 text-sm font-medium transition-colors duration-200",
+              "rounded-(--segmented-radius) relative flex cursor-pointer items-center justify-center gap-1.5 py-1.5 text-sm font-medium transition-colors duration-200",
               "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
               compact ? "px-2" : "px-3",
               isActive ? "min-w-0" : "shrink-0",
@@ -130,7 +131,8 @@ function MobileNavigation({
             {isActive && (
               <motion.div
                 layoutId={`mobile-nav-bg-${layoutId}`}
-                className="bg-background absolute inset-0 rounded-full shadow-sm"
+                data-slot="segmented-thumb"
+                className="absolute inset-0 rounded-(--segmented-radius) bg-(--segmented-thumb) bg-(image:--segmented-thumb-image) shadow-(--segmented-thumb-shadow)"
                 initial={false}
                 transition={{
                   type: "spring",
@@ -229,6 +231,7 @@ export function SwipablePage({
     <Page className={cn("flex h-full flex-col", className)}>
       <div
         data-ptr-content
+        data-virtual-scroll-parent={!isMobile || undefined}
         className={cn("relative mx-auto flex w-full grow flex-col", contentClassName)}
       >
         {isMobile ? (
@@ -240,15 +243,15 @@ export function SwipablePage({
                 className={cn(
                   "grid w-full items-center gap-2",
                   mobileActionsInHeader
-                    ? "grid-cols-[minmax(0,1fr)_auto] min-[430px]:grid-cols-[2.5rem_minmax(0,1fr)_auto]"
+                    ? "xs:grid-cols-[2.5rem_minmax(0,1fr)_auto] grid-cols-[minmax(0,1fr)_auto]"
                     : "grid-cols-[1fr_auto_1fr]",
                 )}
               >
-                <div className={mobileActionsInHeader ? "hidden w-10 min-[430px]:block" : "w-10"} />
+                <div className={mobileActionsInHeader ? "xs:block hidden w-10" : "w-10"} />
                 <div
                   className={cn(
                     "min-w-0",
-                    mobileActionsInHeader && "flex justify-end min-[430px]:justify-center",
+                    mobileActionsInHeader && "xs:justify-center flex justify-end",
                   )}
                 >
                   <MobileNavigation
@@ -302,7 +305,7 @@ export function SwipablePage({
           /* Desktop: Navigation at top center + content below */
           <div className="hidden h-full flex-col md:flex">
             {/* Header with Navigation and Actions */}
-            <div className="flex shrink-0 items-center justify-between gap-4 px-2 pb-3 pt-4 lg:px-4">
+            <div className="flex shrink-0 items-center justify-between gap-4 px-2 pt-4 pb-3 lg:px-4">
               <div className="titlebar-nudge flex items-center gap-3">
                 {title && <h1 className="text-muted-foreground text-sm font-medium">{title}</h1>}
                 <NavigationPills

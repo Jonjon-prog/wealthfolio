@@ -68,19 +68,20 @@ rebuilds safe to run by default.
   supports the lifecycle: `projection_state`.
 - Market-data fetching, broker sync, device sync and the frontend are outside
   this architecture.
-- Cost basis is per account (rules §7); the methods computed are FIFO and WAC. A
-  method is a choice of which lots a disposal relieves and how much of each: one
-  function of the projection (`units_taken`) names the effective units each lot
-  gives, and `relieve` and `split_for_cover` slice the lots by it. Under WAC a
-  position's lots first pool into one (`pool_lots`, rules R7.2), so a sale is
-  one disposal however many purchases built the position. A new method is a
-  variant of `CostBasisMethod` with its branch there, rules entry, fixtures, and
-  every property law passing under it (a code core does not know yet, beyond
-  FIFO, LIFO and WAC, is also added to core's settings). Settings the engine
-  does not compute, or that this version cannot read, fail loudly per account
-  rather than being silently computed as FIFO. Pooling across accounts, rules
-  that look ahead and choosing specific lots per disposal are outside this
-  design (rules R7.3).
+- Cost basis is per account (rules §7); the methods computed are FIFO, WAC, LIFO
+  and HIFO. A method is a choice of which lots a disposal relieves and how much
+  of each: one function of the projection (`units_taken`) names the effective
+  units each lot gives, and `relieve` and `split_for_cover` slice the lots by
+  it. FIFO, LIFO and HIFO are one pass over lots in the method's order
+  (`relief_order`). Under WAC a position's lots first pool into one
+  (`pool_lots`, rules R7.2), so a sale is one disposal however many purchases
+  built the position. A new method is a variant of `CostBasisMethod` with its
+  branch there, rules entry, fixtures, and every property law passing under it
+  (a code core does not know yet, beyond FIFO, LIFO, HIFO and WAC, is also added
+  to core's settings). Settings the engine does not compute, or that this
+  version cannot read, fail loudly per account rather than being silently
+  computed as FIFO. Pooling across accounts, rules that look ahead and choosing
+  specific lots per disposal are outside this design (rules R7.3).
 
 ## 3. System architecture
 
@@ -182,7 +183,12 @@ also refold (the fold converts on activity days alone). Asset facts and splits
 refold the asset's holders from the beginning. When the day moves, facts dated
 in the new days (a scheduled deposit) were outside the previous range, so their
 account refolds; a split among them revalues its asset's holders from the
-beginning. A refold reaches the account's transfer partners.
+beginning. A refold reaches the account's transfer partners. A transactions
+account with no activity in the range (none yet, or only scheduled ones) has no
+keyframe: valuation presents its empty state as one row on `as_of`, which moves
+with it. Whatever reaches such an account refolds it from the beginning: a
+revalue would find no keyframe to value, and a rewrite from a later day would
+leave the old row behind.
 
 Holdings-mode accounts only revalue: their facts are observed snapshots. A
 refold is not resumed from a stored state: folding the refolded accounts (and
@@ -471,7 +477,7 @@ pub fn effects(resolved: &Resolved<'_>, disposals: &[LotDisposal]) -> Effects;
 /// share of units when quoted, the cost it removed when at cost). A transfer with a holdings account is not netted as a pair: its
 /// side shows up in that account's snapshots. An account opening inside the
 /// scope adds the money that opened it: a holdings account its first
-/// snapshot's value.
+/// snapshot's value. An account that has not started takes no part.
 pub fn aggregate_scope(
     effects: &Effects,
     series: &BTreeMap<AccountId, ValuationSeries>,
@@ -484,8 +490,11 @@ pub fn aggregate_scope(
 ///    value return, holdings-mode book-basis returns, attribution with a
 ///    residual term, risk, annualisation behind a minimum-window gate.
 ///    Arithmetic over plain data: MeasureInputs holds the priced events
-///    (Effects), the series, lots and disposals, and no facts, ledger or FX
-///    surface, so measuring stored rows resolves nothing.
+///    (Effects), optional prepared daily cash FX, the series, lots and disposals,
+///    and no facts, ledger or FX surface, so measuring stored rows resolves
+///    nothing. Dashboard preparation skips cash FX. Full/Summary reads reject
+///    missing preparation for transaction accounts with a measurable window;
+///    a prepared account with no daily effects means known zero cash FX.
 pub fn measure_account(
     inputs: &MeasureInputs<'_>,
     account: &AccountId,
@@ -613,6 +622,15 @@ product shows when the inputs are imperfect.
   boundary. Measuring a scope that names an archived account is refused with
   `ArchivedAccountInScope`: a total without one of its accounts would be
   silently wrong.
+- **An account that has not started takes no part in a scope.** A transactions
+  account without activity up to `as_of` (none yet, or only scheduled ones) is
+  one empty row on `as_of`; a holdings account without a snapshot has no row.
+  Neither holds nor moves anything, so a scope's aggregation and its mix of
+  tracking modes leave it out, and adding one changes no figure (P-IDLE). Read
+  alone, it keeps its own row. Whether an account has started comes from its
+  facts, never from its stored rows (the read path loads each holdings account's
+  first observed snapshot for it): a started account whose rows are missing
+  still fails its scope's history (P-STRICT).
 - **Units beyond a position have no lot.** A sell, transfer-out or expiry of
   more units than held disposes the held units; a sell realises only their share
   of the proceeds, books its stored cash in full, and reports the shortfall
@@ -686,11 +704,11 @@ Testable contract; the property suite (§5) encodes each one.
 | **I4**  | **Cash conservation.** Per account and currency: closing cash = opening cash + Σ cash postings. Cash never appears or vanishes outside events.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **I5**  | **Position and lot conservation.** Position quantity = Σ postings; open-lot effective quantities sum to the position; positions stay single-signed per asset; closed lots never mutate.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **I6**  | **Split invariance.** A split changes lot split ratios only, for lots acquired before its local date, and the units a holdings snapshot before it is carried at (rules R1.5): never value at the split instant, never cost-basis totals, never flows, never cash.                                                                                                                                                                                                                                                                                                                                                                                  |
-| **I7**  | **Transfer scope.** A matched internal transfer between two transactions accounts moves equal and opposite units, each leg priced on its own day, and nets at portfolio scope when both accounts are in scope, but for the units a sender lacked, which enter as money from outside the history (rules R2.1); paired security transfers preserve acquisition dates and basis. A transfer with a holdings account is not netted: its holdings side shows in that account's snapshots (R2.3). A same-account FX conversion moves no contribution when the import linker recorded it; an unrecorded one keeps the legacy per-leg contribution (R2.2). |
+| **I7**  | **Transfer scope.** A matched internal transfer between two transactions accounts moves equal and opposite units, each leg priced on its own day, and nets at portfolio scope when both accounts are in scope, but for the units a sender lacked, which enter as money from outside the history (rules R2.1); paired security transfers preserve acquisition dates and basis. A transfer with a holdings account is not netted: its holdings side shows in that account's snapshots (R2.3). A same-account FX conversion moves no contribution when both legs are marked internal; an unmarked pair keeps the legacy per-leg contributions (R2.2). |
 | **I8**  | **Valuation reconciliation.** Day over day, `Δvalue = flows + event effects + market and FX movement + unreconciled`, where the residual is an explicit diagnostic term, never silently absorbed.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | **I9**  | **Aggregation.** Portfolio valuation = Σ account valuations for the same day and policy; portfolio flows = account flows net of internal transfers, each account adding its own (one account's flows never change another's), plus the money that opens an account inside the scope; statuses and provenance combine by their absorption laws.                                                                                                                                                                                                                                                                                                     |
 | **I10** | **Degradation honesty.** Every carried, missing, estimated or fallback input is visible in a status or a diagnostic. No silent zeros, no silent `rate = 1`, no silent currency default, no silent fills.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **I11** | **Impact soundness.** After a change of facts, a full run differs from the one before only where `impact` says: nothing in an account it does not name, nothing before an account's stale day, and no keyframe, lot or disposal of an account it only revalues (P-IMPACT).                                                                                                                                                                                                                                                                                                                                                                         |
+| **I11** | **Impact soundness.** After a change of facts, a full run differs from the one before only where `impact` says: nothing in an account it does not name, nothing before an account's stale day, and no keyframe, lot or disposal of an account it only revalues (P-IMPACT). An account it only revalues is valued again from what the last run stored, as the shell revalues it, into the full run's rows (P-REVALUE).                                                                                                                                                                                                                              |
 
 ### 4.7 Determinism rules
 
@@ -755,15 +773,15 @@ Testable contract; the property suite (§5) encodes each one.
 The kernel is verified by fixtures rather than mocks: every test is facts in,
 values out.
 
-| Harness           | What it checks                                                                                                                                                                                                                                                                                                                                                   |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scenario fixtures | One YAML file per scenario: facts, intent, and expected notes in prose. Nominal, edge, regression, performance and lifecycle families.                                                                                                                                                                                                                           |
-| Kernel goldens    | Reviewed snapshots of full engine output per scenario: keyframes, lots, disposals, valuations with statuses, flows, performance windows.                                                                                                                                                                                                                         |
-| Property laws     | The invariants of §4.6 over the whole corpus: determinism, chunk equivalence, conservation, split neutrality, transfer cancellation, honesty.                                                                                                                                                                                                                    |
-| Coordinator tests | The shell path: real fact loading, row mapping, persistence, freshness verdicts, plan selection, and lifecycle steps equal to a fresh rebuild.                                                                                                                                                                                                                   |
-| App parity        | Every scenario through the app equals one kernel run over all its facts: stored rows at one-day, two-day and yearly windows, each account rebuilt alone, and the performance reads.                                                                                                                                                                              |
-| Generated corpus  | Deterministic random scenarios (`tests/support/generate.rs`) mixing archived and holdings accounts, activities and transfers recorded on holdings accounts, accounts opening after the others, sparse, invalid and missing quotes, splits, transfers, shorts and minor units, run through every property law but P-TOTAL (fixtures only) and the app parity law. |
-| Scale benchmark   | The six stages over a generated 20k-activity portfolio.                                                                                                                                                                                                                                                                                                          |
+| Harness           | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scenario fixtures | One YAML file per scenario: facts, intent, and expected notes in prose. Nominal, edge, regression, performance and lifecycle families.                                                                                                                                                                                                                                                                                                                                              |
+| Kernel goldens    | Reviewed snapshots of full engine output per scenario: keyframes, lots, disposals, valuations with statuses, flows, performance windows.                                                                                                                                                                                                                                                                                                                                            |
+| Property laws     | The invariants of §4.6 over the whole corpus: determinism, chunk equivalence, conservation, split neutrality, transfer cancellation, honesty.                                                                                                                                                                                                                                                                                                                                       |
+| Coordinator tests | The shell path: real fact loading, row mapping, persistence, freshness verdicts, plan selection, and lifecycle steps equal to a fresh rebuild.                                                                                                                                                                                                                                                                                                                                      |
+| App parity        | Every scenario through the app equals one kernel run over all its facts: stored rows at one-day, two-day and yearly windows, each account rebuilt alone, and the performance reads.                                                                                                                                                                                                                                                                                                 |
+| Generated corpus  | Deterministic random scenarios (`tests/support/generate.rs`) mixing archived and holdings accounts, activities and transfers recorded on holdings accounts, accounts opening after the others, accounts without activity or with only scheduled activity, a holdings account without a snapshot, sparse, invalid and missing quotes, splits, transfers, shorts and minor units, run through every property law but P-TOTAL (fixtures only), the impact laws and the app parity law. |
+| Scale benchmark   | The six stages over a generated 20k-activity portfolio.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 `crates/portfolio-engine/tests/fixtures/README.md` documents the fixture schema,
 the golden format, the harnesses and how to verify a fixture by hand.
@@ -777,7 +795,7 @@ itself remains in this repository's history.
 
 ## Appendix A — Activity vocabulary
 
-The compile stage is total over this vocabulary: 14 activity types, 10 canonical
+The compile stage is total over this vocabulary: 14 activity types, 12 canonical
 subtypes with broker-alias canonicalisation (BTO, BTC, STO, STC, SELL_SHORT and
 BUY_TO_COVER map onto POSITION_OPEN and POSITION_CLOSE), and 4 statuses, of
 which only `Posted` computes. An `activity_type_override` wins everywhere.
@@ -796,7 +814,7 @@ effect.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | BUY          | − amount; gross = amount − charges                                                                                              | + qty; opens a lot (basis = gross + charges); a short cover uses POSITION_CLOSE intent with cash prorated to the covered quantity                                                                                                                                                             | —                                                        | Internal                                                                                                                       |
 | SELL         | + amount; − amount when charges exceed proceeds and the derivation reproduces the stored amount within tolerance (NOM-TRADE-05) | − qty; closes lots by the account's method (rules §7) with realised P&L; a short open uses POSITION_OPEN intent (negative lot); a sell with no position is cash only + warning; units beyond the position realise no proceeds + warning                                                       | —                                                        | Internal                                                                                                                       |
-| DIVIDEND     | + amount                                                                                                                        | — (DRIP and dividend-in-kind expand into two legs first)                                                                                                                                                                                                                                      | —                                                        | Internal                                                                                                                       |
+| DIVIDEND     | + amount                                                                                                                        | — (DRIP and dividend-in-kind expand into two legs first); RETURN_OF_CAPITAL: recovers its gross amount of cost, beyond it a capital gain (rules R7.4)                                                                                                                                         | —                                                        | Internal                                                                                                                       |
 | INTEREST     | + amount; on credit-card accounts − amount (EDGE-CC-01)                                                                         | — (staking rewards expand)                                                                                                                                                                                                                                                                    | —                                                        | Internal                                                                                                                       |
 | DEPOSIT      | + amount                                                                                                                        | —                                                                                                                                                                                                                                                                                             | **+ amount**                                             | **External**                                                                                                                   |
 | WITHDRAWAL   | − amount; gross = amount − charges                                                                                              | —                                                                                                                                                                                                                                                                                             | **− amount**                                             | **External**                                                                                                                   |
@@ -805,16 +823,18 @@ effect.
 | FEE          | − amount                                                                                                                        | —                                                                                                                                                                                                                                                                                             | —                                                        | Internal                                                                                                                       |
 | TAX          | − amount                                                                                                                        | —                                                                                                                                                                                                                                                                                             | —                                                        | Internal                                                                                                                       |
 | SPLIT        | **none**                                                                                                                        | multiplies the split ratio of lots acquired before the split's local date; ratio from amount, else quantity; a fractional cashout is a separate sell                                                                                                                                          | —                                                        | Internal                                                                                                                       |
-| CREDIT       | + amount                                                                                                                        | —                                                                                                                                                                                                                                                                                             | **+ amount only for subtype BONUS**                      | External for BONUS, else Internal                                                                                              |
-| ADJUSTMENT   | none                                                                                                                            | OPTION_EXPIRY: removal by the account's method at zero proceeds (basis becomes a realised loss); other subtypes are no-ops                                                                                                                                                                    | —                                                        | Internal                                                                                                                       |
+| CREDIT       | + amount                                                                                                                        | —                                                                                                                                                                                                                                                                                             | **+ amount if marked external; unmarked, only BONUS**    | External if `flow.is_external` is true; unmarked, BONUS only; else Internal                                                    |
+| ADJUSTMENT   | none                                                                                                                            | OPTION_EXPIRY: removal by the account's method at zero proceeds (basis becomes a realised loss); RETURN_OF_CAPITAL: recovers its amount of cost, beyond it a capital gain; NOTIONAL_DISTRIBUTION: adds its amount to cost (rules R7.4); other subtypes are no-ops                             | —                                                        | Internal                                                                                                                       |
 | UNKNOWN      | none                                                                                                                            | none (warn and skip)                                                                                                                                                                                                                                                                          | —                                                        | Internal                                                                                                                       |
 
 **Subtypes.** `DRIP` (dividend into two legs), `STAKING_REWARD` (interest into
 two legs), `DIVIDEND_IN_KIND` (two legs), `BONUS`, `REBATE`, `REFUND` and
-`REIMBURSEMENT` (credit variants, of which only BONUS is external capital),
-`OPTION_EXPIRY`, and `POSITION_OPEN` / `POSITION_CLOSE` (trade intent). A
-two-leg expansion puts the income leg first and carries fee and tax there; the
-buy leg carries the income as its amount, so net cash is about zero, with price
+`REIMBURSEMENT` (credit variants; external when marked, else only BONUS is),
+`OPTION_EXPIRY`, `RETURN_OF_CAPITAL` (a dividend or adjustment of capital) and
+`NOTIONAL_DISTRIBUTION` (an adjustment for a distribution reinvested without
+units), and `POSITION_OPEN` / `POSITION_CLOSE` (trade intent). A two-leg
+expansion puts the income leg first and carries fee and tax there; the buy leg
+carries the income as its amount, so net cash is about zero, with price
 precedence: explicit positive unit price, then amount over quantity, then the
 raw unit price.
 
@@ -822,15 +842,17 @@ raw unit price.
 it on the event (`EconomicEvent::attribution`); `measure` never re-reads the
 activity. A window attributes the events after its start row; an all-time
 (inception) window, whose change runs from zero, also counts the first day's.
-Income attribution is gross. Fees and taxes are attributed for trades, income
-and standalone charge rows; fees on deposits, withdrawals and transfers are
-booked to cash but knowingly not attributed. Credit-card interest is a charge on
-a liability, so its amount is attributed as a fee, never as income (EDGE-CC-01).
-Shortability: options may go negative implicitly, equities require explicit
-intent, everything else rejects a negative lot. Cash books into the account
-currency at the supplied rate when the activity carries one and the currencies
-differ, otherwise into the activity-currency bucket; an empty currency is a
-diagnostic, never a bucket key.
+Income attribution is gross. A dividend of capital is no income; a return of
+capital adjustment is negative income and a notional distribution positive
+income, each by its amount (rules R7.4). Fees and taxes are attributed for
+trades, income and standalone charge rows; fees on deposits, withdrawals and
+transfers are booked to cash but knowingly not attributed. Credit-card interest
+is a charge on a liability, so its amount is attributed as a fee, never as
+income (EDGE-CC-01). Shortability: options may go negative implicitly, equities
+require explicit intent, everything else rejects a negative lot. Cash books into
+the account currency at the supplied rate when the activity carries one and the
+currencies differ, otherwise into the activity-currency bucket; an empty
+currency is a diagnostic, never a bucket key.
 
 ## Glossary
 

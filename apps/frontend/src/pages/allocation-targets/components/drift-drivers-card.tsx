@@ -69,16 +69,6 @@ function buildDriver(
   };
 }
 
-function markerTextColor(color: string): string {
-  const hex = color.replace("#", "");
-  if (hex.length !== 6) return "var(--background)";
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  return luminance > 0.58 ? "var(--foreground)" : "var(--background)";
-}
-
 export function DriftDriversCard({
   report,
   statusDescription,
@@ -112,7 +102,7 @@ export function DriftDriversCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
         {oobRows.length === 0 ? (
-          <p className="text-muted-foreground py-6 text-center text-[13px]">
+          <p className="text-muted-foreground py-6 text-center text-sm">
             {t("allocation:drivers.noneOutsideRange")}
           </p>
         ) : (
@@ -125,35 +115,38 @@ export function DriftDriversCard({
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2.5">
                       <span
-                        className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums"
+                        className="text-2xs flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full font-bold tabular-nums"
+                        // A tint of the category colour with its ring, so the
+                        // number reads in the foreground whatever the theme.
                         style={{
-                          backgroundColor: rowColor,
-                          color: markerTextColor(rowColor),
+                          backgroundColor: `color-mix(in oklab, ${rowColor} 22%, var(--card))`,
+                          boxShadow: `inset 0 0 0 1px ${rowColor}`,
+                          color: "var(--foreground)",
                         }}
                       >
                         {index + 1}
                       </span>
-                      <p className="text-foreground truncate text-[13px] font-semibold leading-snug">
+                      <p className="text-foreground truncate text-sm leading-snug font-semibold">
                         {driver.title}
                       </p>
                     </div>
                     <span
                       className={cn(
-                        "shrink-0 text-[12.5px] font-bold tabular-nums",
-                        driver.isOver ? "text-destructive" : "text-blue-600 dark:text-blue-400",
+                        "shrink-0 text-xs font-bold tabular-nums",
+                        driver.isOver ? "text-allocation-over" : "text-allocation-under",
                       )}
                     >
                       {driver.drift}
                     </span>
                   </div>
-                  <p className="text-muted-foreground mt-2 truncate pl-7 text-[12px] leading-relaxed">
+                  <p className="text-muted-foreground mt-2 truncate ps-7 text-xs leading-relaxed">
                     {driver.detail}
                   </p>
                 </li>
               );
             })}
             {remainingRows.length > 0 && (
-              <li className="bg-muted/20 text-muted-foreground rounded-lg px-3.5 py-2.5 text-[11.5px] leading-relaxed">
+              <li className="bg-muted/20 text-muted-foreground text-2xs rounded-lg px-3.5 py-2.5 leading-relaxed">
                 <span className="text-foreground font-medium">
                   {t("allocation:drivers.moreOutsideTarget", { count: remainingRows.length })}
                 </span>

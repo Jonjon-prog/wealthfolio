@@ -372,7 +372,6 @@
     "clearAccounts": "지우기",
     "noMatchingAccounts": "일치하는 계좌가 없습니다.",
     "otherAccounts": "기타 계좌",
-    "includeAccount": "{{account}} 포함",
     "noCashRecorded": "현금 없음",
     "accountRecorded": "기록 {{amount}}",
     "cryptoOnly": "암호화폐 전용",

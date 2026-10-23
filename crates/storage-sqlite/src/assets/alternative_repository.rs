@@ -17,8 +17,7 @@ use std::sync::Arc;
 
 use wealthfolio_core::activities::Activity;
 use wealthfolio_core::assets::loan::{
-    link_payment, AssetDetailsChange, LoanPayment, LoanPaymentTag, LoanRecord, LoanUpdate,
-    PaymentLink,
+    untagged, AssetDetailsChange, LoanPaymentTag, LoanUpdate, StoredLoan, StoredPayment,
 };
 use wealthfolio_core::assets::{AlternativeAssetRepositoryTrait, LoanChange, PaymentTagChange};
 use wealthfolio_core::errors::DatabaseError;
@@ -36,8 +35,8 @@ use crate::schema::{accounts, activities, assets, quotes};
 fn read_loan_payments(
     conn: &mut SqliteConnection,
     loan_ids: &[String],
-) -> Result<HashMap<String, Vec<LoanPayment>>> {
-    let mut payments: HashMap<String, Vec<LoanPayment>> = HashMap::new();
+) -> Result<HashMap<String, Vec<StoredPayment>>> {
+    let mut payments: HashMap<String, Vec<StoredPayment>> = HashMap::new();
     if loan_ids.is_empty() {
         return Ok(payments);
     }
@@ -64,7 +63,7 @@ fn read_loan_payments(
             continue;
         };
         if let Some((loan_id, payment)) =
-            LoanPayment::from_activity(&activity, &account_type, currency)
+            StoredPayment::from_activity(&activity, &account_type, currency)
         {
             payments.entry(loan_id).or_default().push(payment);
         }
@@ -73,7 +72,7 @@ fn read_loan_payments(
 }
 
 /// A loan's metadata and its manual balance quotes, oldest first.
-fn read_loan(conn: &mut SqliteConnection, asset_id: &str) -> Result<LoanRecord> {
+fn read_loan(conn: &mut SqliteConnection, asset_id: &str) -> Result<StoredLoan> {
     let asset = assets::table
         .filter(assets::id.eq(asset_id))
         .first::<crate::assets::AssetDB>(conn)
@@ -110,7 +109,7 @@ fn read_loan(conn: &mut SqliteConnection, asset_id: &str) -> Result<LoanRecord> 
         .select(accounts::id)
         .load::<String>(conn)
         .map_err(StorageError::from)?;
-    Ok(LoanRecord {
+    Ok(StoredLoan {
         asset_id: asset.id,
         currency: asset.quote_ccy,
         metadata,
@@ -252,8 +251,7 @@ impl AlternativeAssetRepositoryTrait for AlternativeAssetRepository {
                     .map_err(StorageError::from)?;
                 for row in tagged {
                     let activity = Activity::from(row);
-                    let untagged = link_payment(&activity, "", None, &PaymentLink::Unlink)?;
-                    write_activity_metadata(tx, &activity.id, untagged.activity.as_ref())?;
+                    write_activity_metadata(tx, &activity.id, untagged(&activity).as_ref())?;
                 }
 
                 // Step 2: Delete all quotes for this asset with source = 'MANUAL'
@@ -420,7 +418,7 @@ impl AlternativeAssetRepositoryTrait for AlternativeAssetRepository {
             .await
     }
 
-    fn loan_payments(&self, loan_ids: &[String]) -> Result<HashMap<String, Vec<LoanPayment>>> {
+    fn loan_payments(&self, loan_ids: &[String]) -> Result<HashMap<String, Vec<StoredPayment>>> {
         let mut conn = get_connection(&self.pool)?;
         read_loan_payments(&mut conn, loan_ids)
     }

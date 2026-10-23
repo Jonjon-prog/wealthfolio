@@ -428,7 +428,6 @@ function AccountsLedger({
                   id={checkboxId}
                   checked={false}
                   onCheckedChange={() => onToggleAccount(account.id)}
-                  aria-label={t("allocation:worksheet.includeAccount", { account: account.name })}
                   className="size-5 rounded-full"
                 />
                 <label
@@ -504,13 +503,7 @@ function LedgerRow({
       data-worksheet-account={account.id}
       className={cn(LEDGER_GRID, "group items-center px-4 py-2")}
     >
-      <Checkbox
-        id={checkboxId}
-        checked
-        onCheckedChange={onToggle}
-        aria-label={t("allocation:worksheet.includeAccount", { account: account.name })}
-        className={ROUND_CHECKBOX}
-      />
+      <Checkbox id={checkboxId} checked onCheckedChange={onToggle} className={ROUND_CHECKBOX} />
       <label htmlFor={checkboxId} className="min-w-0 cursor-pointer">
         <span className="block truncate text-sm font-medium">{account.name}</span>
         <span className="text-muted-foreground block truncate text-xs">{detailsLine}</span>

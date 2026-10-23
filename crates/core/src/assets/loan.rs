@@ -17,12 +17,13 @@ mod model;
 mod payments;
 mod recalculation;
 mod setup;
+mod summary;
 pub use actions::{
     apply_loan_action, AssetDetailsChange, BalanceEdit, LoanAction, LoanActionResult, LoanError,
-    LoanRecord, LoanUpdate,
+    LoanRecord, LoanUpdate, StoredLoan,
 };
 pub use interest::{payment_amount, InterestMethod};
-pub use linking::{link_payment, PaymentLink, PaymentTagUpdate};
+pub use linking::{link_payment, untagged, PaymentLink, PaymentTagUpdate};
 pub use model::{
     balance_notes, balance_user_note, edited_balance_notes, escrow_amount, event_entries,
     LoanBalanceKind, LoanEvent, LoanTerms, ESCROW_AMOUNT_KEY, INTEREST_RATE_KEY, LOAN_CLOSED_NOTE,
@@ -31,12 +32,13 @@ pub use model::{
 };
 pub use payments::{
     InstalmentStatus, LoanInstalment, LoanPayment, LoanPaymentTag, PaymentAllocation,
-    PaymentChangeSuggestion, PaymentTarget, LOAN_PAYMENT_TAG_KEY,
+    PaymentChangeSuggestion, PaymentTarget, StoredPayment, LOAN_PAYMENT_TAG_KEY,
 };
 pub use recalculation::{recalculate_loan, LoanRecalculation, LoanRecalculationRequest};
 pub use setup::{
     apply_loan_setup, preview_loan_terms, LoanSchedule, LoanSchedulePreview, LoanSetup, LOAN_FIELDS,
 };
+pub use summary::{LoanBalanceSource, LoanSummary};
 
 const MAX_PAYMENTS: usize = 2600;
 
@@ -494,20 +496,67 @@ fn calculate(
     })
 }
 
+/// The calculation that values a loan on `date` from what is stored for it.
+pub fn loan_calculation(
+    metadata: &Value,
+    quotes: &[Quote],
+    payments: &[LoanPayment],
+    date: NaiveDate,
+) -> Option<LoanCalculation> {
+    calculate_loan(&LoanCalculationRequest {
+        metadata: metadata.clone(),
+        balances: quotes.iter().map(LoanBalance::from).collect(),
+        as_of: date,
+        payments: payments.to_vec(),
+    })
+}
+
+/// A calculation's balance, in cents, as holdings and net worth value the loan.
+pub fn loan_balance(calculation: &LoanCalculation) -> Option<Decimal> {
+    Decimal::from_f64_retain(calculation.current_balance).map(|v| v.round_dp(2))
+}
+
 pub fn loan_value(
     metadata: Option<&Value>,
     quotes: &[Quote],
     payments: &[LoanPayment],
     date: NaiveDate,
 ) -> Option<Decimal> {
+    loan_balance(&loan_calculation(metadata?, quotes, payments, date)?)
+}
+
+/// A manual loan's unconfirmed principal, used only when it has no recorded balances.
+/// Undated legacy loans start on their stored creation date, never before it.
+/// A dormant schedule on a manually tracked loan does not drive this value.
+pub fn manual_loan_principal(
+    metadata: Option<&Value>,
+    as_of: NaiveDate,
+    created_date: NaiveDate,
+) -> Option<(NaiveDate, Decimal)> {
     let metadata = metadata?;
-    let result = calculate_loan(&LoanCalculationRequest {
-        metadata: metadata.clone(),
-        balances: quotes.iter().map(LoanBalance::from).collect(),
-        as_of: date,
-        payments: payments.to_vec(),
-    })?;
-    Decimal::from_f64_retain(result.current_balance).map(|v| v.round_dp(2))
+    if metadata.get(LOAN_PROJECTION_KEY).is_some()
+        && metadata.get(TRACKING_MODE_KEY).and_then(Value::as_str) != Some("manual")
+    {
+        return None;
+    }
+    let amount = metadata
+        .get(ORIGINAL_AMOUNT_KEY)
+        .or_else(|| metadata.get("purchase_price"))?;
+    let amount = amount
+        .as_f64()
+        .or_else(|| amount.as_str()?.parse().ok())
+        .filter(|amount| valid_amount(*amount) && money(*amount) > 0.0)?;
+    let stored_date = metadata
+        .get(ORIGINATION_DATE_KEY)
+        .or_else(|| metadata.get("purchase_date"));
+    let date = match stored_date {
+        Some(date) => date.as_str()?.parse::<NaiveDate>().ok()?,
+        None => created_date,
+    };
+    if date > as_of {
+        return None;
+    }
+    Decimal::from_f64_retain(amount).map(|amount| (date, amount.round_dp(2)))
 }
 
 #[cfg(test)]

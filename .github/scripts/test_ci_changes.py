@@ -20,6 +20,9 @@ class ChangeDetectionTests(unittest.TestCase):
     def test_docs_only(self):
         self.assert_jobs(["docs/design.md", "AGENTS.md"], "formatting")
 
+    def test_connect_defaults_cover_every_consumer(self):
+        self.assert_jobs(["config/connect.defaults.json"], "frontend", "rust", "formatting", "android", "ios")
+
     def test_native_paths(self):
         for path in ["apps/tauri/src/lib.rs", "Cargo.lock", "Cargo.toml", ".cargo/config.toml"]:
             with self.subTest(path=path):
@@ -111,6 +114,8 @@ class BuildStatusTests(unittest.TestCase):
             env[job + "_REQUIRED"] = "false"
             env[job + "_RESULT"] = "skipped"
         env["TRANSLATION_RESULT"] = "skipped"
+        env["FRONTEND_TESTS_RESULT"] = "skipped"
+        env["DESIGN_RATCHET_RESULT"] = "skipped"
         env.update(overrides)
         return subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True).returncode
 
@@ -123,6 +128,19 @@ class BuildStatusTests(unittest.TestCase):
                 with self.subTest(platform=platform, result=result):
                     self.assertNotEqual(self.run_gate(**{platform + "_REQUIRED": "true", platform + "_RESULT": result}), 0)
             self.assertEqual(self.run_gate(**{platform + "_REQUIRED": "true", platform + "_RESULT": "success"}), 0)
+
+    def test_required_frontend_jobs_must_succeed(self):
+        passing = {
+            "FRONTEND_RESULT": "success",
+            "FRONTEND_TESTS_RESULT": "success",
+            "TRANSLATION_RESULT": "success",
+            "DESIGN_RATCHET_RESULT": "success",
+        }
+        for job in passing:
+            for result in ["failure", "cancelled", "skipped"]:
+                with self.subTest(job=job, result=result):
+                    self.assertNotEqual(self.run_gate(FRONTEND_REQUIRED="true", **{**passing, job: result}), 0)
+        self.assertEqual(self.run_gate(FRONTEND_REQUIRED="true", **passing), 0)
 
     def test_failed_detection_blocks_merge(self):
         self.assertNotEqual(self.run_gate(CHANGES_RESULT="failure"), 0)

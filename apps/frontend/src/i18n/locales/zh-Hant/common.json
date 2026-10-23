@@ -245,7 +245,6 @@
     "asset_type_option": "選擇權",
     "asset_type_metal": "金屬（商品）",
     "asset_type_other": "其他",
-    "select_currency": "選取幣別…",
     "select_symbol": "選取代號…",
     "symbol_type_security": "有價證券",
     "symbol_type_crypto": "加密貨幣",
@@ -304,6 +303,8 @@
     "screenshot_alt": "螢幕截圖 {{number}}",
     "downloading_update": "正在下載更新…",
     "installing_update": "正在安裝更新…",
+    "update_external_flatpak": "此 Wealthfolio 透過 Flatpak 安裝。請使用 Flatpak 或軟體中心更新。",
+    "update_external_package_manager": "此安裝無法在 Wealthfolio 內更新。請使用安裝時的相同方式更新。",
     "update_failed": "更新失敗，請再試一次。",
     "remind_me_later": "稍後提醒我",
     "view_changelog": "查看變更記錄",
@@ -489,6 +490,7 @@
       "unavailable": "無法開啟此個人資料。請重新啟動 Wealthfolio 後重試。",
       "inUse": "此設定檔已在另一個 Wealthfolio 視窗中開啟。請在該視窗中關閉後再試。",
       "credentials": "無法存取已儲存的登入資訊。請解鎖裝置後再試。",
+      "serverCredentials": "伺服器無法存取其憑證檔案 (secrets.json)。請伺服器管理員檢查 WF_SECRET_KEY 是否與建立該檔案時使用的金鑰一致，以及伺服器能否讀寫該檔案。",
       "invalid": "請檢查個人資料資訊後重試。",
       "name": "個人資料名稱應為 1–60 個字元。",
       "avatar": "請選擇一個可用的頭像。",
@@ -504,5 +506,9 @@
       "teamChanged": "您的家庭已變更。請重新連線至 Wealthfolio Connect 以繼續。",
       "rebind": "請重新連線至 Wealthfolio Connect，以確認此個人資料的帳戶和家庭。"
     }
-  }
+  },
+  "remove": "移除",
+  "remove_item": "移除 {{name}}",
+  "actions_for": "{{name}} 的操作",
+  "settings_for": "{{name}} 設定"
 }

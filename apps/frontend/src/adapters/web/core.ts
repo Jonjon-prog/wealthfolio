@@ -4,9 +4,10 @@ import { profileFetch } from "@/features/profiles/session";
 
 import { notifyUnauthorized } from "@/lib/auth-token";
 import type { Logger } from "../types";
+import { invokeTimeoutMs } from "../invoke-timeout";
 
-/** True when running in the desktop (Tauri) environment */
-export const isDesktop = false;
+/** True in every Tauri build (desktop and mobile); use getPlatform() for the OS */
+export const isTauri = false;
 
 /** True when running in the web environment */
 export const isWeb = true;
@@ -15,19 +16,11 @@ export const API_PREFIX = "/api/v1";
 export const EVENTS_ENDPOINT = `${API_PREFIX}/events/stream`;
 export const AI_CHAT_STREAM_ENDPOINT = `${API_PREFIX}/ai/chat/stream`;
 
-const DEFAULT_INVOKE_TIMEOUT_MS = 300_000;
-
-// Commands that legitimately do batched network I/O over many symbols (Yahoo
-// Finance lookups during CSV import). Larger imports — especially Options —
-// can exceed the default 5-minute safety net. See issue #884.
-const INVOKE_TIMEOUT_OVERRIDES_MS: Record<string, number> = {
-  preview_import_assets: 600_000,
-  check_activities_import: 600_000,
-};
-
 type CommandMap = Record<string, { method: string; path: string }>;
 
 export const COMMANDS: CommandMap = {
+  cloud_backup_action: { method: "POST", path: "/cloud-backups/action" },
+  cloud_backup_capture: { method: "POST", path: "/cloud-backups/capture" },
   get_accounts: { method: "GET", path: "/accounts" },
   create_account: { method: "POST", path: "/accounts" },
   update_account: { method: "PUT", path: "/accounts" },
@@ -111,6 +104,11 @@ export const COMMANDS: CommandMap = {
   // Activities
   search_activities: { method: "POST", path: "/activities/search" },
   create_activity: { method: "POST", path: "/activities" },
+  review_internal_transfer_pair_split_effects: {
+    method: "POST",
+    path: "/activities/transfer-pair/split-effects",
+  },
+  review_activity_split_effects: { method: "POST", path: "/activities/split-effects" },
   update_activity: { method: "PUT", path: "/activities" },
   save_activities: { method: "POST", path: "/activities/bulk" },
   delete_activity: { method: "DELETE", path: "/activities" },
@@ -204,6 +202,8 @@ export const COMMANDS: CommandMap = {
   migrate_legacy_classifications: { method: "POST", path: "/taxonomies/migration/run" },
   // Spending budget
   get_budget: { method: "GET", path: "/spending/budget" },
+  get_budget_readonly: { method: "GET", path: "/spending/budget/snapshot" },
+  get_spending_context: { method: "GET", path: "/spending/context" },
   upsert_budget_target: { method: "POST", path: "/spending/budget/targets" },
   delete_budget_target: { method: "DELETE", path: "/spending/budget/targets" },
   upsert_budget_rollover_setting: { method: "POST", path: "/spending/budget/rollovers" },
@@ -424,6 +424,7 @@ export const COMMANDS: CommandMap = {
   get_agent_access_status: { method: "GET", path: "/agent-access/status" },
   list_agent_access_tokens: { method: "GET", path: "/agent-access/tokens" },
   create_agent_access_token: { method: "POST", path: "/agent-access/tokens" },
+  update_agent_access_token_scopes: { method: "PATCH", path: "/agent-access/tokens" },
   delete_agent_access_token: { method: "DELETE", path: "/agent-access/tokens" },
   list_agent_audit_log: { method: "GET", path: "/agent-access/audit" },
   purge_agent_audit_log: { method: "POST", path: "/agent-access/audit/purge" },
@@ -473,6 +474,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
   };
 
   switch (command) {
+    case "cloud_backup_action":
+    case "cloud_backup_capture": {
+      body = JSON.stringify(payload);
+      break;
+    }
     case "update_account": {
       const data = payload as { accountUpdate: { id: string } & Record<string, unknown> };
       url += `/${data.accountUpdate.id}`;
@@ -870,6 +876,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(activity);
       break;
     }
+    case "review_activity_split_effects": {
+      const { activities } = payload as { activities: Record<string, unknown>[] };
+      body = JSON.stringify(activities);
+      break;
+    }
     case "update_activity": {
       const { activity } = payload as { activity: Record<string, unknown> };
       body = JSON.stringify(activity);
@@ -895,6 +906,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(request);
       break;
     }
+    case "review_internal_transfer_pair_split_effects":
     case "save_internal_transfer_pair": {
       const { request } = payload as { request: Record<string, unknown> };
       body = JSON.stringify(request);
@@ -1281,7 +1293,8 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "migrate_legacy_classifications":
       break;
     // Spending budget commands
-    case "get_budget": {
+    case "get_budget":
+    case "get_budget_readonly": {
       const { periodKey } = (payload ?? {}) as { periodKey?: string };
       addPeriodKey(periodKey);
       break;
@@ -1372,6 +1385,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     // Spending settings
+    case "get_spending_context":
     case "get_spending_settings":
       break;
     case "update_spending_settings": {
@@ -1820,7 +1834,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "get_broker_sync_states":
     case "get_broker_ingest_states":
     // Device Sync / Enrollment (falls through)
-    // eslint-disable-next-line no-fallthrough
+    // oxlint-disable-next-line no-fallthrough
     case "get_device_sync_state":
     case "enable_device_sync":
     case "clear_device_sync_data":
@@ -2148,6 +2162,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify({ name, expiresAt, scopes });
       break;
     }
+    case "update_agent_access_token_scopes": {
+      const { id, scopes } = payload as { id: string; scopes: string[] };
+      url += `/${encodeURIComponent(id)}`;
+      body = JSON.stringify({ scopes });
+      break;
+    }
     case "delete_agent_access_token": {
       const { id } = payload as { id: string };
       url += `/${encodeURIComponent(id)}`;
@@ -2194,7 +2214,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     headers,
     body,
     credentials: "same-origin",
-    signal: AbortSignal.timeout(INVOKE_TIMEOUT_OVERRIDES_MS[command] ?? DEFAULT_INVOKE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(invokeTimeoutMs(command)),
   });
 
   // 401 = app auth failure (JWT expired/invalid). Cloud auth failures return 403.

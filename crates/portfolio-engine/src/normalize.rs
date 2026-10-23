@@ -448,10 +448,7 @@ fn asset_facts(id: &AssetId, asset: &RawAsset, diagnostics: &mut Vec<Diagnostic>
         .instrument_type
         .as_deref()
         .map(|s| s.trim().to_ascii_uppercase());
-    let alternative = matches!(
-        kind.as_str(),
-        "PROPERTY" | "VEHICLE" | "COLLECTIBLE" | "PRECIOUS_METAL"
-    );
+    let alternative = asset.alternative;
     let is_option = instrument.as_deref() == Some("OPTION");
     let equity_like =
         kind == "INVESTMENT" && matches!(instrument.as_deref(), None | Some("EQUITY"));
@@ -601,7 +598,6 @@ fn canonical_activity(
             .map(|g| g.trim().to_string())
             .filter(|g| !g.is_empty()),
         external_transfer: raw.external_transfer,
-        fx_conversion: raw.fx_conversion,
         is_security_transfer,
         source_system: raw
             .source_system
@@ -677,6 +673,8 @@ fn canonical_subtype(
         "OPTION_EXPIRY" => Some(Subtype::OptionExpiry),
         "POSITION_OPEN" => Some(Subtype::PositionOpen),
         "POSITION_CLOSE" => Some(Subtype::PositionClose),
+        "RETURN_OF_CAPITAL" => Some(Subtype::ReturnOfCapital),
+        "NOTIONAL_DISTRIBUTION" => Some(Subtype::NotionalDistribution),
         _ => None,
     };
     if shared.is_none() {
@@ -791,35 +789,16 @@ fn build_pair(group: &str, legs: &[&Activity]) -> Result<TransferPair, String> {
     })
 }
 
-/// A same-account cash FX conversion whose legs both carry the import
-/// linker's record of it (internal flow, `implied_from_import`, matching
-/// currencies and amounts). Structural pairing alone is deliberately not
-/// enough to make a conversion contribution-neutral.
+/// A same-account cash FX conversion whose legs are both explicitly internal
+/// (`flow.is_external: false`), as the pair form, the transfer link and the
+/// import linker record it, whatever the legs' source. A structurally valid
+/// pair without that mark keeps the legacy behaviour.
 fn is_recorded_fx_conversion(transfer_in: &Activity, transfer_out: &Activity) -> bool {
-    if transfer_in.account != transfer_out.account
-        || transfer_in.is_security_transfer
-        || transfer_out.is_security_transfer
-    {
-        return false;
-    }
-    let (Some(source_amount), Some(destination_amount)) = (transfer_out.amount, transfer_in.amount)
-    else {
-        return false;
-    };
-    [transfer_in, transfer_out].iter().all(|leg| {
-        leg.external_transfer == Some(false)
-            && leg.fx_conversion.as_ref().is_some_and(|fx| {
-                fx.rate_source == "implied_from_import"
-                    && fx
-                        .source_currency
-                        .eq_ignore_ascii_case(transfer_out.currency.as_str())
-                    && fx
-                        .destination_currency
-                        .eq_ignore_ascii_case(transfer_in.currency.as_str())
-                    && fx.source_amount.map(|a| a.abs()) == Some(source_amount)
-                    && fx.destination_amount.map(|a| a.abs()) == Some(destination_amount)
-            })
-    })
+    transfer_in.account == transfer_out.account
+        && !transfer_in.is_security_transfer
+        && !transfer_out.is_security_transfer
+        && transfer_in.external_transfer == Some(false)
+        && transfer_out.external_transfer == Some(false)
 }
 
 #[cfg(test)]
@@ -890,7 +869,6 @@ mod tests {
             fx_rate: None,
             source_group_id: None,
             external_transfer: None,
-            fx_conversion: None,
             source_system: None,
             is_user_modified: false,
             created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
@@ -930,7 +908,19 @@ mod tests {
             CostBasisMethod::Wac
         );
 
-        raw.accounts[1].cost_basis_method = Some("LIFO".into());
+        for (code, method) in [
+            ("lifo", CostBasisMethod::Lifo),
+            ("HIFO", CostBasisMethod::Hifo),
+        ] {
+            raw.accounts[1].cost_basis_method = Some(code.into());
+            let normalized = normalize(raw.clone()).unwrap();
+            assert_eq!(
+                normalized.facts.accounts[&AccountId::new("a2")].cost_basis_method,
+                method
+            );
+        }
+
+        raw.accounts[1].cost_basis_method = Some("ACB".into());
         let refused = normalize(raw).unwrap_err();
         assert!(
             matches!(&refused, EngineError::InvalidAccount { account, .. } if account == "a2"),

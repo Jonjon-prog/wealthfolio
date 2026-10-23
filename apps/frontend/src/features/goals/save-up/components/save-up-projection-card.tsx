@@ -33,7 +33,7 @@ function ProjectionTooltip({
   annualReturn,
 }: {
   active?: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   payload?: any[];
   currency: string;
   isHidden: boolean;
@@ -156,7 +156,7 @@ function ProjectionChart({
         </defs>
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: "0.6875rem" }}
           tickFormatter={formatDateLabel}
           interval={Math.max(1, Math.floor(data.length / 7))}
           axisLine={false}
@@ -228,7 +228,7 @@ function ProjectionChart({
                     x={x}
                     y={y}
                     textAnchor="start"
-                    fontSize={11}
+                    fontSize="0.6875rem"
                     fontWeight={600}
                     fill="var(--foreground)"
                   >
@@ -246,7 +246,7 @@ function ProjectionChart({
               label={{
                 value: fmtCompact(finalTarget),
                 position: "right",
-                fontSize: 11,
+                fontSize: "0.6875rem",
                 fontWeight: 600,
                 fill: "var(--muted-foreground)",
                 dx: 6,
@@ -261,7 +261,7 @@ function ProjectionChart({
               label={{
                 value: fmtCompact(finalProjected),
                 position: "right",
-                fontSize: 11,
+                fontSize: "0.6875rem",
                 fontWeight: 700,
                 fill: "var(--foreground)",
                 dx: 6,
@@ -291,7 +291,7 @@ export function SaveUpProjectionCard({
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
         <div>
-          <div className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-[0.15em]">
+          <div className="text-muted-foreground mb-1 text-xs font-medium tracking-[0.15em] uppercase">
             {t("goals:projection.kicker")}
           </div>
           <CardTitle className="text-md leading-none tracking-tight">

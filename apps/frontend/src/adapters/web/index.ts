@@ -5,7 +5,7 @@ import type { RunEnv } from "../types";
 import { RunEnvs } from "../types";
 
 // Platform constants
-export { isDesktop, isWeb, logger } from "./core";
+export { isTauri, isWeb, logger } from "./core";
 
 // Re-export types and constants from shared types
 export { RunEnvs } from "../types";
@@ -119,6 +119,8 @@ export {
   saveActivities,
   searchActivities,
   updateActivity,
+  reviewActivitiesSplitEffects,
+  reviewInternalTransferPairSplitEffects,
 } from "../shared/activities";
 export { parseCsv } from "./activities";
 
@@ -417,6 +419,7 @@ export {
   listAgentAuditLog,
   purgeAgentAuditLog,
   deleteAgentAccessToken,
+  updateAgentAccessTokenScopes,
   setMcpAuditEnabled,
   setMcpEnabled,
   setMcpAutoStart,
@@ -430,6 +433,7 @@ export { streamAiChat } from "./ai-streaming";
 // Event Listeners (web-specific SSE implementation)
 export {
   listenAssetClassificationsChanged,
+  listenBackButton,
   listenBrokerSyncComplete,
   listenBrokerSyncError,
   listenBrokerSyncStart,
@@ -542,3 +546,13 @@ export {
   syncHashPairingCode,
   syncHmacSha256,
 } from "./crypto";
+
+export {
+  cloudBackupAction,
+  captureCloudBackup,
+  type CloudBackupStatus,
+  type CloudBackupCaptureStatus,
+  type CloudBackupPoint,
+  type CloudBackupOperation,
+} from "../shared/cloud-backups";
+export { downloadCloudBackup, previewCloudBackupRestore } from "./cloud-backups";

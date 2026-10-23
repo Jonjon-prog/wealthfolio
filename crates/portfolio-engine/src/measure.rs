@@ -16,7 +16,7 @@ use rust_decimal_macros::dec;
 use crate::arith;
 use crate::error::EngineError;
 use crate::model::*;
-use crate::value::{aggregate_scope, Window};
+use crate::value::{aggregate_scope, has_started, Window};
 
 const DAYS_PER_YEAR: Decimal = dec!(365.25);
 const MIN_ANNUALIZATION_DAYS: i64 = 30;
@@ -28,9 +28,22 @@ const RESIDUAL_TOLERANCE_RATE: Decimal = dec!(0.002);
 /// stored. Measuring reads no raw facts and resolves no rates.
 pub struct MeasureInputs<'a> {
     pub effects: Effects,
+    /// Prepared daily cash FX by account. None means preparation was skipped
+    /// for Dashboard; Some with empty daily entries means known zero FX.
+    /// Attribution reads require an entry for each transaction account used.
+    pub cash_fx: Option<BTreeMap<AccountId, Vec<CashFxEffect>>>,
     pub series: &'a BTreeMap<AccountId, ValuationSeries>,
     pub lots: &'a [LotRecord],
     pub disposals: &'a [LotDisposal],
+}
+
+/// Revaluation of opening cash exposure, priced before measurement. These
+/// transient inputs are independent of investment and conversion execution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CashFxEffect {
+    pub date: NaiveDate,
+    /// None means exposure or its valuation rate could not be determined.
+    pub amount: Option<Decimal>,
 }
 
 impl MeasureInputs<'_> {
@@ -66,12 +79,6 @@ impl MeasureInputs<'_> {
             .account(account)
             .map(|a| a.tracking)
             .unwrap_or(TrackingMode::Transactions)
-    }
-
-    fn is_cash_account(&self, account: &AccountId) -> bool {
-        self.effects
-            .account(account)
-            .is_some_and(|a| a.kind == AccountKind::Cash)
     }
 }
 
@@ -204,6 +211,42 @@ fn check_not_archived(inputs: &MeasureInputs<'_>, scope: &[AccountId]) -> Result
     }
 }
 
+fn check_cash_fx_prepared(
+    inputs: &MeasureInputs<'_>,
+    scope: &[AccountId],
+    window: Window,
+    profile: MeasureProfile,
+) -> Result<(), EngineError> {
+    if profile == MeasureProfile::Dashboard {
+        return Ok(());
+    }
+    for account in scope {
+        if inputs.tracking(account) == TrackingMode::Holdings {
+            continue;
+        }
+        let points = inputs.series.get(account).map_or(0, |series| {
+            series
+                .days
+                .iter()
+                .filter(|day| window.contains(day.date))
+                .take(2)
+                .count()
+        });
+        if points == 2
+            && inputs
+                .cash_fx
+                .as_ref()
+                .and_then(|fx| fx.get(account))
+                .is_none()
+        {
+            return Err(EngineError::CashFxNotPrepared {
+                account: account.as_str().to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Performance of one account (legacy `calculate_account_performance`).
 /// `include_series` adds the daily return series (history responses only).
 pub fn measure_account(
@@ -215,6 +258,7 @@ pub fn measure_account(
 ) -> Result<PerformanceResult, EngineError> {
     check_window(window)?;
     check_not_archived(inputs, std::slice::from_ref(account))?;
+    check_cash_fx_prepared(inputs, std::slice::from_ref(account), window, profile)?;
     let history = inputs.history(account, window);
     if history.len() < 2 {
         return Ok(empty_response(
@@ -232,7 +276,6 @@ pub fn measure_account(
         window.start,
         include_series,
         profile,
-        inputs.is_cash_account(account),
         inputs.account_is_base(account),
         inputs.base(),
     );
@@ -275,6 +318,15 @@ pub fn measure_scope(
             QualityNote::NoAccountsSelected,
         ));
     }
+    // An account that has not started holds and moves nothing: it takes no
+    // part, in the scope's mix of tracking modes either (P-IDLE).
+    let started: Vec<AccountId> = scope
+        .iter()
+        .filter(|a| has_started(&inputs.effects, a))
+        .cloned()
+        .collect();
+    let scope = started.as_slice();
+    check_cash_fx_prepared(inputs, scope, window, profile)?;
     let has_holdings = scope
         .iter()
         .any(|a| inputs.tracking(a) == TrackingMode::Holdings);
@@ -316,14 +368,12 @@ pub fn measure_scope(
         ));
     }
 
-    let all_cash = scope.iter().all(|a| inputs.is_cash_account(a));
     let mut result = performance_core(
         &history,
         has_holdings,
         window.start,
         include_series,
         profile,
-        all_cash,
         true,
         base,
     );
@@ -341,17 +391,12 @@ pub fn measure_scope(
         Baseline::PeriodStart
     };
     let unrealized = scoped_unrealized_effects(inputs, &result, scope, baseline);
-    let transfers = transfer_pair_effects(inputs, &result, scope, baseline);
     let mut seed = Seed::default();
     if unrealized.complete {
         seed.include_base_market_movement = false;
         seed.effects.extend(unrealized.effects);
     }
     seed.warnings.extend(unrealized.warnings);
-    if transfers.complete {
-        seed.effects.extend(transfers.effects);
-    }
-    seed.warnings.extend(transfers.warnings);
     finalize_attribution(inputs, &mut result, scope, &history, baseline, seed);
     Ok(result)
 }
@@ -359,14 +404,12 @@ pub fn measure_scope(
 // ------------------------------------------------------------ core math
 
 /// Legacy `compute_account_performance_with_flow_basis` (base currency).
-#[allow(clippy::too_many_arguments)]
 fn performance_core(
     history: &[DailyValuation],
     holdings: bool,
     start_opt: Option<NaiveDate>,
     include_series: bool,
     profile: MeasureProfile,
-    cash_fx_attribution: bool,
     account_is_base: bool,
     currency: &Currency,
 ) -> PerformanceResult {
@@ -587,10 +630,8 @@ fn performance_core(
         } else {
             let (contributions, distributions) =
                 flows_for_attribution(&flows, start_point, baseline);
-            let (unrealized_change, investment_fx) =
+            let (unrealized_change, fx_effect) =
                 unrealized_components(start_point, end_point, baseline, account_is_base);
-            let fx_effect = (investment_fx + cash_only_fx_effect(history, cash_fx_attribution))
-                .round_dp(STORED_PRECISION);
             (contributions, distributions, unrealized_change, fx_effect)
         };
     let delta_total_value = total_value_delta(start_point, end_point, baseline);
@@ -618,7 +659,7 @@ fn performance_core(
         });
     }
     let mut data_quality = data_quality(warnings, reasons, false);
-    if !holdings {
+    if !holdings && profile != MeasureProfile::Dashboard {
         let unreconciled = unreconciled_delta(delta_total_value, &attribution);
         push_residual_diagnostic(
             &mut data_quality,
@@ -1233,30 +1274,6 @@ fn unrealized_components(
     )
 }
 
-fn cash_only_fx_effect(history: &[DailyValuation], enabled: bool) -> Decimal {
-    let cash_only = history.iter().all(|d| {
-        d.investment_market_value.is_zero()
-            && d.investment_market_value_base.is_zero()
-            && d.cost_basis.is_zero()
-            && d.cost_basis_base.is_zero()
-    });
-    if !enabled || !cash_only {
-        return Decimal::ZERO;
-    }
-    history
-        .windows(2)
-        .map(|pair| {
-            let (prev, curr) = (&pair[0], &pair[1]);
-            let delta_base = curr.cash_balance_base - prev.cash_balance_base;
-            arith::mul(curr.cash_balance - prev.cash_balance, curr.fx_rate_to_base)
-                .map_or(Decimal::ZERO, |delta_at_current_fx| {
-                    (delta_base - delta_at_current_fx).round_dp(STORED_PRECISION)
-                })
-        })
-        .sum::<Decimal>()
-        .round_dp(STORED_PRECISION)
-}
-
 fn holdings_basis_is_complete(point: &DailyValuation) -> bool {
     matches!(
         point.basis_status,
@@ -1543,6 +1560,16 @@ fn finalize_attribution(
     effects.extend(seed.effects);
     let mut warnings = seed.warnings;
 
+    // Cash revaluation survives a scoped investment seed replacing the base
+    // market movement. Conversions' execution differences are separate from
+    // holding FX and count once, including same-account pairs on direct reads.
+    let cash_fx = cash_fx_attribution(inputs, result, scope);
+    effects.extend(cash_fx.effects);
+    warnings.extend(cash_fx.warnings);
+    let transfers = transfer_pair_effects(inputs, result, scope, baseline);
+    effects.extend(transfers.effects);
+    warnings.extend(transfers.warnings);
+
     let activity = activity_effects(inputs, result, scope, baseline);
     effects.extend(activity.effects);
     warnings.extend(activity.warnings);
@@ -1564,6 +1591,51 @@ fn finalize_attribution(
         recompute_residual(result, history, baseline);
     }
     refresh_summary(result);
+}
+
+fn cash_fx_attribution(
+    inputs: &MeasureInputs<'_>,
+    result: &PerformanceResult,
+    scope: &[AccountId],
+) -> EffectSet {
+    let (Some(start), Some(end)) = (result.period_start, result.period_end) else {
+        return EffectSet::default();
+    };
+    let mut set = EffectSet::default();
+    let mut total = Decimal::ZERO;
+    // Keep known daily FX when another day is unavailable. The warning marks
+    // the result Partial; completeness is not used to substitute a fallback
+    // here, unlike the scoped investment seed.
+    for account in scope {
+        let mut warned = false;
+        for day in inputs
+            .cash_fx
+            .as_ref()
+            .and_then(|fx| fx.get(account))
+            .into_iter()
+            .flatten()
+            .filter(|day| day.date > start && day.date <= end)
+        {
+            match day.amount {
+                Some(amount) => total += amount,
+                None if !warned => {
+                    set.warnings.push(QualityNote::CashFxUnavailable {
+                        account: account.as_str().to_string(),
+                        date: day.date,
+                    });
+                    warned = true;
+                }
+                None => {}
+            }
+        }
+    }
+    if !total.is_zero() {
+        set.effects.push(Effect {
+            fx_effect: total,
+            ..Effect::default()
+        });
+    }
+    set
 }
 
 /// With an UNAVAILABLE period endpoint the P&L has no value to break down:
@@ -1731,8 +1803,11 @@ fn activity_effects(
     set
 }
 
-/// Disposals of the period whose disposing event is a BUY/SELL dated inside
-/// the period (legacy filters lot disposals by trade activity ids).
+/// Disposals of the period whose disposing event realizes (a trade, an
+/// option's expiry, units a transfer delivered into a short, or a return of
+/// capital, rules R7.4) and is dated inside the period. The previous
+/// calculator kept trades only, which left out the P&L of an expiry or a
+/// transfer cover.
 fn period_disposals<'a>(
     inputs: &'a MeasureInputs<'a>,
     result: &PerformanceResult,
@@ -1742,23 +1817,32 @@ fn period_disposals<'a>(
     let Some(period) = Period::of(result, baseline) else {
         return Vec::new();
     };
-    let trade_ids: HashSet<&str> = inputs
+    let realizing: HashSet<&str> = inputs
         .effects
         .events
         .iter()
-        .filter(|e| e.trade && scope.contains(&e.account) && period.contains(e.date))
+        .filter(|e| e.realizes && scope.contains(&e.account) && period.contains(e.date))
         .map(|e| e.id.as_str())
         .collect();
     inputs
         .disposals
         .iter()
         .filter(|d| scope.contains(&d.account) && period.contains(d.date))
-        .filter(|d| trade_ids.contains(d.event.as_str()))
+        .filter(|d| realizing.contains(d.event.as_str()))
         .collect()
 }
 
 fn realized_effects(inputs: &MeasureInputs<'_>, disposals: &[&LotDisposal]) -> EffectSet {
     let base = inputs.base().as_str();
+    // Adjustments can legitimately exhaust foreign book cost while local
+    // cost remains. The lot's acquisition FX distinguishes that known zero
+    // from a disposal whose original basis never converted.
+    let known_acquisition: HashSet<_> = inputs
+        .lots
+        .iter()
+        .filter(|lot| lot.fx_rate_to_base > Decimal::ZERO)
+        .map(|lot| (&lot.account, lot.id.as_str()))
+        .collect();
     let mut set = EffectSet::default();
     for disposal in disposals {
         let foreign = !disposal.currency.as_str().eq_ignore_ascii_case(base);
@@ -1774,7 +1858,9 @@ fn realized_effects(inputs: &MeasureInputs<'_>, disposals: &[&LotDisposal]) -> E
                 && disposal.cost_basis_base.is_sign_positive());
         if foreign
             && !disposal.cost_basis.is_zero()
-            && (disposal.cost_basis_base.is_zero() || sign_mismatch)
+            && ((disposal.cost_basis_base.is_zero()
+                && !known_acquisition.contains(&(&disposal.account, disposal.lot_id.as_str())))
+                || (!disposal.cost_basis_base.is_zero() && sign_mismatch))
         {
             set.warnings
                 .push(QualityNote::RealizedSkippedAcquisitionFx {
@@ -1844,6 +1930,42 @@ fn trade_charge_effects(
         .map(|lot| ((&lot.account, lot.id.as_str()), *lot))
         .collect();
 
+    // A lot a transfer moved within the scope keeps the purchase charges it
+    // was bought with (its original date and allocation): they were counted
+    // where they were paid, so the lot gives them back like the lot its
+    // purchase opened (rules R3.5).
+    let moved_pairs: Vec<&PairEffect> = inputs
+        .effects
+        .pairs
+        .iter()
+        .filter(|pair| {
+            pair.security && scope.contains(&pair.in_account) && scope.contains(&pair.out_account)
+        })
+        .collect();
+    let moved_in: HashSet<&str> = moved_pairs
+        .iter()
+        .map(|pair| pair.transfer_in.as_str())
+        .collect();
+    let charged = |lot: &LotRecord| {
+        lot.open_activity.as_ref().is_some_and(|activity| {
+            charge_by_activity.contains_key(activity.as_str())
+                || moved_in.contains(activity.as_str())
+        }) && period.contains(lot.open_date)
+    };
+    // The share of a lot's charges `units` of it carry.
+    let charge_share = |lot: &LotRecord, units: Decimal, cost_base: Decimal| {
+        let charge = lot.fee_allocated_base + lot.tax_allocated_base;
+        let original_quantity = lot.original_quantity.abs();
+        if original_quantity > Decimal::ZERO {
+            arith::proportional(charge, units.abs(), original_quantity).unwrap_or(Decimal::ZERO)
+        } else if lot.original_cost_basis_base.abs() > Decimal::ZERO {
+            arith::proportional(charge, cost_base.abs(), lot.original_cost_basis_base.abs())
+                .unwrap_or(Decimal::ZERO)
+        } else {
+            Decimal::ZERO
+        }
+    };
+
     let mut period_open_charge_by_activity: HashMap<&str, Decimal> = HashMap::new();
     let mut saw_period_open_lots = false;
     let mut remaining_open_from_lots = Decimal::ZERO;
@@ -1851,19 +1973,23 @@ fn trade_charge_effects(
         let Some(open_activity) = lot.open_activity.as_ref() else {
             continue;
         };
-        if !charge_by_activity.contains_key(open_activity.as_str())
-            || !period.contains(lot.open_date)
-        {
+        if !charged(lot) {
             continue;
         }
-        saw_period_open_lots = true;
+        let moved = moved_in.contains(open_activity.as_str());
+        if !moved {
+            saw_period_open_lots = true;
+        }
         let full_charge = lot.fee_allocated_base + lot.tax_allocated_base;
         if full_charge.is_zero() {
             continue;
         }
-        *period_open_charge_by_activity
-            .entry(open_activity.as_str())
-            .or_default() += full_charge;
+        // A moved lot's charges were counted at the lot its purchase opened.
+        if !moved {
+            *period_open_charge_by_activity
+                .entry(open_activity.as_str())
+                .or_default() += full_charge;
+        }
         if lot.remaining_quantity.is_zero() {
             continue;
         }
@@ -1896,33 +2022,39 @@ fn trade_charge_effects(
         let Some(lot) = lot_by_id.get(&(&disposal.account, disposal.lot_id.as_str())) else {
             continue;
         };
-        if !period.contains(lot.open_date) {
-            continue;
-        }
-        let Some(open_activity) = lot.open_activity.as_ref() else {
-            continue;
-        };
-        if !charge_by_activity.contains_key(open_activity.as_str()) {
-            continue;
-        }
-        let charge_allocated = lot.fee_allocated_base + lot.tax_allocated_base;
-        if charge_allocated.is_zero() {
-            continue;
-        }
-        let original_quantity = lot.original_quantity.abs();
-        let disposed_quantity = disposal.quantity.abs();
-        if original_quantity > Decimal::ZERO {
+        if charged(lot) {
             acquisition_charges_disposed +=
-                arith::proportional(charge_allocated, disposed_quantity, original_quantity)
-                    .unwrap_or(Decimal::ZERO);
-        } else if lot.original_cost_basis_base.abs() > Decimal::ZERO {
-            acquisition_charges_disposed += arith::proportional(
-                charge_allocated,
-                disposal.cost_basis_base.abs(),
-                lot.original_cost_basis_base.abs(),
-            )
-            .unwrap_or(Decimal::ZERO);
+                charge_share(lot, disposal.quantity, disposal.cost_basis_base);
         }
+    }
+    // Charges a moved lot carried into a cover leave no lot behind: they are
+    // what the transfer out took from charged lots less what its lots opened
+    // with on arrival.
+    for pair in &moved_pairs {
+        let sent: Decimal = inputs
+            .disposals
+            .iter()
+            .filter(|d| {
+                d.account == pair.out_account
+                    && d.event.as_str() == pair.transfer_out.as_str()
+                    && period.contains(d.date)
+            })
+            .filter_map(|d| {
+                let lot = lot_by_id.get(&(&d.account, d.lot_id.as_str()))?;
+                charged(lot).then(|| charge_share(lot, d.quantity, d.cost_basis_base))
+            })
+            .sum();
+        let arrived: Decimal = lots
+            .iter()
+            .filter(|lot| {
+                lot.open_activity
+                    .as_ref()
+                    .is_some_and(|activity| activity.as_str() == pair.transfer_in.as_str())
+                    && period.contains(lot.open_date)
+            })
+            .map(|lot| lot.fee_allocated_base + lot.tax_allocated_base)
+            .sum();
+        acquisition_charges_disposed += (sent - arrived).max(Decimal::ZERO);
     }
 
     // A WAC account's purchases pool (rules R7.2): a pooled purchase has no
@@ -2138,6 +2270,18 @@ fn transfer_pair_effects(
         if !scope.contains(&pair.in_account) || !scope.contains(&pair.out_account) {
             continue;
         }
+        // Holdings attribution already derives its entire P&L from snapshots
+        // and inferred flows; transaction legs must not be added to it.
+        if inputs.tracking(&pair.in_account) == TrackingMode::Holdings
+            || inputs.tracking(&pair.out_account) == TrackingMode::Holdings
+        {
+            continue;
+        }
+        // Unmarked same-account pairs already put their execution difference
+        // into net contribution (and fallback flows), so it is not P&L too.
+        if pair.in_account == pair.out_account && !pair.contribution_neutral {
+            continue;
+        }
         let (Some(transfer_in), Some(transfer_out)) = (
             by_source.get(pair.transfer_in.as_str()),
             by_source.get(pair.transfer_out.as_str()),
@@ -2160,6 +2304,12 @@ fn transfer_pair_effects(
             .as_str()
             .eq_ignore_ascii_case(transfer_out.currency.as_str())
         {
+            continue;
+        }
+        // A cut pair leaves principal in transit under the valuation rules.
+        // It is an unreconciled delta, not an execution FX gain or loss.
+        // Only a window containing both legs can attribute their difference.
+        if !period.contains(transfer_in.date) || !period.contains(transfer_out.date) {
             continue;
         }
         let priced = |leg: &EventEffect| leg.flow.map_or(Decimal::ZERO, |flow| flow.amount);
@@ -2339,7 +2489,6 @@ fn mixed_scope_performance(
                 window.start,
                 false,
                 component_profile,
-                inputs.is_cash_account(&component.account),
                 inputs.account_is_base(&component.account),
                 base,
             );
@@ -2854,7 +3003,6 @@ mod tests {
                 None,
                 false,
                 MeasureProfile::Full,
-                false,
                 true,
                 &currency,
             )
@@ -2930,7 +3078,6 @@ mod tests {
             None,
             false,
             MeasureProfile::Full,
-            false,
             true,
             &currency,
         )

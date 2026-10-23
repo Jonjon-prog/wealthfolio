@@ -21,6 +21,9 @@
     "nameRequired": "Name is required",
     "namePlaceholder": "Category name",
     "icon": "Icon",
+    "parent": "Parent category",
+    "topLevel": "None (top level)",
+    "parentLockedByBudget": "Remove this category's budget targets before moving it. Budgets only apply to top-level categories.",
     "color": "Color",
     "hex": "Hex",
     "create": "Create Category",
@@ -49,6 +52,13 @@
     "searchCategories": "Search categories...",
     "noCategoriesFound": "No categories found.",
     "clearCategory": "Clear category"
+  },
+  "activityTypes": {
+    "balanceTransferCashAdvance": "Balance Transfer / Cash Advance",
+    "charge": "Charge",
+    "interestCharge": "Interest Charge",
+    "refundCredit": "Refund / Credit",
+    "reimbursementRefund": "Reimbursement / refund"
   },
   "rules": {
     "editTitle": "Edit Rule",
@@ -98,6 +108,7 @@
     "selectCategory": "Select category",
     "priorityLabel": "Priority",
     "priorityHint": "Higher priority rules are checked first (0-100).",
+    "priorityInvalid": "Priority must be a whole number of 0 or more",
     "updateRule": "Update Rule",
     "createRule": "Create Rule",
     "scopeLabel": "Applies To",
@@ -409,6 +420,7 @@
     "weekOf": "Week of {{date}}"
   },
   "split": {
+    "staleTaxonomy": "These splits use a previous category type. They no longer apply to this transaction.",
     "title": "Split Transaction",
     "transactionFallback": "Transaction",
     "remainingOf": "Remaining of {{amount}}",
@@ -417,7 +429,11 @@
     "removeLine": "Remove split line {{number}}",
     "addLine": "Add line",
     "distributeEvenly": "Distribute evenly",
-    "clearSplit": "Clear split"
+    "clearSplit": "Clear split",
+    "replaceWithCategory": "Replace splits with one category",
+    "replaceDescription_one": "Replace {{count}} split allocation with {{category}}? This removes the existing splits.",
+    "replaceDescription_other": "Replace {{count}} split allocations with {{category}}? This removes the existing splits.",
+    "categoryProtected": "Split allocations are protected. Edit or explicitly replace them in the split editor."
   },
   "hierarchy": {
     "noCategorizedSpending": "No categorized spending in this period.",
@@ -712,12 +728,7 @@
     "noIncome": "No income in selected accounts for this period.",
     "spent": "Spent",
     "saved": "Saved",
-    "incomeSaving": "Income & saving",
-    "nonSpendingCashflow": "Non-spending cashflow for {{period}}.",
-    "moneyIn": "Money in",
-    "incomeSources": "Income sources",
     "setAside": "Set aside",
-    "savingDestinations": "Saving destinations",
     "sortSpent": "spent",
     "sortChange": "change",
     "sortName": "name",
@@ -736,6 +747,48 @@
     "openTransactions": "Open transactions →",
     "moreCount_one": "+{{count}} more",
     "moreCount_other": "+{{count}} more"
+  },
+  "moneyFlow": {
+    "title": "Money flow",
+    "subtitle": "Where your money came from and where it went for {{period}}.",
+    "focusSubtitle": "Every category for {{period}}.",
+    "focusSubcategoriesSubtitle": "Every subcategory for {{period}}.",
+    "back": "All flows",
+    "backTo": "Back to {{name}}",
+    "chartLabel": "Money flow chart. Use the arrow keys to move between flows.",
+    "nodeAria": "{{name}}, {{amount}}",
+    "nodeActionAria": "{{name}}, {{amount}}. {{action}}",
+    "shareOfIncome": "{{pct}} of income",
+    "shareOfTotal": "{{pct}} of total",
+    "clickTransactions": "Click to see transactions",
+    "clickCategories": "Click to see every category",
+    "clickSubcategories": "Click to see subcategories",
+    "action": {
+      "categories": "Show every category",
+      "subcategories": "Show subcategories",
+      "transactions": "View transactions"
+    },
+    "node": {
+      "total": "Total",
+      "shortfall": "Shortfall",
+      "refunds": "Net refunds",
+      "surplus": "Left over",
+      "uncategorizedIncome": "Uncategorized income",
+      "netSpending": "Net spending"
+    },
+    "hint": {
+      "total": "Money in, plus net refunds and any shortfall. It always equals money out.",
+      "totalOut": "Everything spent and set aside, before any refunds.",
+      "shortfall": "Spending and saving beyond what came in.",
+      "refunds": "Categories where refunds were larger than spending.",
+      "saved": "Moved to savings and investment accounts.",
+      "surplus": "Came in but wasn't spent or set aside.",
+      "uncategorized": "Spending that doesn't have a category yet.",
+      "net": "What this category cost after refunds.",
+      "direct": "Assigned to the category itself, not to a subcategory."
+    },
+    "groupRefunds": "Before subtracting {{amount}} in net refunds.",
+    "categoryRefunds": "Before subtracting {{refunds}} in net refunds. Net spending: {{net}}."
   },
   "budgetChart": {
     "overBudget": "Over budget",
@@ -987,6 +1040,14 @@
     "addSource_one": "Add source ({{count}} available)",
     "addSource_other": "Add source ({{count}} available)",
     "overridesTitle_one": "Override · {{count}}",
-    "overridesTitle_other": "Overrides · {{count}}"
+    "overridesTitle_other": "Overrides · {{count}}",
+    "sourceMonth": "Source month"
+  },
+  "splitEditReview": {
+    "title": "Review split removal",
+    "hiddenCategory": "Existing category assignments are kept and may apply after the splits are removed.",
+    "confirm": "Save and remove splits",
+    "removed_one": "This edit will remove {{count}} split allocation.",
+    "removed_other": "This edit will remove {{count}} split allocations."
   }
 }

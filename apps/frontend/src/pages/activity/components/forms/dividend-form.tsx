@@ -24,7 +24,9 @@ import {
   type AccountSelectOption,
 } from "./fields";
 import { calculateIncomeFinalAmount } from "@/lib/activity-final-amount";
+import { invalidTypeError, requiredError } from "@/lib/zod-errors";
 import { assetMetadataSchema } from "./schemas";
+import { Spinner } from "@wealthfolio/ui";
 
 // Non-UI sentinel for the "cash" income mode (not a DB value; internal only).
 const INCOME_MODE_CASH = "CASH";
@@ -47,22 +49,21 @@ export const createDividendFormSchema = (t?: TFunction) =>
       existingAssetId: z.string().nullable().optional(),
       exchangeMic: z.string().nullable().optional(),
       activityDate: z.date({
-        required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+        error: requiredError(msg(t, "activity:form.err_select_date", "Please select a date.")),
       }),
       amount: z.coerce
         .number({
-          required_error: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
-          invalid_type_error: msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          error: invalidTypeError(
+            msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          ),
         })
         .min(0, {
           message: msg(t, "activity:form.err_amount_non_negative", "Amount must be non-negative."),
         }),
       tax: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_withholding_tax_number",
-            "Withholding tax must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_withholding_tax_number", "Withholding tax must be a number."),
           ),
         })
         .min(0, {
@@ -75,15 +76,15 @@ export const createDividendFormSchema = (t?: TFunction) =>
         .default(0),
       comment: z.string().optional().nullable(),
       // Advanced options
-      currency: z.string().min(1, {
-        message: msg(t, "activity:form.err_currency_required", "Currency is required."),
-      }),
+      currency: z
+        .string({ error: msg(t, "activity:form.err_currency_required", "Currency is required.") })
+        .min(1, {
+          message: msg(t, "activity:form.err_currency_required", "Currency is required."),
+        }),
       fxRate: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_fxrate_number",
-            "FX Rate must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_fxrate_number", "FX Rate must be a number."),
           ),
         })
         .positive({
@@ -97,19 +98,19 @@ export const createDividendFormSchema = (t?: TFunction) =>
       // and a top-level .positive() would reject editing them.
       unitPrice: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_fmv_number",
-            "FMV per unit must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_fmv_number", "FMV per unit must be a number."),
           ),
         })
         .optional(),
       quantity: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_received_quantity_number",
-            "Received quantity must be a number.",
+          error: invalidTypeError(
+            msg(
+              t,
+              "activity:form.err_received_quantity_number",
+              "Received quantity must be a number.",
+            ),
           ),
         })
         .optional(),
@@ -270,7 +271,7 @@ export function DividendForm({
       shouldDirty: true,
       shouldValidate: true,
     });
-    if (value === INCOME_MODE_CASH) {
+    if (value === INCOME_MODE_CASH || value === ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL) {
       setValue("quantity", undefined, { shouldDirty: true, shouldValidate: false });
       setValue("unitPrice", undefined, { shouldDirty: true, shouldValidate: false });
     }
@@ -343,6 +344,18 @@ export function DividendForm({
                   className="cursor-pointer text-sm font-normal"
                 >
                   {t("activity:form.type_in_kind")}
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value={ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL}
+                  id="dividend-type-return-of-capital"
+                />
+                <Label
+                  htmlFor="dividend-type-return-of-capital"
+                  className="cursor-pointer text-sm font-normal"
+                >
+                  {t("activity:form.type_return_of_capital")}
                 </Label>
               </div>
             </RadioGroup>
@@ -423,11 +436,11 @@ export function DividendForm({
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>
-            {isLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+            {isLoading && <Spinner className="me-2 h-4 w-4" />}
             {isEditing ? (
-              <Icons.Check className="mr-2 h-4 w-4" />
+              <Icons.Check className="me-2 h-4 w-4" />
             ) : (
-              <Icons.Plus className="mr-2 h-4 w-4" />
+              <Icons.Plus className="me-2 h-4 w-4" />
             )}
             {isEditing ? t("activity:form.button_update") : t("activity:form.button_add_dividend")}
           </Button>

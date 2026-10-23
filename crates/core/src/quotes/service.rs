@@ -10,6 +10,7 @@
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, TimeZone, Utc};
 use log::{debug, info};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -18,7 +19,10 @@ use crate::utils::time_utils;
 
 use super::client::{MarketDataClient, ProviderConfig};
 use super::constants::{DATA_SOURCE_CUSTOM_SCRAPER, DATA_SOURCE_MANUAL, MAX_SYNC_ERRORS};
-use super::import::{ImportValidationStatus, QuoteConverter, QuoteImport, QuoteValidator};
+use super::import::{
+    ImportValidationStatus, QuoteConverter, QuoteImport, QuoteImportOutcome, QuoteImportPreview,
+    QuoteImportRow, QuoteValidator,
+};
 use super::model::{LatestQuotePair, Quote, ResolvedQuote, SymbolSearchResult};
 use super::store::{ProviderSettingsStore, QuoteStore};
 use super::sync::{QuoteSyncService, QuoteSyncServiceTrait, SyncResult};
@@ -26,11 +30,13 @@ use super::sync_state::{QuoteSyncState, SymbolSyncPlan, SyncCategory, SyncMode, 
 use super::types::{quote_id, AssetId, Day, QuoteSource};
 use crate::activities::ActivityRepositoryTrait;
 use crate::assets::{
-    asset_provider_alias_symbols, canonicalize_market_identity, normalize_quote_ccy_code,
-    parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix, symbol_resolution_candidates,
-    Asset, AssetKind, AssetRepositoryTrait, AssetSpec, InstrumentType, ProviderProfile, QuoteMode,
+    asset_provider_alias_symbols, canonicalize_market_identity, custom_provider_code,
+    normalize_quote_ccy_code, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix,
+    symbol_resolution_candidates, Asset, AssetKind, AssetRepositoryTrait, AssetSpec,
+    InstrumentType, ProviderProfile, QuoteMode,
 };
 use crate::errors::{Error, Result};
+use crate::events::{DomainEvent, DomainEventSink, NoOpDomainEventSink};
 use crate::fx::currency::{get_normalization_rule, normalize_currency_code};
 use crate::portfolio::snapshot::is_quantity_significant;
 use crate::secrets::SecretStore;
@@ -289,6 +295,16 @@ fn provider_config_for_symbol_resolution(
             serde_json::to_value(overrides).expect("provider overrides serialize"),
         );
     Some(config)
+}
+
+/// Provider id for an existing asset, in the `CUSTOM:<code>` form that
+/// `provider_config_for_symbol_resolution` reads for custom scrapers.
+fn asset_resolution_provider_id(asset: &Asset) -> Option<String> {
+    let provider = asset.preferred_provider()?;
+    if provider != DATA_SOURCE_CUSTOM_SCRAPER {
+        return Some(provider);
+    }
+    Some(custom_provider_code(asset).map_or(provider, |code| format!("CUSTOM:{code}")))
 }
 
 fn resolved_provider_matches_requested(
@@ -655,11 +671,22 @@ pub trait QuoteServiceTrait: Send + Sync {
     ) -> Result<Vec<QuoteImport>>;
 
     /// Import quotes from CSV data.
+    ///
+    /// Emits one `PriceHistoryChanged` when the batch saves any quote.
     async fn import_quotes(
         &self,
         quotes: Vec<QuoteImport>,
         overwrite: bool,
     ) -> Result<Vec<QuoteImport>>;
+
+    /// Check reviewed quotes for existing assets without saving them: resolve
+    /// each asset by id (never by ticker), validate the row, and compare it
+    /// with the stored quote of its day.
+    fn preview_quote_import(&self, _rows: &[QuoteImportRow]) -> Result<Vec<QuoteImportPreview>> {
+        Err(Error::Repository(
+            "Quote import preview is not supported".into(),
+        ))
+    }
 }
 
 /// Unified quote service implementation.
@@ -690,6 +717,8 @@ where
     /// Sync service.
     #[allow(clippy::type_complexity)]
     sync_service: Arc<RwLock<Option<Arc<QuoteSyncService<Q, S, A, R>>>>>,
+    /// Domain event sink for quote imports.
+    event_sink: Arc<dyn DomainEventSink>,
 }
 
 impl<Q, S, PS, A, R> QuoteService<Q, S, PS, A, R>
@@ -773,7 +802,14 @@ where
             secret_store,
             custom_provider_repo,
             sync_service: Arc::new(RwLock::new(Some(Arc::new(sync_service)))),
+            event_sink: Arc::new(NoOpDomainEventSink),
         })
+    }
+
+    /// Sets the domain event sink for this service.
+    pub fn with_event_sink(mut self, event_sink: Arc<dyn DomainEventSink>) -> Self {
+        self.event_sink = event_sink;
+        self
     }
 
     /// Build extra providers from optional custom provider repo.
@@ -888,12 +924,13 @@ where
             .or_else(|| asset.instrument_symbol.clone())
             .unwrap_or_default();
         let display = asset_search_display_symbol(asset);
+        let provider_id = asset_resolution_provider_id(asset);
 
         SymbolSearchResult {
             symbol: display.clone(),
             canonical_symbol: asset.instrument_symbol.clone(),
             canonical_exchange_mic: asset.instrument_exchange_mic.clone(),
-            provider_id: asset.preferred_provider(),
+            provider_id: provider_id.clone(),
             provider_symbol: None,
             short_name: asset.name.clone().unwrap_or_else(|| stored_display.clone()),
             long_name: asset.name.clone().unwrap_or(stored_display),
@@ -907,7 +944,7 @@ where
             data_source: if asset.quote_mode == QuoteMode::Manual {
                 Some(DATA_SOURCE_MANUAL.to_string())
             } else {
-                asset.preferred_provider()
+                provider_id
             },
             quote_mode: Some(asset.quote_mode.as_db_str().to_string()),
             is_existing: true,
@@ -2516,9 +2553,110 @@ where
         if !to_save.is_empty() {
             let saved = self.quote_store.upsert_quotes(&to_save).await?;
             info!("Saved {} quotes", saved);
+            // One recalculation for the batch: the quote triggers mark each
+            // asset's holders for a revalue from the quote's day.
+            self.event_sink.emit(DomainEvent::PriceHistoryChanged);
         }
 
         Ok(quotes)
+    }
+
+    fn preview_quote_import(&self, rows: &[QuoteImportRow]) -> Result<Vec<QuoteImportPreview>> {
+        let asset_ids: Vec<String> = rows.iter().map(|row| row.asset_id.clone()).collect();
+        let assets: HashMap<String, Asset> = self
+            .asset_repo
+            .list_by_asset_ids(&asset_ids)?
+            .into_iter()
+            .map(|asset| (asset.id.clone(), asset))
+            .collect();
+        let today = Utc::now().date_naive();
+        let mut first_rows: HashMap<(&str, NaiveDate), usize> = HashMap::new();
+
+        let mut previews = Vec::with_capacity(rows.len());
+        for (index, row) in rows.iter().enumerate() {
+            let mut errors = Vec::new();
+            let asset = assets.get(&row.asset_id).cloned();
+            match &asset {
+                None => errors.push(format!("Asset not found: '{}'", row.asset_id)),
+                Some(asset) if asset.kind != AssetKind::Investment => errors.push(format!(
+                    "Only investment assets take quotes here; '{}' is {}",
+                    row.asset_id,
+                    asset.kind.as_db_str()
+                )),
+                Some(asset) if row.currency != asset.quote_ccy => errors.push(format!(
+                    "Currency '{}' does not match the asset's quote currency '{}'",
+                    row.currency, asset.quote_ccy
+                )),
+                Some(_) => {}
+            }
+            let date = match NaiveDate::parse_from_str(&row.date, "%Y-%m-%d") {
+                Ok(date) if date > today => {
+                    errors.push(format!("Date {} is in the future", row.date));
+                    None
+                }
+                Ok(date) => Some(date),
+                Err(_) => {
+                    errors.push(format!("Invalid date '{}': expected YYYY-MM-DD", row.date));
+                    None
+                }
+            };
+            if row.close <= rust_decimal::Decimal::ZERO {
+                errors.push("Price must be greater than 0".to_string());
+            }
+            if let Some(date) = date {
+                match first_rows.entry((row.asset_id.as_str(), date)) {
+                    Entry::Occupied(first) => errors.push(format!(
+                        "Duplicate of row {}: one quote per asset and date",
+                        first.get()
+                    )),
+                    Entry::Vacant(slot) => {
+                        slot.insert(index);
+                    }
+                }
+            }
+
+            let existing = match (&asset, date) {
+                (Some(_), Some(date)) => {
+                    let day = Day::new(date);
+                    self.quote_store
+                        .range(&AssetId::new(&row.asset_id), day, day, None)?
+                        .into_iter()
+                        .next()
+                }
+                _ => None,
+            };
+            let outcome = if !errors.is_empty() {
+                QuoteImportOutcome::Invalid
+            } else {
+                match &existing {
+                    None => QuoteImportOutcome::Create,
+                    // An equal provider price is saved as a manual quote too,
+                    // so a later refetch cannot move the reviewed day.
+                    Some(quote) if quote.close == row.close && quote.currency == row.currency => {
+                        if quote.data_source == DATA_SOURCE_MANUAL {
+                            QuoteImportOutcome::Skip
+                        } else {
+                            QuoteImportOutcome::Create
+                        }
+                    }
+                    Some(_) if row.overwrite => QuoteImportOutcome::Update,
+                    Some(quote) => {
+                        errors.push(format!(
+                            "A {} quote of {} {} is stored for this day; set overwrite to replace it",
+                            quote.data_source, quote.close, quote.currency
+                        ));
+                        QuoteImportOutcome::Conflict
+                    }
+                }
+            };
+            previews.push(QuoteImportPreview {
+                outcome,
+                asset,
+                existing,
+                errors,
+            });
+        }
+        Ok(previews)
     }
 }
 
@@ -2795,6 +2933,45 @@ mod tests {
     fn test_mic_to_yahoo_suffix_uses_market_data_registry() {
         assert_eq!(mic_to_yahoo_suffix("CXE").as_deref(), Some("XC"));
         assert_eq!(mic_to_yahoo_suffix("XETR").as_deref(), Some("DE"));
+    }
+
+    #[test]
+    fn test_asset_search_summary_uses_custom_provider_code() {
+        let asset = Asset {
+            id: "moe-fund".to_string(),
+            name: Some("Moe Fund".to_string()),
+            display_code: Some("MOE".to_string()),
+            instrument_symbol: Some("MOE".to_string()),
+            instrument_type: Some(InstrumentType::Equity),
+            quote_ccy: "USD".to_string(),
+            provider_config: Some(serde_json::json!({
+                "preferred_provider": "CUSTOM_SCRAPER",
+                "custom_provider_code": "moe"
+            })),
+            ..Default::default()
+        };
+
+        let result = QuoteService::<
+            NoopQuoteStore,
+            MockSyncStateStore,
+            MockProviderSettingsStore,
+            NoopAssetRepository,
+            NoopActivityRepository,
+        >::asset_to_quote_summary(&asset);
+
+        assert_eq!(result.provider_id.as_deref(), Some("CUSTOM:moe"));
+        assert_eq!(result.data_source.as_deref(), Some("CUSTOM:moe"));
+        assert_eq!(
+            provider_config_for_symbol_resolution(result.provider_id.as_deref(), None, None, None),
+            Some(serde_json::json!({
+                "preferred_provider": "CUSTOM_SCRAPER",
+                "custom_provider_code": "moe"
+            }))
+        );
+        assert!(resolved_provider_matches_requested(
+            "CUSTOM_SCRAPER:moe",
+            result.provider_id.as_deref()
+        ));
     }
 
     #[test]
@@ -3558,14 +3735,6 @@ mod tests {
     impl ActivityRepositoryTrait for NoopActivityRepository {
         fn get_activity(&self, _activity_id: &str) -> Result<Activity> {
             unimplemented!("unused in this test")
-        }
-
-        fn find_transfer_counterpart(
-            &self,
-            _group_id: &str,
-            _exclude_id: &str,
-        ) -> Result<Option<Activity>> {
-            Ok(None)
         }
 
         fn get_activities(&self) -> Result<Vec<Activity>> {

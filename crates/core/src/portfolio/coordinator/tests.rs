@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock};
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use serde::Deserialize;
 
 use super::*;
 use crate::accounts::AccountRepositoryTrait;
@@ -624,8 +625,27 @@ fn kernel_golden(id: &str) -> Option<serde_yaml::Value> {
         .join("../portfolio-engine/tests/fixtures/goldens/kernel")
         .join(format!("{id}.snap"));
     let text = std::fs::read_to_string(path).ok()?;
-    let body = text.splitn(3, "---\n").nth(2)?;
-    serde_yaml::from_str(body).ok()
+    parse_kernel_golden(&text)
+}
+
+fn parse_kernel_golden(text: &str) -> Option<serde_yaml::Value> {
+    // Insta stores YAML metadata in the first document and the snapshot in the second.
+    let snapshot = serde_yaml::Deserializer::from_str(text).nth(1)?;
+    serde_yaml::Value::deserialize(snapshot).ok()
+}
+
+#[test]
+fn kernel_golden_parses_lf_and_crlf() {
+    let body = "baseline:\n  total_value_base: \"100\"\n";
+    let snapshot = format!("---\nsource: tests/goldens.rs\n---\n{body}");
+    let expected: serde_yaml::Value = serde_yaml::from_str(body).unwrap();
+
+    assert_eq!(parse_kernel_golden(&snapshot), Some(expected.clone()));
+    assert_eq!(
+        parse_kernel_golden(&snapshot.replace('\n', "\r\n")),
+        Some(expected)
+    );
+    assert!(parse_kernel_golden(body).is_none());
 }
 
 fn golden_str(value: &serde_yaml::Value, key: &str) -> String {
@@ -1364,6 +1384,44 @@ async fn failures_keep_the_markers_and_are_retried() {
 }
 
 #[tokio::test]
+async fn a_new_profile_without_a_base_currency_has_nothing_to_run() {
+    let mut facts = scenario("NOM-TRADE-01").facts();
+    facts.accounts.clear();
+    facts.activities.clear();
+    facts.base_currency = String::new();
+    let h = harness(facts).await;
+    h.store.mark(MarkerScope::All, GENESIS);
+
+    let report = h
+        .coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert!(
+        !h.projections.pending_markers().unwrap().is_empty(),
+        "the markers wait for the first run with accounts"
+    );
+}
+
+#[tokio::test]
+async fn accounts_without_a_base_currency_still_fail() {
+    let mut facts = scenario("NOM-TRADE-01").facts();
+    facts.base_currency = String::new();
+    let h = harness(facts).await;
+    h.store.mark(MarkerScope::All, GENESIS);
+
+    let report = h
+        .coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+
+    assert!(report.failures.iter().any(|f| f.code == "JOB_FAILED"));
+}
+
+#[tokio::test]
 async fn concurrent_requests_run_one_after_another() {
     let scenario = scenario("NOM-TRADE-01");
     let harness = harness(scenario.facts()).await;
@@ -1442,6 +1500,117 @@ async fn an_out_of_policy_observed_snapshot_fails_only_its_account() {
         !harness.projections.pending_markers().unwrap().is_empty(),
         "the markers stay until the account can be projected"
     );
+}
+
+/// The scoped history the dashboard reads and the performance of `scope`.
+async fn scope_reads(
+    h: &Harness,
+    scope: &[String],
+) -> (
+    Result<Vec<crate::portfolio::valuation::DailyAccountValuation>>,
+    crate::portfolio::performance::PerformanceResult,
+) {
+    use crate::portfolio::performance::{
+        PerformanceService, PerformanceServiceTrait, PerformanceSummaryProfile,
+    };
+    use crate::portfolio::valuation::{ValuationService, ValuationServiceTrait};
+    let base_currency = h.base_currency.read().unwrap().clone();
+    let history = ValuationService::new(
+        h.valuation_repo.clone(),
+        h.sources.clone(),
+        h.lot_repo.clone(),
+        h.timezone.clone(),
+    )
+    .get_historical_valuations_for_accounts("portfolio", scope, &base_currency, None, None)
+    .await;
+    let performance = PerformanceService::new(
+        h.base_currency.clone(),
+        h.timezone.clone(),
+        h.sources.clone(),
+        h.valuation_repo.clone(),
+        h.lot_repo.clone(),
+    )
+    .calculate_performance_summary_for_accounts(
+        "portfolio",
+        scope,
+        "",
+        &Default::default(),
+        &Default::default(),
+        None,
+        None,
+        PerformanceSummaryProfile::Full,
+    )
+    .await
+    .unwrap();
+    (history, performance)
+}
+
+/// A holdings account without a snapshot has not started: the portfolio
+/// reads as it does without it, with no history gap and no mix of tracking
+/// modes.
+#[tokio::test]
+async fn a_holdings_account_without_a_snapshot_changes_no_figure() {
+    let mut facts = scenario("NOM-TRADE-01").facts();
+    let others: Vec<String> = facts.accounts.iter().map(|a| a.id.clone()).collect();
+    let mut unobserved = facts.accounts[0].clone();
+    unobserved.id = "acc-unobserved".to_string();
+    unobserved.tracking_mode = crate::accounts::TrackingMode::Holdings;
+    facts.accounts.push(unobserved);
+    let h = harness(facts).await;
+    h.coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+    let mut all = others.clone();
+    all.push("acc-unobserved".to_string());
+
+    let (history, performance) = scope_reads(&h, &all).await;
+    let (reference_history, reference) = scope_reads(&h, &others).await;
+    let values = |rows: Vec<crate::portfolio::valuation::DailyAccountValuation>| -> Vec<_> {
+        rows.into_iter()
+            .map(|r| (r.valuation_date, r.total_value_base))
+            .collect()
+    };
+    assert_eq!(
+        values(history.expect("history with the account")),
+        values(reference_history.unwrap())
+    );
+    assert!(reference.returns.twr.is_some());
+    assert_eq!(
+        serde_json::to_value(&performance.returns).unwrap(),
+        serde_json::to_value(&reference.returns).unwrap()
+    );
+    assert_eq!(
+        performance.data_quality.warnings,
+        reference.data_quality.warnings
+    );
+}
+
+/// A holdings account with snapshots has started, whether or not it could be
+/// projected: when its rows are missing (here an out-of-policy snapshot made
+/// its rebuild fail), the scope's history is refused rather than read
+/// without it (P-STRICT).
+#[tokio::test]
+async fn a_started_holdings_account_without_rows_is_not_left_out() {
+    let facts = scenario("NOM-MIX-01").facts();
+    let scope: Vec<String> = facts.accounts.iter().map(|a| a.id.clone()).collect();
+    let h = harness(facts).await;
+    let bad_date = chrono::NaiveDate::from_ymd_opt(224, 7, 20).unwrap();
+    h.snapshot_repo
+        .save_snapshots(&[manual_snapshot("acc-h", bad_date)])
+        .await
+        .unwrap();
+    let report = h
+        .coordinator
+        .run_job(request(), &SilentObserver)
+        .await
+        .unwrap();
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(h.rows("acc-h").is_empty());
+
+    let (history, _) = scope_reads(&h, &scope).await;
+    let error = history.expect_err("a history without acc-h");
+    assert!(error.to_string().contains("count mismatch"), "{error}");
 }
 
 /// An account that cannot be projected keeps only its own markers: the
@@ -1570,15 +1739,18 @@ async fn a_changed_transfer_leg_refolds_its_partner() {
     ));
 }
 
+/// Settings this version reads but the engine does not compute: a profile
+/// other than GENERIC.
+const REFUSED_ACCOUNTING: &str =
+    r#"{"accounting":{"costBasisMethod":"FIFO","costBasisProfile":"CANADA_ACB"}}"#;
+
 #[tokio::test]
 async fn unsupported_cost_basis_settings_fail_the_account() {
     let scenario = scenario("NOM-TRADE-01");
     let facts = scenario.facts();
     let account = facts.accounts[0].id.clone();
     let harness = harness(facts).await;
-    harness
-        .account_repo
-        .set_meta(&account, r#"{"accounting":{"costBasisMethod":"LIFO"}}"#);
+    harness.account_repo.set_meta(&account, REFUSED_ACCOUNTING);
     let report = harness
         .coordinator
         .run_job(request(), &SilentObserver)
@@ -1621,6 +1793,60 @@ async fn an_account_set_to_wac_is_computed_and_its_rows_record_it() {
     assert_eq!((lots.len(), disposals.len()), (1, 2));
     assert!(lots.iter().all(|lot| lot.cost_basis_method == "WAC"));
     assert!(disposals.iter().all(|d| d.cost_basis_method == "WAC"));
+}
+
+/// Engine rules R7.2: accounts whose settings name LIFO or HIFO are computed,
+/// each sale relieving the lots its method orders first, and their rows
+/// record the method.
+#[tokio::test]
+async fn accounts_set_to_lifo_or_hifo_are_computed_and_their_rows_record_it() {
+    // (fixture, method, lots, disposals, the lot sell-2 empties)
+    for (fixture, method, lot_count, disposal_count, emptied) in [
+        ("NOM-CB-02", "LIFO", 3, 2, "buy-3"),
+        ("NOM-CB-03", "HIFO", 3, 3, "buy-2"),
+    ] {
+        let facts = scenario(fixture).facts();
+        let account = facts.accounts[0].id.clone();
+        let harness = harness(facts).await;
+        let report = harness
+            .coordinator
+            .run_job(request(), &SilentObserver)
+            .await
+            .unwrap();
+        assert!(
+            report.failures.is_empty(),
+            "{fixture}: {:?}",
+            report.failures
+        );
+        let lots = harness
+            .lot_repo
+            .get_all_lots_for_account(&account)
+            .await
+            .unwrap();
+        let disposals = harness
+            .lot_repo
+            .get_lot_disposals_for_account(&account)
+            .await
+            .unwrap();
+        assert_eq!(
+            (lots.len(), disposals.len()),
+            (lot_count, disposal_count),
+            "{fixture}"
+        );
+        assert!(
+            lots.iter().all(|lot| lot.cost_basis_method == method),
+            "{fixture}"
+        );
+        assert!(
+            disposals.iter().all(|d| d.cost_basis_method == method),
+            "{fixture}"
+        );
+        let emptied_lot = lots
+            .iter()
+            .find(|lot| lot.open_activity_id.as_deref() == Some(emptied))
+            .unwrap_or_else(|| panic!("{fixture}: no lot for {emptied}"));
+        assert!(emptied_lot.is_closed, "{fixture}: {emptied} still open");
+    }
 }
 
 /// Runs EDGE-TXF-02 (acc-a transfers to acc-b) with acc-a's meta set to
@@ -1666,7 +1892,7 @@ async fn assert_acc_a_refused_and_folded_fifo(meta: &str) {
 /// fails alone; folded as a transfer partner it folds FIFO.
 #[tokio::test]
 async fn a_refused_transfer_partner_folds_fifo() {
-    assert_acc_a_refused_and_folded_fifo(r#"{"accounting":{"costBasisMethod":"LIFO"}}"#).await;
+    assert_acc_a_refused_and_folded_fifo(REFUSED_ACCOUNTING).await;
 }
 
 /// Engine rules R7.2: settings this version cannot read (a code it does not
@@ -2262,22 +2488,19 @@ async fn read_differences(
     let disposal_rows: Vec<_> = reference.disposals.values().flatten().cloned().collect();
     let disposals = rows::stored_disposals(&disposal_rows);
     let range = reference.resolved.range();
-    let inputs = engine::MeasureInputs {
-        effects: engine::effects(
-            &engine::Resolved {
-                facts: &reference.resolved.facts,
-                ledger: &reference.resolved.ledger,
-                surfaces: &reference.resolved.surfaces,
-                range,
-            },
-            &disposals,
-            &lots,
-            &reference.rejected,
-        ),
-        series: &series,
-        lots: &lots,
-        disposals: &disposals,
-    };
+    let inputs = engine::measure_inputs(
+        &engine::Resolved {
+            facts: &reference.resolved.facts,
+            ledger: &reference.resolved.ledger,
+            surfaces: &reference.resolved.surfaces,
+            range,
+        },
+        &series,
+        &lots,
+        &disposals,
+        &reference.rejected,
+        engine::MeasureProfile::Full,
+    );
     let mut found = Vec::new();
     let mut compare = |what: String,
                        read: crate::errors::Result<
@@ -2747,4 +2970,56 @@ async fn valuation_totals_leave_the_async_worker_free() {
     releaser.await.expect("releaser task");
 
     assert!(gate.released_in_time(), "the read held the async worker");
+}
+
+/// Whether a holding counts toward its account's value is core's rule
+/// (`AssetKind::is_alternative`); the engine applies it as a fact. An
+/// alternative asset bought in an account stays out of the account's value,
+/// for net worth to add on its own.
+#[tokio::test]
+async fn an_account_values_a_holding_unless_its_kind_is_alternative() {
+    use crate::assets::AssetKind;
+    for kind in [
+        AssetKind::Investment,
+        AssetKind::Property,
+        AssetKind::Vehicle,
+        AssetKind::Collectible,
+        AssetKind::PreciousMetal,
+        AssetKind::PrivateEquity,
+        AssetKind::Liability,
+        AssetKind::Other,
+    ] {
+        let yaml = format!(
+            r#"
+id: KIND-{kind}
+title: a {kind} holding
+policy: {{ base_currency: USD, timezone: UTC, as_of: 2025-01-04 }}
+accounts:
+  - {{ id: acc-1, currency: USD }}
+assets:
+  - {{ id: thing, quote_ccy: USD, kind: {kind}, instrument_type: NONE, quote_mode: MANUAL, alternative: {alternative} }}
+activities:
+  - {{ id: dep, account: acc-1, type: DEPOSIT, date: 2025-01-02T10:00:00Z, amount: 1000 }}
+  - {{ id: buy, account: acc-1, type: BUY, asset: thing, date: 2025-01-03T10:00:00Z, quantity: 2, unit_price: 100, amount: 200 }}
+quotes:
+  - {{ asset: thing, day: 2025-01-03, close: 100, currency: USD, source: MANUAL }}
+"#,
+            kind = kind.as_db_str(),
+            alternative = kind.is_alternative()
+        );
+        let scenario: Scenario = serde_yaml::from_str(&yaml).unwrap();
+        scenario.validate().unwrap();
+        let h = harness(scenario.facts()).await;
+        h.coordinator
+            .run_job(request(), &SilentObserver)
+            .await
+            .unwrap();
+        let value = h.rows("acc-1").last().unwrap().investment_market_value;
+        let expected = if kind.is_alternative() {
+            Decimal::ZERO
+        } else {
+            dec!(200)
+        };
+        assert_eq!(value, expected, "{kind:?}");
+    }
 }

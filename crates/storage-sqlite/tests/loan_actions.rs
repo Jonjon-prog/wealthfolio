@@ -7,8 +7,8 @@ use rust_decimal::Decimal;
 use serde_json::json;
 use wealthfolio_core::activities::ActivityRepositoryTrait;
 use wealthfolio_core::assets::loan::{
-    event_entries, BalanceEdit, LoanAction, LoanEvent, LoanFrequency, LoanRecord, LoanSchedule,
-    LoanSetup, LoanTerms, LoanUpdate, PaymentLink, PaymentTarget, PAYMENT_ACCOUNT_KEY,
+    event_entries, BalanceEdit, LoanAction, LoanEvent, LoanFrequency, LoanSchedule, LoanSetup,
+    LoanTerms, LoanUpdate, PaymentLink, PaymentTarget, StoredLoan, PAYMENT_ACCOUNT_KEY,
     RENEWAL_MATURITY_KEY,
 };
 use wealthfolio_core::assets::{
@@ -340,7 +340,7 @@ async fn a_write_that_fails_after_the_metadata_change_leaves_the_loan_untouched(
         .repository
         .update_loan(
             "mortgage",
-            Box::new(|record: &LoanRecord| {
+            Box::new(|record: &StoredLoan| {
                 let mut metadata = record.metadata.clone();
                 metadata["sub_type"] = json!("auto");
                 // A quote for an asset that does not exist fails its foreign key
@@ -838,4 +838,138 @@ async fn editing_details_with_loan_terms_saves_both_or_neither() {
     let metadata = loan.metadata();
     assert_eq!(metadata["sub_type"], "heloc");
     assert_eq!(metadata[PAYMENT_ACCOUNT_KEY], "chequing");
+}
+
+/// The issue's exact persistence sequence, including legacy loans created without a date.
+#[tokio::test]
+async fn manual_liability_correction_deletion_keeps_the_loan_and_its_principal() {
+    let loan = fixture().await;
+    let today = chrono::Utc::now().date_naive();
+    let origin = NaiveDate::from_ymd_opt(2022, 6, 5).unwrap();
+    for dated in [true, false] {
+        let created = loan
+            .service
+            .create_alternative_asset(CreateAlternativeAssetRequest {
+                kind: AssetKind::Liability,
+                name: "Manual personal loan".into(),
+                currency: "USD".into(),
+                current_value: Decimal::new(100, 0),
+                value_date: if dated { origin } else { today },
+                purchase_price: None,
+                purchase_date: None,
+                metadata: Some(json!({"sub_type":"personal_loan"})),
+                linked_asset_id: None,
+                loan: Some(LoanSetup {
+                    original_amount: Some(100.0),
+                    origination_date: dated.then_some(origin),
+                    interest_rate: Some(2.0),
+                    schedule: None,
+                }),
+            })
+            .await
+            .unwrap();
+        let id = created.asset_id;
+        let opening = loan.quotes.get_historical_quotes(&id).unwrap();
+        assert_eq!(opening.len(), 1);
+        let asset = loan.assets.get_by_id(&id).unwrap();
+        assert_eq!(
+            asset
+                .metadata
+                .as_ref()
+                .unwrap()
+                .get("origination_date")
+                .is_some(),
+            dated
+        );
+        loan.service
+            .apply_loan_action(
+                &id,
+                LoanAction::ConfirmBalance {
+                    date: today,
+                    balance: 0.0,
+                },
+            )
+            .await
+            .unwrap();
+        let quotes = loan.quotes.get_historical_quotes(&id).unwrap();
+        assert_eq!(quotes.len(), if dated { 2 } else { 1 });
+        let correction = quotes
+            .iter()
+            .find(|quote| quote.close == Decimal::ZERO)
+            .unwrap();
+        if !dated {
+            assert_eq!(correction.id, opening[0].id);
+        }
+        let holding = loan
+            .service
+            .get_alternative_holdings()
+            .unwrap()
+            .into_iter()
+            .find(|h| h.id == id)
+            .unwrap();
+        assert_eq!(
+            holding.market_value,
+            Decimal::ZERO,
+            "a recorded zero overrides principal"
+        );
+        loan.service
+            .apply_loan_action(
+                &id,
+                LoanAction::EditBalance {
+                    quote_id: correction.id.clone(),
+                    replacement: None,
+                },
+            )
+            .await
+            .unwrap();
+        if dated {
+            let restored = loan
+                .service
+                .get_alternative_holdings()
+                .unwrap()
+                .into_iter()
+                .find(|h| h.id == id)
+                .unwrap();
+            assert_eq!(restored.market_value, Decimal::new(100, 0));
+            assert_eq!(
+                restored.loan.unwrap().balance_source,
+                Some(wealthfolio_core::assets::loan::LoanBalanceSource::Recorded)
+            );
+            loan.service
+                .apply_loan_action(
+                    &id,
+                    LoanAction::EditBalance {
+                        quote_id: opening[0].id.clone(),
+                        replacement: None,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(loan.quotes.get_historical_quotes(&id).unwrap().is_empty());
+        let holding = loan
+            .service
+            .get_alternative_holdings()
+            .unwrap()
+            .into_iter()
+            .find(|h| h.id == id)
+            .unwrap();
+        assert_eq!(holding.market_value, Decimal::new(100, 0));
+        assert_eq!(
+            holding.valuation_date.date_naive(),
+            if dated {
+                origin
+            } else {
+                asset.created_at.date()
+            }
+        );
+        assert_eq!(
+            holding.loan.unwrap().balance_source,
+            Some(wealthfolio_core::assets::loan::LoanBalanceSource::Original)
+        );
+        assert_eq!(
+            loan.assets.get_by_id(&id).unwrap().created_at,
+            asset.created_at
+        );
+    }
 }

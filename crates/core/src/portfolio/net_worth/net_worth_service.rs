@@ -13,20 +13,28 @@ use super::net_worth_model::{
 };
 use super::net_worth_traits::NetWorthServiceTrait;
 use crate::accounts::{account_types, is_liability_account_type, AccountRepositoryTrait};
-use crate::assets::loan::LoanPayment;
+use crate::assets::loan::{manual_loan_principal, LoanPayment};
 use crate::assets::{AlternativeAssetRepositoryTrait, Asset, AssetKind, AssetRepositoryTrait};
 use crate::constants::DECIMAL_PRECISION;
 use crate::errors::Result;
 use crate::fx::currency::normalize_amount;
 use crate::fx::FxServiceTrait;
+use crate::portfolio::coordinator::blocking;
 use crate::portfolio::snapshot::SnapshotServiceTrait;
 use crate::portfolio::valuation::{DailyAccountValuation, ValuationRepositoryTrait};
 use crate::quotes::QuoteServiceTrait;
+use crate::utils::time_utils::{
+    parse_user_timezone_or_default, user_date_from_utc, DEFAULT_VALUATION_TZ,
+};
 
 /// Number of days after which a valuation is considered stale.
 const STALENESS_THRESHOLD_DAYS: i64 = 90;
 
+/// Key prefix for a credit-card liability, in the breakdown and the history.
+const CREDIT_CARD_KEY_PREFIX: &str = "CREDIT_CARD:";
+
 /// Service for calculating net worth.
+#[derive(Clone)]
 pub struct NetWorthService {
     base_currency: Arc<RwLock<String>>,
     account_repository: Arc<dyn AccountRepositoryTrait>,
@@ -36,7 +44,14 @@ pub struct NetWorthService {
     valuation_repository: Arc<dyn ValuationRepositoryTrait>,
     fx_service: Arc<dyn FxServiceTrait>,
     /// Source of loan payments from accounts; without one, loans count no payments.
-    loan_payments: Option<Arc<dyn AlternativeAssetRepositoryTrait>>,
+    loan_payments: Option<LoanPaymentSource>,
+}
+
+/// Where loan payments are read, and the settings time zone that dates them.
+#[derive(Clone)]
+struct LoanPaymentSource {
+    repository: Arc<dyn AlternativeAssetRepositoryTrait>,
+    timezone: Arc<RwLock<String>>,
 }
 
 impl NetWorthService {
@@ -63,14 +78,38 @@ impl NetWorthService {
         }
     }
 
-    /// Counts loan payments tagged on account withdrawals, as holdings and the
-    /// loan page do.
-    pub fn with_loan_payments(mut self, source: Arc<dyn AlternativeAssetRepositoryTrait>) -> Self {
-        self.loan_payments = Some(source);
+    /// Counts loan payments tagged on account withdrawals, dated in the settings
+    /// time zone, as holdings and the loan page do.
+    pub fn with_loan_payments(
+        mut self,
+        repository: Arc<dyn AlternativeAssetRepositoryTrait>,
+        timezone: Arc<RwLock<String>>,
+    ) -> Self {
+        self.loan_payments = Some(LoanPaymentSource {
+            repository,
+            timezone,
+        });
         self
     }
 
-    fn loan_payments(&self, assets: &[&Asset]) -> Result<HashMap<String, Vec<LoanPayment>>> {
+    fn timezone(&self) -> chrono_tz::Tz {
+        self.loan_payments
+            .as_ref()
+            .map_or(DEFAULT_VALUATION_TZ, |source| {
+                parse_user_timezone_or_default(
+                    &source
+                        .timezone
+                        .read()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                )
+            })
+    }
+
+    fn loan_payments(
+        &self,
+        assets: &[&Asset],
+        timezone: chrono_tz::Tz,
+    ) -> Result<HashMap<String, Vec<LoanPayment>>> {
         let Some(source) = &self.loan_payments else {
             return Ok(HashMap::new());
         };
@@ -79,7 +118,15 @@ impl NetWorthService {
             .filter(|asset| asset.kind == AssetKind::Liability)
             .map(|asset| asset.id.clone())
             .collect();
-        source.loan_payments(&loan_ids)
+        Ok(source
+            .repository
+            .loan_payments(&loan_ids)?
+            .into_iter()
+            .map(|(loan_id, payments)| {
+                let dated = payments.iter().map(|p| p.dated(timezone)).collect();
+                (loan_id, dated)
+            })
+            .collect())
     }
 
     /// Determine the asset category based on account type.
@@ -250,6 +297,7 @@ impl NetWorthService {
                         name: val.name.clone().unwrap_or_else(|| val.asset_id.clone()),
                         value: val.market_value_base,
                         asset_id: Some(val.asset_id.clone()),
+                        first_value_date: None,
                         children: Vec::new(),
                     });
             }
@@ -267,6 +315,7 @@ impl NetWorthService {
                     name: Self::category_display_name(category).to_string(),
                     value,
                     asset_id: None,
+                    first_value_date: None,
                     children,
                 }
             })
@@ -292,6 +341,7 @@ impl NetWorthService {
                 name: v.name.clone().unwrap_or_else(|| v.asset_id.clone()),
                 value: v.market_value_base,
                 asset_id: Some(v.asset_id.clone()),
+                first_value_date: None,
                 children: Vec::new(),
             })
             .collect();
@@ -303,6 +353,38 @@ impl NetWorthService {
         let total = breakdown.iter().map(|item| item.value).sum();
 
         LiabilitiesSection { total, breakdown }
+    }
+
+    /// Dates each credit-card row by the first day the card owed a balance. The
+    /// history omits a card on days it owes nothing, so without this a card paid
+    /// off before a range looks the same as one opened during it.
+    fn date_credit_card_first_balances(&self, liabilities: &mut LiabilitiesSection) -> Result<()> {
+        let card_account_id = |item: &BreakdownItem| {
+            item.asset_id
+                .as_deref()?
+                .strip_prefix(CREDIT_CARD_KEY_PREFIX)
+                .map(str::to_string)
+        };
+        let account_ids: Vec<String> = liabilities
+            .breakdown
+            .iter()
+            .filter_map(card_account_id)
+            .collect();
+        if account_ids.is_empty() {
+            return Ok(());
+        }
+        let first_balance_dates: HashMap<String, NaiveDate> = self
+            .valuation_repository
+            .get_accounts_with_negative_balance(&account_ids)?
+            .into_iter()
+            .map(|info| (info.account_id, info.first_negative_date))
+            .collect();
+        for item in &mut liabilities.breakdown {
+            if let Some(account_id) = card_account_id(item) {
+                item.first_value_date = first_balance_dates.get(&account_id).copied();
+            }
+        }
+        Ok(())
     }
 
     /// Calculate staleness info for valuations.
@@ -573,7 +655,7 @@ impl NetWorthServiceTrait for NetWorthService {
 
                 if cash_base_total < Decimal::ZERO {
                     valuations.push(ValuationInfo {
-                        asset_id: format!("CREDIT_CARD:{}", account.id),
+                        asset_id: format!("{CREDIT_CARD_KEY_PREFIX}{}", account.id),
                         name: Some(account.name.clone()),
                         market_value_base: cash_base_total.abs(),
                         valuation_date: snapshot.snapshot_date,
@@ -642,7 +724,13 @@ impl NetWorthServiceTrait for NetWorthService {
             .filter(|a| a.kind.is_alternative())
             .collect();
 
-        let mut loan_payments = self.loan_payments(&alternative_assets)?;
+        let mut loan_payments = self.loan_payments(&alternative_assets, self.timezone())?;
+        let loan_ids: Vec<_> = alternative_assets
+            .iter()
+            .filter(|asset| asset.kind == AssetKind::Liability)
+            .map(|asset| asset.id.clone())
+            .collect();
+        let recorded_loan_dates = self.quote_service.get_quote_bounds_for_assets(&loan_ids)?;
         for asset in alternative_assets {
             // Skip if this asset was already processed via a snapshot position
             // (in case there's overlap)
@@ -669,8 +757,21 @@ impl NetWorthServiceTrait for NetWorthService {
             } else {
                 None
             };
-            let Some((price, quote_currency, valuation_date)) =
-                calculated.or_else(|| self.get_latest_quote_as_of(&asset.id, date))
+            let Some((price, quote_currency, valuation_date)) = calculated
+                .or_else(|| self.get_latest_quote_as_of(&asset.id, date))
+                .or_else(|| {
+                    (asset.kind == AssetKind::Liability
+                        && !recorded_loan_dates.contains_key(&asset.id))
+                    .then(|| {
+                        manual_loan_principal(
+                            asset.metadata.as_ref(),
+                            date,
+                            user_date_from_utc(asset.created_at.and_utc(), self.timezone()),
+                        )
+                    })
+                    .flatten()
+                    .map(|(date, value)| (value, asset.quote_ccy.clone(), date))
+                })
             else {
                 continue;
             };
@@ -718,7 +819,8 @@ impl NetWorthServiceTrait for NetWorthService {
 
         // Build assets and liabilities sections
         let assets = Self::build_assets_section(&valuations);
-        let liabilities = Self::build_liabilities_section(&valuations);
+        let mut liabilities = Self::build_liabilities_section(&valuations);
+        self.date_credit_card_first_balances(&mut liabilities)?;
 
         // Calculate net worth
         let net_worth = assets.total - liabilities.total;
@@ -742,7 +844,10 @@ impl NetWorthServiceTrait for NetWorthService {
         })
     }
 
-    fn get_net_worth_history(
+    /// The history reads every account's stored valuations over the range, so
+    /// it runs off the async workers. The base currency and timezone are each
+    /// read once here, so the calculation uses the same values throughout.
+    async fn get_net_worth_history(
         &self,
         start_date: NaiveDate,
         end_date: NaiveDate,
@@ -752,7 +857,21 @@ impl NetWorthServiceTrait for NetWorthService {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        let timezone = self.timezone();
+        let service = self.clone();
+        blocking(move || service.calculate_history(start_date, end_date, base_currency, timezone))
+            .await
+    }
+}
 
+impl NetWorthService {
+    fn calculate_history(
+        &self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        base_currency: String,
+        timezone: chrono_tz::Tz,
+    ) -> Result<Vec<NetWorthHistoryPoint>> {
         debug!(
             "Calculating net worth history from {} to {} in {}",
             start_date, end_date, base_currency
@@ -843,7 +962,9 @@ impl NetWorthServiceTrait for NetWorthService {
             end_date,
         )?;
 
-        let mut loan_payments = self.loan_payments(&alternative_assets)?;
+        let mut loan_payments = self.loan_payments(&alternative_assets, timezone)?;
+        let loan_ids: Vec<_> = liability_symbols.iter().cloned().collect();
+        let recorded_loan_dates = self.quote_service.get_quote_bounds_for_assets(&loan_ids)?;
         let mut loan_histories = Vec::new();
         for asset in &alternative_assets {
             if asset.kind == AssetKind::Liability
@@ -892,6 +1013,24 @@ impl NetWorthServiceTrait for NetWorthService {
                 .or_default()
                 .insert(quote.asset_id.clone(), value_base);
         }
+
+        // Only loans without any recorded balances use an unconfirmed principal.
+        // A later balance does not establish the debt on earlier dates. Keep
+        // principals in local currency and convert them on each emitted date.
+        let manual_principals: Vec<_> = alternative_assets
+            .iter()
+            .filter(|asset| {
+                asset.kind == AssetKind::Liability && !recorded_loan_dates.contains_key(&asset.id)
+            })
+            .filter_map(|asset| {
+                manual_loan_principal(
+                    asset.metadata.as_ref(),
+                    end_date,
+                    user_date_from_utc(asset.created_at.and_utc(), timezone),
+                )
+                .map(|(date, value)| (*asset, date, value))
+            })
+            .collect();
 
         // =====================================================================
         // 4. Get initial values for forward-fill (quotes before the first emitted point)
@@ -1031,6 +1170,11 @@ impl NetWorthServiceTrait for NetWorthService {
             all_dates.push(end_date);
         }
 
+        for (_, date, _) in &manual_principals {
+            all_dates.push((*date).max(history_seed_date));
+            all_dates.push(end_date);
+        }
+
         all_dates.sort();
         all_dates.dedup();
 
@@ -1111,6 +1255,20 @@ impl NetWorthServiceTrait for NetWorthService {
                 }
             }
 
+            for (asset, origin, principal) in &manual_principals {
+                if date >= *origin {
+                    let (value, currency) = normalize_amount(*principal, &asset.quote_ccy);
+                    let converted = if currency == base_currency {
+                        value
+                    } else {
+                        self.fx_service
+                            .convert_currency_for_date(value, currency, &base_currency, date)
+                            .unwrap_or(value)
+                    };
+                    current_asset_values.insert(asset.id.clone(), converted);
+                }
+            }
+
             // Calculate totals
             let mut alt_assets_value = Decimal::ZERO;
             let mut liabilities_value = Decimal::ZERO;
@@ -1162,7 +1320,7 @@ impl NetWorthServiceTrait for NetWorthService {
             }
             for (account_id, value) in &current_credit_card_liabilities {
                 if !value.is_zero() {
-                    breakdown.insert(format!("CREDIT_CARD:{}", account_id), *value);
+                    breakdown.insert(format!("{CREDIT_CARD_KEY_PREFIX}{}", account_id), *value);
                 }
             }
             for value in breakdown.values_mut() {

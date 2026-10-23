@@ -29,18 +29,18 @@ export function McpHero({
     >
       <div className="p-5 sm:px-7 sm:py-6">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-background/60 flex min-w-0 items-center gap-2 text-xs font-medium uppercase tracking-widest">
+          <div className="text-background/60 flex min-w-0 items-center gap-2 text-xs font-medium tracking-widest uppercase">
             <span className="relative flex h-2 w-2 shrink-0">
               <span
                 className={cn(
                   "absolute inline-flex h-full w-full rounded-full opacity-60",
-                  active ? "animate-ping bg-green-300" : "bg-background/40",
+                  active ? "bg-success animate-ping" : "bg-background/40",
                 )}
               />
               <span
                 className={cn(
                   "relative inline-flex h-2 w-2 rounded-full",
-                  active ? "bg-green-300" : "bg-background/40",
+                  active ? "bg-success" : "bg-background/40",
                 )}
               />
             </span>

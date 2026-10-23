@@ -8,8 +8,10 @@ import {
   CardHeader,
   CardTitle,
   DonutChart,
-  EmptyPlaceholder,
   Skeleton,
+  Empty,
+  EmptyHeader,
+  EmptyDescription,
 } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -126,12 +128,12 @@ export function DrillableDonutChart({
   if (isLoading) {
     return (
       <Card className="overflow-hidden backdrop-blur-sm">
-        <CardHeader className="px-5 pb-1 pt-5">
-          <Skeleton className="h-4 w-[120px]" />
+        <CardHeader className="px-5 pt-5 pb-1">
+          <Skeleton className="h-4 w-30" />
         </CardHeader>
-        <CardContent className="px-5 pb-5 pt-0">
-          <div className="flex h-[160px] items-center justify-center">
-            <Skeleton className="h-[120px] w-[120px] rounded-full" />
+        <CardContent className="px-5 pt-0 pb-5">
+          <div className="flex h-40 items-center justify-center">
+            <Skeleton className="h-30 w-30 rounded-full" />
           </div>
         </CardContent>
       </Card>
@@ -143,9 +145,9 @@ export function DrillableDonutChart({
       className="hover:bg-muted/50 cursor-pointer overflow-hidden backdrop-blur-sm transition-colors"
       onClick={onCardClick}
     >
-      <CardHeader className="px-5 pb-1 pt-5">
+      <CardHeader className="px-5 pt-5 pb-1">
         {isAtRoot ? (
-          <CardTitle className="text-muted-foreground text-[12px] font-semibold uppercase tracking-[0.18em]">
+          <CardTitle className="text-muted-foreground text-xs font-semibold tracking-[0.18em] uppercase">
             {title}
           </CardTitle>
         ) : (
@@ -158,7 +160,7 @@ export function DrillableDonutChart({
           </div>
         )}
       </CardHeader>
-      <CardContent className="px-5 pb-5 pt-0">
+      <CardContent className="px-5 pt-0 pb-5">
         {data.length > 0 ? (
           <DonutChart
             data={data}
@@ -168,10 +170,13 @@ export function DrillableDonutChart({
             endAngle={0}
           />
         ) : (
-          <EmptyPlaceholder
-            description={t("holdings:no_typed_data_available", { type: title.toLowerCase() })}
-            className="max-h-[160px]"
-          />
+          <Empty className="max-h-40">
+            <EmptyHeader>
+              <EmptyDescription>
+                {t("holdings:no_typed_data_available", { type: title.toLowerCase() })}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </CardContent>
     </Card>

@@ -144,7 +144,7 @@ export default function SaveUpDetailPage({ goal, plan, overview }: Props) {
     setMonthlyContribution(initialMonthlyContribution);
     setAnnualReturn(initialAnnualReturn);
     // Only sync when persisted values change. Toggling edit mode should not snap drafts back.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [persistedPlanKey]);
 
   const previewInput = useMemo<SaveUpPreviewInputDTO | null>(
@@ -297,7 +297,7 @@ export default function SaveUpDetailPage({ goal, plan, overview }: Props) {
                   >
                     {status.label}
                   </span>
-                  <span className="text-muted-foreground text-xs font-medium uppercase tracking-[0.15em]">
+                  <span className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
                     {t("goals:save_up.savings_plan")}
                   </span>
                 </div>
@@ -603,9 +603,9 @@ function getSaveUpStatus(
       headlinePrefix: t("goals:save_up.headline_at_risk_prefix", { title: goalTitle }),
       headlineEmphasis: t("goals:save_up.headline_at_risk_emphasis"),
       headlineSuffix: t("goals:save_up.headline_at_risk_suffix", { date: dateLabel }),
-      badgeClass: "bg-yellow-100 text-yellow-800",
-      textClass: "text-yellow-700",
-      progressClass: "bg-yellow-600",
+      badgeClass: "bg-warning-subtle text-warning-subtle-foreground",
+      textClass: "text-warning-subtle-foreground",
+      progressClass: "bg-warning",
     };
   }
 
@@ -617,7 +617,7 @@ function getSaveUpStatus(
       title: goalTitle,
       date: dateLabel,
     }),
-    badgeClass: "bg-destructive text-destructive-foreground",
+    badgeClass: "bg-destructive-subtle text-destructive-subtle-foreground",
     textClass: "text-destructive",
     progressClass: "bg-destructive",
   };
@@ -642,7 +642,7 @@ function formatGoalDate(
 function HeroMetric({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0 px-5 py-4">
-      <div className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider">
+      <div className="text-muted-foreground text-2xs font-semibold tracking-wider uppercase">
         {label}
       </div>
       <div className="mt-2 truncate text-lg font-semibold tabular-nums">{children}</div>
@@ -676,10 +676,10 @@ function MonthlyPlanCallout({
       <CardContent className="p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <div className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-[0.15em]">
+            <div className="text-muted-foreground mb-1 text-xs font-medium tracking-[0.15em] uppercase">
               {t("goals:save_up.action")}
             </div>
-            <h3 className="text-md font-semibold leading-none tracking-tight">
+            <h3 className="text-md leading-none font-semibold tracking-tight">
               {t("goals:save_up.monthly_plan")}
             </h3>
           </div>
@@ -721,7 +721,7 @@ function MonthlyPlanCallout({
 function CalloutMetric({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="border-border/70 bg-muted/20 rounded-lg border px-3 py-2.5">
-      <div className="text-muted-foreground text-[11px]">{label}</div>
+      <div className="text-muted-foreground text-2xs">{label}</div>
       <div className="mt-1 text-sm font-semibold tabular-nums">{children}</div>
     </div>
   );
@@ -777,7 +777,7 @@ function SidebarCard({
     <Card>
       <CardHeader className="flex-row items-start justify-between pb-4">
         <div className="min-w-0">
-          <div className="text-muted-foreground mb-1 text-xs font-medium uppercase tracking-[0.15em]">
+          <div className="text-muted-foreground mb-1 text-xs font-medium tracking-[0.15em] uppercase">
             {kicker}
           </div>
           <CardTitle className="text-md leading-none tracking-tight">{title}</CardTitle>
@@ -827,11 +827,12 @@ function DateRow({
     <div className="py-4 first:pt-1 last:pb-1">
       <div className="mb-2 flex items-start justify-between gap-3">
         <div>
-          <div className="text-foreground text-sm font-semibold leading-tight">{label}</div>
+          <div className="text-foreground text-sm leading-tight font-semibold">{label}</div>
           <div className="text-muted-foreground mt-1 text-xs leading-tight">{hint}</div>
         </div>
       </div>
       <DatePickerInput
+        aria-label={label}
         value={value || undefined}
         onChange={(date) => onChange(date ? formatDateISO(date) : "")}
       />

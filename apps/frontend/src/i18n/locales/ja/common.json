@@ -245,7 +245,6 @@
     "asset_type_option": "オプション",
     "asset_type_metal": "金属(コモディティ)",
     "asset_type_other": "その他",
-    "select_currency": "通貨を選択...",
     "select_symbol": "銘柄を選択...",
     "symbol_type_security": "証券",
     "symbol_type_crypto": "暗号資産",
@@ -304,6 +303,8 @@
     "screenshot_alt": "スクリーンショット{{number}}",
     "downloading_update": "アップデートをダウンロード中...",
     "installing_update": "アップデートをインストール中...",
+    "update_external_flatpak": "このWealthfolioはFlatpakでインストールされています。Flatpakまたはソフトウェアセンターからアップデートしてください。",
+    "update_external_package_manager": "このインストールはWealthfolio内からアップデートできません。インストールしたときと同じ方法でアップデートしてください。",
     "update_failed": "アップデートに失敗しました。もう一度お試しください。",
     "remind_me_later": "後で通知",
     "view_changelog": "変更履歴を表示",
@@ -480,6 +481,7 @@
       "unavailable": "このプロフィールを開けませんでした。Wealthfolioを再起動してもう一度お試しください。",
       "inUse": "このプロフィールは別の Wealthfolio ウィンドウで開かれています。そちらを閉じてから、もう一度お試しください。",
       "credentials": "保存されたログイン情報にアクセスできませんでした。デバイスのロックを解除して、もう一度お試しください。",
+      "serverCredentials": "サーバーがシークレットファイル (secrets.json) にアクセスできませんでした。WF_SECRET_KEY がファイル作成時のキーと一致しているか、サーバーがファイルを読み書きできるかをサーバー管理者に確認してもらってください。",
       "invalid": "プロフィールの情報を確認してもう一度お試しください。",
       "name": "プロフィール名は1～60文字で入力してください。",
       "avatar": "用意されているアバターから選択してください。",
@@ -495,5 +497,9 @@
       "teamChanged": "世帯が変更されました。続行するにはWealthfolio Connectに再接続してください。",
       "rebind": "Wealthfolio Connectに再接続して、このプロフィールのアカウントと世帯を確認してください。"
     }
-  }
+  },
+  "remove": "削除",
+  "remove_item": "{{name}} を削除",
+  "actions_for": "{{name}} の操作",
+  "settings_for": "{{name}} の設定"
 }

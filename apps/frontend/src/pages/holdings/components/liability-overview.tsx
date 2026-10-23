@@ -29,13 +29,8 @@ import {
 import { Icons, type Icon } from "@wealthfolio/ui/components/ui/icons";
 import { ProgressBar } from "@/features/goals/components/goal-card";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
-import { useQuoteHistory } from "@/hooks/use-quote-history";
 import type { AlternativeAssetHolding } from "@/lib/types";
-import {
-  useLoanCalculation,
-  useLoanToday,
-} from "@/pages/asset/alternative-assets/hooks/use-loan-calculation";
-import { loanPayoffDate } from "@/pages/asset/alternative-assets/lib/loan-presentation";
+import { useLoanToday } from "@/pages/asset/alternative-assets/hooks/use-loan-calculation";
 import {
   liabilityCardModel,
   liabilitySummary,
@@ -133,7 +128,7 @@ export function LiabilityOverview({
                 setToDelete(null);
               }}
               disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
             >
               {t("common:delete")}
             </AlertDialogAction>
@@ -147,7 +142,7 @@ export function LiabilityOverview({
 function StatBlock({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline gap-2.5">
-      <span className="text-muted-foreground text-[10px] uppercase tracking-[0.15em]">{label}</span>
+      <span className="text-muted-foreground text-2xs tracking-[0.15em] uppercase">{label}</span>
       <span className="text-foreground text-sm font-semibold tabular-nums">{value}</span>
     </div>
   );
@@ -164,7 +159,11 @@ function LiabilitySummaryStats({
   const numbers = useNumberFormatting();
   const { isBalanceHidden } = useBalancePrivacy();
   const currency = cards[0]?.holding.currency;
-  if (!currency || cards.some(({ holding }) => holding.currency !== currency)) return null;
+  if (
+    !currency ||
+    cards.some(({ holding, model }) => holding.currency !== currency || !model.balanceAvailable)
+  )
+    return null;
   const summary = liabilitySummary(cards.map(({ model }) => model));
   const money = (value: number) =>
     isBalanceHidden ? "••••" : amounts.formatCompactAmount(value, currency);
@@ -206,15 +205,7 @@ function LiabilityCard({
   const numbers = useNumberFormatting();
   const dates = useDateFormatting();
   const { isBalanceHidden } = useBalancePrivacy();
-  // Only the payoff date needs the engine; both queries are shared with the loan page.
-  const { data: quotes } = useQuoteHistory({ assetId: holding.id, enabled: model.scheduled });
-  const { data: calculation } = useLoanCalculation(
-    holding.id,
-    holding.metadata ?? {},
-    quotes ?? [],
-    model.scheduled && quotes !== undefined,
-  );
-  const payoff = loanPayoffDate(calculation);
+  const payoff = model.payoffDate;
   const money = (value: number) =>
     isBalanceHidden ? "••••" : amounts.formatAmount(value, holding.currency);
   const TypeIcon = TYPE_ICONS[model.type] ?? Icons.ReceiptDuotone;
@@ -229,13 +220,20 @@ function LiabilityCard({
         t("holdings:liability_cards.debt_free", {
           date: dates.formatCalendarDate(payoff, { month: "short", year: "numeric" }),
         })
-      : t("holdings:liability_cards.updated", {
-          date: dates.formatCalendarDate(holding.valuationDate.slice(0, 10), {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          }),
-        }),
+      : !model.balanceAvailable
+        ? t("asset:loanOverview.unavailable")
+        : t(
+            holding.loan?.balanceSource === "original"
+              ? "holdings:liability_cards.original_balance"
+              : "holdings:liability_cards.updated",
+            {
+              date: dates.formatCalendarDate(holding.valuationDate.slice(0, 10), {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              }),
+            },
+          ),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -251,7 +249,7 @@ function LiabilityCard({
             {model.status && (
               <span
                 className={cn(
-                  "inline-flex h-5 items-center px-2 text-[9px] font-medium uppercase leading-none tracking-[0.14em]",
+                  "text-2xs inline-flex h-5 items-center px-2 font-medium uppercase leading-none tracking-[0.14em]",
                   STATUS_STYLES[model.status],
                 )}
               >
@@ -260,37 +258,41 @@ function LiabilityCard({
             )}
           </div>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="hover:bg-muted text-muted-foreground relative z-10 inline-flex size-8 items-center justify-center rounded-md transition"
-                aria-label={t("holdings:open_actions")}
-              >
-                <Icons.MoreVertical className="size-4" />
-              </button>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="hover:bg-muted text-muted-foreground relative z-10 inline-flex size-8 items-center justify-center rounded-md transition"
+                  aria-label={t("holdings:open_actions")}
+                />
+              }
+            >
+              <Icons.MoreVertical className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {/* Confirming on the loan page keeps its validation and balance provenance. */}
-              <DropdownMenuItem asChild>
-                <Link to={`/holdings/${encodeURIComponent(holding.id)}?action=confirm-balance`}>
-                  <Icons.DollarSign className="mr-2 size-4" />
-                  {t("holdings:liability_cards.update_balance")}
-                </Link>
+              <DropdownMenuItem
+                render={
+                  <Link to={`/holdings/${encodeURIComponent(holding.id)}?action=confirm-balance`} />
+                }
+              >
+                <Icons.DollarSign className="me-2 size-4" />
+                {t("holdings:liability_cards.update_balance")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onViewHistory(holding)}>
-                <Icons.History className="mr-2 size-4" />
+                <Icons.History className="me-2 size-4" />
                 {t("holdings:liability_cards.schedule")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onEdit(holding)}>
-                <Icons.Pencil className="mr-2 size-4" />
+                <Icons.Pencil className="me-2 size-4" />
                 {t("holdings:edit_details")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
-                onSelect={() => onDelete(holding)}
+                onClick={() => onDelete(holding)}
               >
-                <Icons.Trash className="mr-2 size-4" />
+                <Icons.Trash className="me-2 size-4" />
                 {t("common:delete")}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -300,24 +302,24 @@ function LiabilityCard({
         <div className="mt-3 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             {/* The title's link covers the card; the actions button sits above it. */}
-            <h3 className="truncate text-base font-semibold leading-tight">
+            <h3 className="truncate text-base leading-tight font-semibold">
               <Link
                 to={`/holdings/${encodeURIComponent(holding.id)}`}
-                className="focus-visible:ring-ring rounded-sm after:absolute after:inset-0 focus-visible:outline-none focus-visible:ring-2"
+                className="focus-visible:ring-ring rounded-sm after:absolute after:inset-0 focus-visible:ring-2 focus-visible:outline-none"
               >
                 {holding.name}
               </Link>
             </h3>
-            <p className="text-muted-foreground mt-0.5 truncate text-[9px] uppercase tracking-[0.15em]">
+            <p className="text-muted-foreground text-2xs mt-0.5 truncate tracking-[0.15em] uppercase">
               {meta}
             </p>
           </div>
           {model.paidShare != null && (
-            <div className="text-right">
-              <div className="text-success text-lg font-semibold tabular-nums leading-none">
+            <div className="text-end">
+              <div className="text-success text-lg leading-none font-semibold tabular-nums">
                 {numbers.formatPercent(model.paidShare, { digits: 1 })}
               </div>
-              <div className="text-muted-foreground mt-0.5 text-[9px] uppercase tracking-[0.15em]">
+              <div className="text-muted-foreground text-2xs mt-0.5 tracking-[0.15em] uppercase">
                 {t("holdings:liability_cards.paid_off")}
               </div>
             </div>
@@ -326,18 +328,20 @@ function LiabilityCard({
 
         <div className="mt-2.5 flex items-end justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold tabular-nums">{money(model.balance)}</div>
-            <div className="text-muted-foreground mt-0.5 text-[10px]">
+            <div className="text-sm font-semibold tabular-nums">
+              {model.balanceAvailable ? money(model.balance) : t("asset:loanOverview.unavailable")}
+            </div>
+            <div className="text-muted-foreground text-2xs mt-0.5">
               {model.original != null
                 ? t("holdings:liability_cards.owed_of", { amount: money(model.original) })
                 : t("holdings:liability_cards.owed_now")}
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-end">
             {model.payment != null && model.frequency ? (
               <>
                 <div className="text-sm font-semibold tabular-nums">{money(model.payment)}</div>
-                <div className="text-muted-foreground mt-0.5 text-[10px]">
+                <div className="text-muted-foreground text-2xs mt-0.5">
                   {t(`asset:loanActions.${model.frequency}`)}
                 </div>
               </>
@@ -346,7 +350,7 @@ function LiabilityCard({
                 <div className="text-muted-foreground text-sm font-semibold">
                   {t("holdings:liability_cards.manual")}
                 </div>
-                <div className="text-muted-foreground mt-0.5 text-[10px]">
+                <div className="text-muted-foreground text-2xs mt-0.5">
                   {t("holdings:liability_cards.manual_hint")}
                 </div>
               </>

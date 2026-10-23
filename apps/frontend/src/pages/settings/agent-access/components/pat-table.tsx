@@ -34,6 +34,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAccessTokens } from "../hooks/use-access-tokens";
 import { matchPreset, presetLabel, scopeLabel } from "../scopes";
+import { PatEditDialog } from "./pat-edit-dialog";
 import { PatCreateDialog } from "./pat-create-dialog";
 
 type TokenStatus = "active" | "expired" | "revoked";
@@ -94,14 +95,12 @@ function ScopeBadge({ scopes }: { scopes: string[] }) {
     : t("settings:agentAccess.pat_scope_custom", { count: scopes.length });
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge variant="secondary" className="cursor-default font-normal">
-          {label}
-        </Badge>
+      <TooltipTrigger render={<Badge variant="secondary" className="cursor-default font-normal" />}>
+        {label}
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">
         <p className="mb-1 font-medium">{t("settings:agentAccess.pat_scopes_tooltip")}</p>
-        <ul className="text-muted-foreground space-y-0.5">
+        <ul className="text-background/70 space-y-0.5">
           {scopes.map((scope) => (
             <li key={scope}>{scopeLabel(t, scope)}</li>
           ))}
@@ -116,7 +115,8 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
   const { uiLocale } = useLocalizationSettings();
   const dateFnsLocale = dateFnsLocaleFor(uiLocale);
   const { t } = useTranslation();
-  const { tokens, isLoading, createMutation, deleteMutation } = useAccessTokens();
+  const { tokens, isLoading, createMutation, updateMutation, deleteMutation } = useAccessTokens();
+  const [editing, setEditing] = useState<AgentAccessToken | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [removing, setRemoving] = useState<AgentAccessToken | null>(null);
 
@@ -132,7 +132,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
           </CardDescription>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Icons.Plus className="mr-2 h-4 w-4" />
+          <Icons.Plus className="me-2 h-4 w-4" />
           {t("settings:agentAccess.pat_create")}
         </Button>
       </CardHeader>
@@ -155,7 +155,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
                 <div
                   key={token.id}
                   className={cn(
-                    "grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-md border px-4 py-3.5 transition-colors",
+                    "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-md border px-4 py-3.5 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto]",
                     inactive
                       ? "border-border border-dashed bg-transparent opacity-80"
                       : "bg-muted/30 border-border",
@@ -184,8 +184,11 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
                       {formatLastUsed(t, token.lastUsedAt, dateFnsLocale)}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="col-span-2 flex flex-wrap items-center justify-end gap-3 sm:col-span-1">
                     <ScopeBadge scopes={token.scopes} />
+                    <Button variant="outline" size="sm" onClick={() => setEditing(token)}>
+                      {t("settings:agentAccess.edit_permissions")}
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
@@ -201,6 +204,16 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
           </div>
         )}
       </CardContent>
+
+      {editing && (
+        <PatEditDialog
+          key={editing.id}
+          token={editing}
+          onClose={() => setEditing(null)}
+          onSave={(scopes) => updateMutation.mutateAsync({ id: editing.id, scopes })}
+          isSaving={updateMutation.isPending}
+        />
+      )}
 
       <PatCreateDialog
         open={createOpen}
@@ -231,7 +244,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
               {t("common:cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteMutation.isPending}
               onClick={() => {
                 if (!removing) return;

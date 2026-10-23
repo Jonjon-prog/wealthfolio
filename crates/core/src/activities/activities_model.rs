@@ -2,13 +2,13 @@
 
 use crate::activities::activities_constants::{
     ACTIVITY_SUBTYPE_BONUS, ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND, ACTIVITY_SUBTYPE_DRIP,
-    ACTIVITY_SUBTYPE_OPTION_EXPIRY, ACTIVITY_SUBTYPE_POSITION_CLOSE,
-    ACTIVITY_SUBTYPE_POSITION_OPEN, ACTIVITY_SUBTYPE_REBATE, ACTIVITY_SUBTYPE_REFUND,
-    ACTIVITY_SUBTYPE_REIMBURSEMENT, ACTIVITY_SUBTYPE_STAKING_REWARD, ACTIVITY_TYPE_ADJUSTMENT,
-    ACTIVITY_TYPE_BUY, ACTIVITY_TYPE_CREDIT, ACTIVITY_TYPE_DEPOSIT, ACTIVITY_TYPE_DIVIDEND,
-    ACTIVITY_TYPE_FEE, ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SELL, ACTIVITY_TYPE_SPLIT,
-    ACTIVITY_TYPE_TAX, ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT,
-    ACTIVITY_TYPE_WITHDRAWAL,
+    ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION, ACTIVITY_SUBTYPE_OPTION_EXPIRY,
+    ACTIVITY_SUBTYPE_POSITION_CLOSE, ACTIVITY_SUBTYPE_POSITION_OPEN, ACTIVITY_SUBTYPE_REBATE,
+    ACTIVITY_SUBTYPE_REFUND, ACTIVITY_SUBTYPE_REIMBURSEMENT, ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL,
+    ACTIVITY_SUBTYPE_STAKING_REWARD, ACTIVITY_TYPE_ADJUSTMENT, ACTIVITY_TYPE_BUY,
+    ACTIVITY_TYPE_CREDIT, ACTIVITY_TYPE_DEPOSIT, ACTIVITY_TYPE_DIVIDEND, ACTIVITY_TYPE_FEE,
+    ACTIVITY_TYPE_INTEREST, ACTIVITY_TYPE_SELL, ACTIVITY_TYPE_SPLIT, ACTIVITY_TYPE_TAX,
+    ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT, ACTIVITY_TYPE_WITHDRAWAL,
 };
 use crate::activities::csv_parser::ParseConfig;
 use crate::activities::TransferLinkState;
@@ -243,11 +243,6 @@ impl Activity {
         effective_activity_type(&self.activity_type, self.activity_type_override.as_deref())
     }
 
-    /// Returns the effective date for this activity
-    pub fn effective_date(&self) -> NaiveDate {
-        self.activity_date.naive_utc().date()
-    }
-
     /// Check if this activity is posted (should affect calculations)
     pub fn is_posted(&self) -> bool {
         self.status == ActivityStatus::Posted
@@ -419,26 +414,31 @@ impl NewActivity {
     pub fn canonicalize_subtype(subtype: Option<&str>) -> Option<String> {
         let subtype = subtype.map(str::trim).filter(|value| !value.is_empty())?;
 
-        let canonical = if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_DRIP) {
+        let normalized = subtype.replace([' ', '-'], "_");
+        let canonical = if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_DRIP) {
             ACTIVITY_SUBTYPE_DRIP
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND) {
             ACTIVITY_SUBTYPE_DIVIDEND_IN_KIND
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_STAKING_REWARD) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_STAKING_REWARD) {
             ACTIVITY_SUBTYPE_STAKING_REWARD
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_BONUS) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_BONUS) {
             ACTIVITY_SUBTYPE_BONUS
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REBATE) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REBATE) {
             ACTIVITY_SUBTYPE_REBATE
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REFUND) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REFUND) {
             ACTIVITY_SUBTYPE_REFUND
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REIMBURSEMENT) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_REIMBURSEMENT) {
             ACTIVITY_SUBTYPE_REIMBURSEMENT
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_OPTION_EXPIRY) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_OPTION_EXPIRY) {
             ACTIVITY_SUBTYPE_OPTION_EXPIRY
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_POSITION_OPEN) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_POSITION_OPEN) {
             ACTIVITY_SUBTYPE_POSITION_OPEN
-        } else if subtype.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_POSITION_CLOSE) {
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_POSITION_CLOSE) {
             ACTIVITY_SUBTYPE_POSITION_CLOSE
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL) {
+            ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL
+        } else if normalized.eq_ignore_ascii_case(ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION) {
+            ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION
         } else {
             subtype
         };
@@ -562,6 +562,25 @@ impl NewActivity {
 
         validate_activity_date(&self.activity_date)?;
 
+        let subtype =
+            Self::canonicalize_subtype_for_activity(&self.activity_type, self.subtype.as_deref());
+        if self
+            .activity_type
+            .eq_ignore_ascii_case(ACTIVITY_TYPE_ADJUSTMENT)
+            && matches!(
+                subtype.as_deref(),
+                Some(ACTIVITY_SUBTYPE_RETURN_OF_CAPITAL | ACTIVITY_SUBTYPE_NOTIONAL_DISTRIBUTION)
+            )
+            && ![self.get_asset_resolution_id(), self.get_asset_symbol()]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.trim().is_empty())
+        {
+            return Err(ActivityError::InvalidData(
+                "Cost basis adjustments require an asset_id or symbol".to_string(),
+            ));
+        }
+
         Self::validate_asset_backed_income_values(
             &self.activity_type,
             self.subtype.as_deref(),
@@ -622,10 +641,50 @@ impl NewActivity {
     }
 }
 
+/// One activity as an update would leave it, computed without writing.
+#[derive(Debug, Clone)]
+pub struct PreviewedActivityUpdate {
+    /// The stored activity.
+    pub existing: Activity,
+    /// The update as it would be written: omitted fields hydrated from
+    /// `existing` (a `None` patch still keeps the stored value), derived
+    /// amount and review flag applied, date and values normalized.
+    pub update: ActivityUpdate,
+    /// The instant `update.activity_date` is stored as.
+    pub activity_date: DateTime<Utc>,
+}
+
+/// What `update_activity` would write for an update, without writing it.
+#[derive(Debug, Clone)]
+pub struct ActivityUpdatePreview {
+    pub activity: PreviewedActivityUpdate,
+    /// The other leg of a linked transfer pair, which the update mirrors onto.
+    pub linked: Option<PreviewedActivityUpdate>,
+}
+
+/// Transient review of the existing financial writer's split invalidation.
+/// The fingerprint is opaque: it contains no category or financial details.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivitySplitEffect {
+    pub activity_id: String,
+    pub removed_splits: usize,
+    pub has_retained_category_assignment: bool,
+    pub fingerprint: String,
+}
+
 /// Input model for updating an existing activity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityUpdate {
+    /// ID of the other leg to unlink atomically with this financial edit.
+    /// That leg is unlink-only, with both legs reviewed before commit.
+    /// Transient; never persisted. Sync/import callers omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlink_transfer_pair_id: Option<String>,
+    /// User review only; omitted by non-interactive sync/import callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_review: Option<Vec<ActivitySplitEffect>>,
     pub id: String,
     pub account_id: String,
 
@@ -808,6 +867,12 @@ pub struct ActivityFinalCashMigrationResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InternalTransferPairRequest {
+    /// Optional native review of both existing legs; validated by the shared writer.
+    #[serde(default)]
+    pub split_review: Option<Vec<ActivitySplitEffect>>,
+    /// The record whose date and notes the existing activity form is editing.
+    #[serde(default)]
+    pub edited_activity_id: Option<String>,
     #[serde(default)]
     pub transfer_out_id: Option<String>,
     #[serde(default)]
@@ -829,6 +894,8 @@ pub struct InternalTransferPairRequest {
     pub destination_amount: Option<Decimal>,
     pub source_currency: String,
     pub destination_currency: String,
+    /// Legacy execution-rate hint. Amounts are authoritative; this is never
+    /// persisted as Activity.fx_rate (an activity-to-account valuation override).
     #[serde(
         default,
         deserialize_with = "decimal_input_format::deserialize_option_decimal"
@@ -945,6 +1012,17 @@ pub struct ActivityBulkIdentifierMapping {
     pub activity_id: String,
 }
 
+/// What a row's `cash_balance` measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CashBalanceScope {
+    /// The account's cash in the row's currency after this row.
+    Row,
+    /// The account's cash at the end of the row's day, in the account
+    /// currency: the same figure as that day's valuation.
+    Day,
+}
+
 /// Model for activity details including related data
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -985,6 +1063,17 @@ pub struct ActivityDetails {
     pub import_run_id: Option<String>,
     pub is_user_modified: bool,
     pub metadata: Option<Value>,
+    /// Currency the asset is quoted in, which can differ from the activity
+    /// currency. Kept after the released fields so exports keep their column
+    /// positions.
+    pub asset_quote_ccy: Option<String>,
+    /// The cash of the row's account, in `cash_balance_currency`, as
+    /// `cash_balance_scope` says: filled only when the search asked for
+    /// balances and the account's holdings come from its activities.
+    /// Serialized as null otherwise, so every export has the columns.
+    pub cash_balance: Option<String>,
+    pub cash_balance_currency: Option<String>,
+    pub cash_balance_scope: Option<CashBalanceScope>,
 }
 
 impl ActivityDetails {
@@ -1877,7 +1966,8 @@ mod optional_decimal_format {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomeData {
-    pub date: String,
+    /// When the income was received.
+    pub activity_date: DateTime<Utc>,
     pub income_type: String,
     pub asset_id: String,
     pub asset_kind: String,
@@ -1893,12 +1983,23 @@ pub struct IncomeData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportActivitiesResult {
+    /// Actual writer-assigned IDs in source row order. Review row IDs remain
+    /// untouched; metadata follow-up must use these persisted identities.
+    #[serde(default)]
+    pub persisted_rows: Vec<ImportedActivityIdentity>,
     /// The validated/imported activities
     pub activities: Vec<ActivityImport>,
     /// Import run ID for tracking this batch
     pub import_run_id: String,
     /// Summary statistics for the import
     pub summary: ImportActivitiesSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedActivityIdentity {
+    pub index: usize,
+    pub activity_id: String,
 }
 
 /// Summary statistics for an activity import

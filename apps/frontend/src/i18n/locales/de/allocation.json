@@ -383,7 +383,6 @@
     "clearAccounts": "Leeren",
     "noMatchingAccounts": "Kein Konto passt.",
     "otherAccounts": "Weitere Konten",
-    "includeAccount": "{{account}} einbeziehen",
     "noCashRecorded": "Kein Bargeld",
     "accountRecorded": "{{amount}} erfasst",
     "cryptoOnly": "nur Krypto",

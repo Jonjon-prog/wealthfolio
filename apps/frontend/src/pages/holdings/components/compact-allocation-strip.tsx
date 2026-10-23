@@ -1,5 +1,5 @@
 import type { TaxonomyAllocation } from "@/lib/types";
-import { PrivacyAmount, useNumberFormatting } from "@wealthfolio/ui";
+import { chartSliceColor, PrivacyAmount, useNumberFormatting } from "@wealthfolio/ui";
 import { Card } from "@wealthfolio/ui/components/ui/card";
 import {
   Tooltip,
@@ -20,17 +20,6 @@ interface CompactAllocationStripProps {
   variant?: VariantType;
   onSegmentClick?: (categoryId: string, categoryName: string) => void;
 }
-
-// Theme colors for Security Types
-const THEME_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "var(--chart-6)",
-  "var(--chart-7)",
-];
 
 // Risk colors - muted Flexoki tones that don't attract attention
 const RISK_COLORS: Record<string, string> = {
@@ -109,7 +98,7 @@ export function CompactAllocationStrip({
     if (sorted.length <= maxCategories) {
       return sorted.map((c, i) => ({
         ...c,
-        color: THEME_COLORS[i % THEME_COLORS.length],
+        color: chartSliceColor(i),
       }));
     }
 
@@ -121,7 +110,7 @@ export function CompactAllocationStrip({
     return [
       ...top.map((c, i) => ({
         ...c,
-        color: THEME_COLORS[i % THEME_COLORS.length],
+        color: chartSliceColor(i),
       })),
       {
         id: "other",
@@ -129,7 +118,7 @@ export function CompactAllocationStrip({
         label: t("holdings:other"),
         value: otherValue,
         percent: otherPercent,
-        color: THEME_COLORS[THEME_COLORS.length - 1],
+        color: "var(--chart-stone)",
         isEmpty: false,
       },
     ];
@@ -151,7 +140,7 @@ export function CompactAllocationStrip({
   if (processedCategories.length === 0) {
     return (
       <Card className="p-3">
-        <p className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
+        <p className="text-muted-foreground text-sm font-medium tracking-wider uppercase">
           {title}
         </p>
         <p className="text-muted-foreground mt-2 text-xs">{t("holdings:no_data")}</p>
@@ -163,7 +152,7 @@ export function CompactAllocationStrip({
     <Card className="p-3">
       <TooltipProvider>
         {/* Title */}
-        <p className="text-muted-foreground mb-2 text-sm font-medium uppercase tracking-wider">
+        <p className="text-muted-foreground mb-2 text-sm font-medium tracking-wider uppercase">
           {title}
         </p>
 
@@ -175,37 +164,38 @@ export function CompactAllocationStrip({
             const isLast = index === processedCategories.length - 1;
 
             return (
-              <Tooltip key={category.id} delayDuration={100}>
-                <TooltipTrigger asChild>
-                  <div
-                    className={`h-full transition-opacity ${isEmpty ? "" : "cursor-pointer hover:opacity-80"}`}
-                    style={{
-                      width: isEmpty ? "1px" : `${category.percent}%`,
-                      backgroundColor: isEmpty ? "var(--color-base-200)" : category.color,
-                      opacity: isEmpty ? 0.5 : 1,
-                      // 1px separator via box-shadow (no extra DOM)
-                      boxShadow: isLast ? "none" : "inset -1px 0 0 var(--background)",
-                    }}
-                    onClick={() => !isEmpty && onSegmentClick?.(category.id, category.name)}
-                    role={isEmpty ? undefined : "button"}
-                    tabIndex={isEmpty ? -1 : 0}
-                    onKeyDown={(e) => {
-                      if (!isEmpty && (e.key === "Enter" || e.key === " ")) {
-                        onSegmentClick?.(category.id, category.name);
-                      }
-                    }}
-                  />
-                </TooltipTrigger>
+              <Tooltip key={category.id}>
+                <TooltipTrigger
+                  delay={100}
+                  render={
+                    <div
+                      className={`h-full transition-opacity ${isEmpty ? "" : "cursor-pointer hover:opacity-80"}`}
+                      style={{
+                        width: isEmpty ? "1px" : `${category.percent}%`,
+                        backgroundColor: isEmpty ? "var(--color-base-200)" : category.color,
+                        opacity: isEmpty ? 0.5 : 1,
+                        // 1px separator via box-shadow (no extra DOM)
+                        boxShadow: isLast ? "none" : "inset -1px 0 0 var(--background)",
+                      }}
+                      onClick={() => !isEmpty && onSegmentClick?.(category.id, category.name)}
+                      role={isEmpty ? undefined : "button"}
+                      tabIndex={isEmpty ? -1 : 0}
+                      onKeyDown={(e) => {
+                        if (!isEmpty && (e.key === "Enter" || e.key === " ")) {
+                          onSegmentClick?.(category.id, category.name);
+                        }
+                      }}
+                    />
+                  }
+                />
                 {!isEmpty && (
                   <TooltipContent side="top" align="center">
                     <div className="text-center">
-                      <span className="text-muted-foreground text-[0.70rem] uppercase">
-                        {category.name}
-                      </span>
+                      <span className="text-background/70 text-2xs uppercase">{category.name}</span>
                       <div className="font-medium">
                         {formatting.formatPercent(category.percent / 100)}
                       </div>
-                      <div className="text-muted-foreground text-xs">
+                      <div className="text-background/70 text-xs">
                         <PrivacyAmount value={category.value} currency={baseCurrency} />
                       </div>
                     </div>

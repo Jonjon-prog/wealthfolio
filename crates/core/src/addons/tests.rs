@@ -536,6 +536,38 @@ fn test_detect_addon_permissions_spending() {
 }
 
 #[test]
+fn spending_metadata_writes_and_budgets_are_detected_under_explicit_high_risk_categories() {
+    let files=vec![AddonFile{name:"addon.js".into(),content:r#"
+        ctx.api.spending.getContext(); ctx.api.spending.getBudget(); ctx.api.spending.getEvents(); ctx.api.spending.getEventTypes();
+        ctx.api.spending.assignCategory('a','expense','c'); ctx.api.spending.unassignCategory('a','expense'); ctx.api.spending.setEvent('a',null);
+        ctx.api.spending.upsertBudgetTarget({});
+    "#.into(),is_main:true}];
+    let permissions = detect_addon_permissions(&files);
+    let functions = |category: &str| {
+        permissions
+            .iter()
+            .find(|p| p.category == category)
+            .unwrap()
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    assert_eq!(
+        functions("spending"),
+        std::collections::HashSet::from(["getContext", "getBudget", "getEvents", "getEventTypes"])
+    );
+    assert_eq!(
+        functions("activities"),
+        std::collections::HashSet::from(["assignCategory", "unassignCategory", "setEvent"])
+    );
+    assert_eq!(
+        functions("budgets"),
+        std::collections::HashSet::from(["upsertBudgetTarget"])
+    );
+}
+
+#[test]
 fn test_addon_manifest_to_installed() {
     let manifest = AddonManifest {
         id: "test-addon".to_string(),
@@ -1326,6 +1358,45 @@ fn test_extract_addon_zip_accepts_valid_nested_paths() {
             .any(|file| file.name == "dist/helpers/util.js"),
         "nested helper file should be preserved"
     );
+}
+
+#[test]
+fn test_extract_addon_zip_accepts_windows_separators() {
+    let zip_data = build_test_addon_zip(&[
+        (
+            "my-addon\\manifest.json",
+            r#"{"id":"test-addon","name":"Test Addon","version":"1.0.0","main":"addon.js"}"#,
+        ),
+        ("my-addon\\addon.js", "console.log('ok');"),
+    ]);
+
+    let extracted = extract_addon_zip_internal(zip_data).expect("zip should extract");
+    assert_eq!(extracted.metadata.id, "test-addon");
+    assert!(
+        extracted
+            .files
+            .iter()
+            .any(|file| file.name == "addon.js" && file.is_main),
+        "main file should be found under the normalized package root"
+    );
+}
+
+#[test]
+fn test_extract_addon_zip_rejects_windows_parent_traversal_path() {
+    let zip_data = build_test_addon_zip(&[
+        (
+            "manifest.json",
+            r#"{"id":"test-addon","name":"Test Addon","version":"1.0.0","main":"dist/addon.js"}"#,
+        ),
+        ("dist/addon.js", "console.log('ok');"),
+        ("..\\evil.js", "console.log('bad');"),
+    ]);
+
+    let err = match extract_addon_zip_internal(zip_data) {
+        Ok(_) => panic!("zip should be rejected"),
+        Err(err) => err,
+    };
+    assert!(err.contains("parent traversal"));
 }
 
 #[test]

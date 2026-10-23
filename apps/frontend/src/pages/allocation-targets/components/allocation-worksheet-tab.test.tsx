@@ -1335,7 +1335,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
     const user = await renderWorksheet();
 
-    await user.click(screen.getByRole("checkbox", { name: "Include Retirement" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Retirement\b/ }));
     await waitFor(
       () => expect(screen.getByRole("button", { name: "Next: Adjust positions" })).toBeEnabled(),
       { timeout: 2000 },
@@ -1479,7 +1479,7 @@ describe("AllocationWorksheetTab Setup cash (§6)", () => {
     await waitFor(() => expect(previewMock).toHaveBeenCalledTimes(1), { timeout: 2000 });
 
     // Leaving an account out sends a new preview before the first one answers.
-    await user.click(screen.getByRole("checkbox", { name: "Include Retirement" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Retirement\b/ }));
     await waitFor(() => expect(previewMock).toHaveBeenCalledTimes(2), { timeout: 2000 });
 
     // What the accounts record does not depend on the edit: the first answer
@@ -1510,7 +1510,7 @@ describe("AllocationWorksheetTab Setup cash (§6)", () => {
     const user = await renderWorksheet();
     await waitFor(() => expect(fromAccount("Retirement")).toBeInTheDocument(), { timeout: 2000 });
 
-    await user.click(screen.getByRole("checkbox", { name: "Include Retirement" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Retirement\b/ }));
 
     expect(screen.queryByRole("textbox", { name: "Cash to deploy from Retirement" })).toBeNull();
     expect(total()).toHaveValue("2,000.00");
@@ -1524,7 +1524,7 @@ describe("AllocationWorksheetTab Setup cash (§6)", () => {
     ];
     heldAccountIds.current = ["acc-1", "acc-2"];
     const user = await renderWorksheet();
-    await user.click(screen.getByRole("checkbox", { name: "Include Joint" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Joint\b/ }));
     await calculateFromTarget(user);
     // VTI waits for an account, so the worksheet cannot be previewed.
     expect(screen.getByRole("button", { name: "Choose accounts" })).toBeInTheDocument();
@@ -1535,7 +1535,7 @@ describe("AllocationWorksheetTab Setup cash (§6)", () => {
       ...twoAccounts,
       recordedCashByAccount: { ...twoAccounts.recordedCashByAccount, "acc-3": 400 },
     });
-    await user.click(screen.getByRole("checkbox", { name: "Include Joint" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Joint\b/ }));
 
     // The same preview, without lines or cash, reads what Joint records.
     await waitFor(() => expect(fromAccount("Joint")).toHaveValue("400.00"), { timeout: 2000 });
@@ -2100,11 +2100,11 @@ describe("AllocationWorksheetTab Setup", () => {
       );
     expect(order()).toEqual(["acc-1", "acc-2", "acc-3"]);
 
-    await user.click(screen.getByRole("checkbox", { name: "Include Brokerage" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Brokerage\b/ }));
 
     expect(order()).toEqual(["acc-2", "acc-3", "acc-1"]);
     const leftOut = screen.getByRole("group", { name: "Left out · 1" });
-    expect(within(leftOut).getByRole("checkbox", { name: "Include Brokerage" })).not.toBeChecked();
+    expect(within(leftOut).getByRole("checkbox", { name: /^Brokerage\b/ })).not.toBeChecked();
 
     await user.click(within(leftOut).getByRole("button", { name: "Add all back" }));
     expect(order()).toEqual(["acc-1", "acc-2", "acc-3"]);

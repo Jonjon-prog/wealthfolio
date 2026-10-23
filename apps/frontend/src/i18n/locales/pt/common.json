@@ -246,7 +246,6 @@
     "asset_type_option": "Opção",
     "asset_type_metal": "Metal (commodity)",
     "asset_type_other": "Outro",
-    "select_currency": "Selecionar moeda...",
     "select_symbol": "Selecionar símbolo...",
     "symbol_type_security": "Valor mobiliário",
     "symbol_type_crypto": "Cripto",
@@ -309,6 +308,8 @@
     "screenshot_alt": "Captura de tela {{number}}",
     "downloading_update": "Baixando atualização...",
     "installing_update": "Instalando atualização...",
+    "update_external_flatpak": "Esta cópia do Wealthfolio foi instalada com o Flatpak. Atualize-a pelo Flatpak ou pela sua central de software.",
+    "update_external_package_manager": "Esta instalação não pode ser atualizada pelo Wealthfolio. Atualize-a da mesma forma que você a instalou.",
     "update_failed": "A atualização falhou. Tente novamente.",
     "remind_me_later": "Lembrar mais tarde",
     "view_changelog": "Ver registro de alterações",
@@ -503,6 +504,7 @@
       "unavailable": "Não foi possível abrir este perfil. Reinicie o Wealthfolio e tente novamente.",
       "inUse": "Este perfil está aberto noutra janela do Wealthfolio. Feche-o nessa janela e tente novamente.",
       "credentials": "Não foi possível aceder aos dados de início de sessão guardados. Desbloqueie o dispositivo e tente novamente.",
+      "serverCredentials": "O servidor não conseguiu aceder ao arquivo de segredos (secrets.json). Peça ao administrador do servidor para verificar se WF_SECRET_KEY corresponde à chave com que o arquivo foi criado e se o servidor consegue ler e gravar o arquivo.",
       "invalid": "Confira os dados do perfil e tente novamente.",
       "name": "Use um nome de perfil com 1 a 60 caracteres.",
       "avatar": "Escolha um dos avatares disponíveis.",
@@ -519,5 +521,9 @@
       "rebind": "Reconecte o Wealthfolio Connect para confirmar a conta e o grupo familiar deste perfil.",
       "cooldown_many": "Muitas tentativas. Tente novamente em {{count}} segundos."
     }
-  }
+  },
+  "remove": "Remover",
+  "remove_item": "Remover {{name}}",
+  "actions_for": "Ações para {{name}}",
+  "settings_for": "Configurações de {{name}}"
 }

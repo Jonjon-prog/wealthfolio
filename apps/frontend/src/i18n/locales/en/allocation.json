@@ -383,7 +383,6 @@
     "clearAccounts": "Clear",
     "noMatchingAccounts": "No account matches.",
     "otherAccounts": "Other accounts",
-    "includeAccount": "Include {{account}}",
     "noCashRecorded": "No cash",
     "accountRecorded": "{{amount}} recorded",
     "cryptoOnly": "crypto only",

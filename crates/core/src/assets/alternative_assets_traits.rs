@@ -16,20 +16,20 @@ use super::alternative_assets_model::{
     UpdateAssetDetailsResponse, UpdateValuationRequest, UpdateValuationResponse,
 };
 use super::loan::{
-    LoanAction, LoanActionResult, LoanPayment, LoanRecord, LoanSchedulePreview, LoanSetup,
-    LoanUpdate, PaymentLink, PaymentTagUpdate,
+    LoanAction, LoanActionResult, LoanPayment, LoanSchedulePreview, LoanSetup, LoanUpdate,
+    PaymentLink, PaymentTagUpdate, StoredLoan, StoredPayment,
 };
 use crate::activities::Activity;
 use crate::errors::Result;
 use std::collections::HashMap;
 
 /// Decides a loan's writes from what is stored, inside the write transaction.
-pub type LoanChange = Box<dyn FnOnce(&LoanRecord) -> Result<LoanUpdate> + Send>;
+pub type LoanChange = Box<dyn FnOnce(&StoredLoan) -> Result<LoanUpdate> + Send>;
 
 /// Decides a withdrawal's new metadata from the withdrawal, its account type and
 /// the loan it would pay, read inside the write transaction.
 pub type PaymentTagChange =
-    Box<dyn FnOnce(&Activity, &str, Option<&LoanRecord>) -> Result<PaymentTagUpdate> + Send>;
+    Box<dyn FnOnce(&Activity, &str, Option<&StoredLoan>) -> Result<PaymentTagUpdate> + Send>;
 
 /// Trait defining the contract for Alternative Asset service operations.
 ///
@@ -219,8 +219,8 @@ pub trait AlternativeAssetRepositoryTrait: Send + Sync {
         notes: Option<&str>,
     ) -> Result<()>;
 
-    /// Tagged withdrawals counted as payments, by loan id.
-    fn loan_payments(&self, loan_ids: &[String]) -> Result<HashMap<String, Vec<LoanPayment>>>;
+    /// Tagged withdrawals counted as payments, by loan id, as stored.
+    fn loan_payments(&self, loan_ids: &[String]) -> Result<HashMap<String, Vec<StoredPayment>>>;
 
     /// Reads a loan, decides its writes from what is stored and applies them in
     /// one transaction, so a concurrent edit cannot be overwritten.

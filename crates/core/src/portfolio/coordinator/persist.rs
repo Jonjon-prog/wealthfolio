@@ -163,6 +163,7 @@ pub fn account_state_from_snapshot(
                     inception: p.inception_date,
                     cost_basis_account: p.cost_basis_account,
                     cost_basis_base: p.cost_basis_base,
+                    last_closed_lot: None,
                 },
             )
         })

@@ -396,7 +396,6 @@
     "clearAccounts": "Limpar",
     "noMatchingAccounts": "Nenhuma conta corresponde.",
     "otherAccounts": "Outras contas",
-    "includeAccount": "Incluir {{account}}",
     "noCashRecorded": "Sem caixa",
     "accountRecorded": "{{amount}} registrados",
     "cryptoOnly": "apenas cripto",

@@ -65,25 +65,27 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
             <FormLabel>{resolvedLabel}</FormLabel>
             {labelHelpText && (
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
-                    aria-label={t("activity:form.more_info_about", { label: resolvedLabel })}
-                  >
-                    <Icons.Info className="h-3 w-3" />
-                  </button>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
+                      aria-label={t("activity:form.more_info_about", { label: resolvedLabel })}
+                    />
+                  }
+                >
+                  <Icons.Info className="h-3 w-3" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs text-xs">{labelHelpText}</TooltipContent>
               </Tooltip>
             )}
           </div>
           {currency ? (
-            <InputGroup className="bg-input-bg h-input-height shadow-xs min-w-0 rounded-md">
+            <InputGroup className="bg-input-bg h-input-height min-w-0 rounded-md shadow-xs">
               <FormControl>
                 <MoneyInput
                   data-slot="input-group-control"
-                  className="aria-invalid:ring-0 min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0"
+                  className="min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:outline-none aria-invalid:ring-0"
                   ref={field.ref}
                   name={field.name}
                   value={field.value}

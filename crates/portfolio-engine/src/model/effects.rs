@@ -46,6 +46,10 @@ pub struct AccountProfile {
     /// (rules R7.2).
     #[serde(default)]
     pub cost_basis_method: CostBasisMethod,
+    /// Whether it has started by `as_of`: a transactions account has an
+    /// activity, a holdings account an observed snapshot. One that has not
+    /// holds and moves nothing, so a scope leaves it out (P-IDLE).
+    pub started: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,8 +75,11 @@ pub struct EventEffect {
     pub fee: Option<Decimal>,
     #[serde(default, with = "crate::model::decimal_serde::option")]
     pub tax: Option<Decimal>,
-    /// A trade: its disposals are realised P&L.
-    pub trade: bool,
+    /// Its disposals are realised P&L: a trade, an option's expiry, a
+    /// transfer in (the units it delivers cover a short), or a return of
+    /// capital (rules R7.4). A transfer out moves lots at their cost and
+    /// realizes nothing (rules R2.4).
+    pub realizes: bool,
     /// The charges of a BUY or SELL row, in base, when it has any and they
     /// convert.
     pub trade_charge: Option<TradeCharge>,
@@ -116,4 +123,7 @@ pub struct PairEffect {
     /// A pair of security legs (not cash).
     #[serde(default)]
     pub security: bool,
+    /// Recognized same-account FX conversions leave contribution unchanged.
+    #[serde(default)]
+    pub contribution_neutral: bool,
 }

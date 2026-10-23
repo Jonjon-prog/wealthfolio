@@ -1,3 +1,5 @@
+import { stripBidiControls } from "@wealthfolio/ui";
+
 import type {
   AllocationWorksheetLineResult,
   AllocationWorksheetResult,
@@ -302,7 +304,11 @@ function textCell(value: ExportCell, decimalSeparator: string): string {
     return text.replace(".", decimalSeparator);
   }
   if (typeof value === "number") return String(value).replace(".", decimalSeparator);
-  return FORMULA_PREFIX.test(value) ? `'${value}` : value;
+  // Exported text leaves the screen: drop the bidi isolation marks translated
+  // and formatted values carry in a right-to-left language, before the formula
+  // check, which a leading mark would hide a prefix from.
+  const text = stripBidiControls(value);
+  return FORMULA_PREFIX.test(text) ? `'${text}` : text;
 }
 
 /**

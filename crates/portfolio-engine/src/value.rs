@@ -18,6 +18,7 @@ use crate::arith;
 use crate::compile::CompiledLedger;
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::error::EngineError;
+use crate::measure::{CashFxEffect, MeasureInputs, MeasureProfile};
 use crate::model::*;
 use crate::project::{in_position_currency, lot_records, position_book_cost, QUANTITY_THRESHOLD};
 use crate::resolve::{FxResolver, ResolvedSurfaces};
@@ -83,7 +84,10 @@ impl PricedPosition {
     fn basis_status(&self) -> BasisStatus {
         if self.alternative || self.quantity.is_zero() {
             BasisStatus::NotApplicable
-        } else if !self.total_cost_basis.is_zero() {
+        } else if !self.total_cost_basis.is_zero()
+            || self.cost_basis_account.is_some_and(|cost| !cost.is_zero())
+            || self.cost_basis_base.is_some_and(|cost| !cost.is_zero())
+        {
             BasisStatus::Complete
         } else {
             BasisStatus::Unknown
@@ -222,10 +226,21 @@ fn value_series(
     series
 }
 
+/// Whether `account` has started by `as_of`, from its facts (see
+/// [`AccountProfile::started`]). Its stored rows never decide it: a started
+/// account whose rows are missing is a gap the scope must refuse (P-STRICT).
+/// An account the facts do not know is taken as started.
+pub(crate) fn has_started(effects: &Effects, account: &AccountId) -> bool {
+    effects
+        .account(account)
+        .is_none_or(|profile| profile.started)
+}
+
 /// The scoped read performance consumes (legacy
 /// `get_historical_valuations_for_accounts`): per-day sums in base currency
 /// of the accounts' stored rows, flows included, less the legs of transfer
-/// pairs whose accounts are both in scope.
+/// pairs whose accounts are both in scope. An account that has not started
+/// takes no part (a holdings account without a snapshot has no rows).
 pub fn aggregate_scope(
     effects: &Effects,
     series: &BTreeMap<AccountId, ValuationSeries>,
@@ -241,6 +256,17 @@ pub fn aggregate_scope(
             archived.as_str().to_string(),
         ));
     }
+    let label = scope
+        .iter()
+        .map(|id| id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let scope: Vec<AccountId> = scope
+        .iter()
+        .filter(|id| has_started(effects, id))
+        .cloned()
+        .collect();
+    let scope = scope.as_slice();
     // Stored rows inside the window, as the persisted read returns them.
     let histories: Vec<ValuationSeries> = scope
         .iter()
@@ -339,13 +365,7 @@ pub fn aggregate_scope(
     }
 
     Ok(ValuationSeries {
-        account: AccountId::new(
-            scope
-                .iter()
-                .map(|id| id.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-        ),
+        account: AccountId::new(label),
         currency: base,
         days,
         diagnostics: Vec::new(),
@@ -552,7 +572,8 @@ fn keyframes_for(
             .unwrap_or_default();
         // An account with no events has no keyframes: present its (empty)
         // final state on the range end, as one row (in a chunked run, only
-        // the last window's end is the range end).
+        // the last window's end is the range end). No stored keyframe can
+        // value it again, so `impact` refolds it whole.
         let last_window = seed.is_none() || resolved.range.end == resolved.facts.policy.as_of;
         let synthetic = (own.is_empty() && seeded.is_none() && last_window)
             .then(|| inputs.bundle.final_state.accounts.get(account_id))
@@ -942,6 +963,9 @@ impl<'a> Valuer<'a> {
         let mut total = Decimal::ZERO;
         let mut converted = true;
         for (asset, position) in &keyframe.positions {
+            if position.quantity.is_zero() {
+                continue;
+            }
             match position_book_cost(
                 &self.fx,
                 position.alternative,
@@ -1312,6 +1336,131 @@ pub fn effects(
     priced_events(resolved, disposals, &transfers, rejected, None).0
 }
 
+/// Prepare the priced inputs for a stored-row performance read. Dashboard
+/// skips cash FX; Full/Summary inputs can also serve shallower reads.
+pub fn measure_inputs<'a>(
+    resolved: &Resolved<'_>,
+    series: &'a BTreeMap<AccountId, ValuationSeries>,
+    lots: &'a [LotRecord],
+    disposals: &'a [LotDisposal],
+    rejected: &BTreeSet<ActivityId>,
+    profile: MeasureProfile,
+) -> MeasureInputs<'a> {
+    let effects = effects(resolved, disposals, lots, rejected);
+    let cash_fx =
+        (profile != MeasureProfile::Dashboard).then(|| cash_fx_effects(resolved, series, rejected));
+    MeasureInputs {
+        effects,
+        cash_fx,
+        series,
+        lots,
+        disposals,
+    }
+}
+
+/// Price actual cash exposure before account/scope totals collapse its
+/// currencies. Under the daily end-of-day convention, only the previous
+/// day's closing units earn today's FX movement. Postings on the day change
+/// the exposure for the next day, regardless of whether they are external
+/// flows, trades, income, fees or the legs of a conversion.
+pub(crate) fn cash_fx_effects(
+    resolved: &Resolved<'_>,
+    series: &BTreeMap<AccountId, ValuationSeries>,
+    rejected: &BTreeSet<ActivityId>,
+) -> BTreeMap<AccountId, Vec<CashFxEffect>> {
+    let mut postings: BTreeMap<&AccountId, Vec<&EconomicEvent>> = BTreeMap::new();
+    for event in &resolved.ledger.events {
+        if event.cash.is_some() && !rejected.contains(&event.source) {
+            postings.entry(&event.account).or_default().push(event);
+        }
+    }
+    let fx = resolved.fx();
+    let policy = &resolved.facts.policy;
+    let base = policy.major_currency(policy.base_currency.as_str());
+    let mut effects = BTreeMap::new();
+    for (id, history) in series {
+        let Some(account) = resolved.facts.accounts.get(id) else {
+            continue;
+        };
+        if account.archived || account.tracking == TrackingMode::Holdings {
+            continue;
+        }
+        let (Some(first), Some(last)) = (history.days.first(), history.days.last()) else {
+            continue;
+        };
+        let events = postings.get(id).map_or(&[][..], Vec::as_slice);
+        let mut next_event = 0;
+        let mut cash: BTreeMap<&Currency, Decimal> = BTreeMap::new();
+        let mut known = true;
+        let mut daily = Vec::new();
+        let account_currency = policy.major_currency(account.currency.as_str());
+        // Match value_day: convert each bucket to the account's major currency,
+        // net balances there, then convert the total to base. Converting each
+        // gross bucket to base first can exceed the bound despite a valid net.
+        let cash_value = |cash: &BTreeMap<&Currency, Decimal>, date| {
+            let account_value =
+                cash.iter()
+                    .try_fold(Decimal::ZERO, |total, (currency, units)| {
+                        if units.is_zero() {
+                            return Some(total);
+                        }
+                        let (major, factor) = policy.normalize_currency(currency.as_str());
+                        let amount = arith::product(&[
+                            *units,
+                            factor,
+                            fx.rate(major, account_currency, date)?,
+                        ])?;
+                        total.checked_add(amount)
+                    })?;
+            if account_value.is_zero() {
+                Some(Decimal::ZERO)
+            } else {
+                arith::mul(account_value, fx.rate(account_currency, base, date)?)
+            }
+        };
+        for date in first.date.iter_days().take_while(|day| *day <= last.date) {
+            if date > first.date {
+                let previous = date
+                    .pred_opt()
+                    .expect("a day after the first has a predecessor");
+                let amount = known
+                    .then(|| {
+                        cash_value(&cash, date)?
+                            .checked_sub(cash_value(&cash, previous)?)
+                            .and_then(arith::bounded)
+                    })
+                    .flatten();
+                if amount != Some(Decimal::ZERO) {
+                    daily.push(CashFxEffect { date, amount });
+                }
+            }
+            while let Some(event) = events.get(next_event).filter(|e| e.date <= date) {
+                let booked = event
+                    .cash
+                    .as_ref()
+                    .and_then(|cash| cash.booked(&event.currency, &account.currency));
+                match booked {
+                    Some((currency, amount)) => {
+                        let balance = cash.entry(currency).or_default();
+                        // Projection permits a transient balance above the
+                        // valuation bound; only Decimal overflow loses the
+                        // exposure. A later posting can bring it back in range.
+                        if let Some(total) = balance.checked_add(amount) {
+                            *balance = total;
+                        } else {
+                            known = false;
+                        }
+                    }
+                    None => known = false,
+                }
+                next_event += 1;
+            }
+        }
+        effects.insert(id.clone(), daily);
+    }
+    effects
+}
+
 /// What each security transfer leg's own account recorded, so no path needs
 /// the partner's records (a window, a revalue and a read each have only
 /// their own accounts').
@@ -1369,6 +1518,8 @@ fn transfer_records(
                 });
             entry.units += lot.original_quantity;
             let known = !lot.fx_rate_to_base.is_zero() || lot.original_cost_basis.is_zero();
+            // Original cost is the receiving lot's opening book cost, kept
+            // apart from later adjustments and disposals (rules R2.4).
             // The fee is shared by the units each lot held when it opened.
             let weighted = arith::mul(lot.original_quantity, lot.split_ratio).and_then(|weight| {
                 let weight = weight.abs();
@@ -1571,11 +1722,42 @@ fn priced_events(
             income: convert(attributed.income, &event.currency, event.date),
             fee: convert(attributed.fee, &event.currency, event.date),
             tax: convert(attributed.tax, &event.currency, event.date),
-            trade: matches!(event.action, Action::Trade { .. }),
+            realizes: matches!(
+                event.action,
+                Action::Trade { .. }
+                    | Action::OptionExpiry { .. }
+                    | Action::SecurityTransfer {
+                        direction: Direction::In,
+                        ..
+                    }
+                    | Action::ReturnOfCapital { .. }
+            ),
             trade_charge,
             marked_external: marked_external.contains(event.source.as_str()),
         });
     }
+    // An account starts at its first fact on or before `as_of`: an activity,
+    // or for a holdings account an observed snapshot.
+    let as_of = facts.policy.as_of;
+    let holdings = |id: &AccountId| {
+        facts
+            .accounts
+            .get(id)
+            .is_some_and(|account| account.tracking == TrackingMode::Holdings)
+    };
+    let started: BTreeSet<&AccountId> = facts
+        .activities
+        .iter()
+        .filter(|a| a.date <= as_of && !holdings(&a.account))
+        .map(|a| &a.account)
+        .chain(
+            facts
+                .observed_snapshots
+                .iter()
+                .filter(|s| s.date <= as_of && holdings(&s.account))
+                .map(|s| &s.account),
+        )
+        .collect();
     let effects = Effects {
         base_currency: base.clone(),
         range,
@@ -1591,6 +1773,7 @@ fn priced_events(
                         kind: account.kind,
                         archived: account.archived,
                         cost_basis_method: account.cost_basis_method,
+                        started: started.contains(id),
                     },
                 )
             })
@@ -1609,6 +1792,7 @@ fn priced_events(
                 in_account: pair.in_account.clone(),
                 out_account: pair.out_account.clone(),
                 security: pair.security,
+                contribution_neutral: pair.contribution_neutral,
             })
             .collect(),
     };

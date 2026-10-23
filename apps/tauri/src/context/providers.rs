@@ -274,7 +274,8 @@ async fn build_context(
             secret_store.clone(),
             Some(custom_provider_repository.clone()),
         )
-        .await?,
+        .await?
+        .with_event_sink(domain_event_sink.clone()),
     );
 
     // Portfolio service
@@ -366,7 +367,7 @@ async fn build_context(
     let categorization_rules_service = Arc::new(
         wealthfolio_spending::categorization_rules::CategorizationRulesService::new(
             categorization_rules_repo,
-            activity_repository.clone(),
+            cash_activity_service.clone(),
             activity_taxonomy_assignment_service.clone(),
         ),
     );
@@ -448,6 +449,7 @@ async fn build_context(
             core_import_run_repository,
         )
         .with_timezone(timezone.clone())
+        .with_valuation_repository(valuation_repository.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
     let final_cash_migration = run_final_cash_migration(
@@ -519,7 +521,7 @@ async fn build_context(
         sources: fact_sources.clone(),
         fx_service: fx_service.clone(),
         snapshot_service: snapshot_service.clone(),
-        projections: projection_store,
+        projections: projection_store.clone(),
         lots: lots_repository.clone(),
         window_cadence: WindowCadence::Year,
     }));
@@ -566,7 +568,11 @@ async fn build_context(
             classification_service.clone(),
             timezone.clone(),
         )
-        .with_income_dependencies(activity_repository.clone(), fx_service.clone())
+        .with_income_dependencies(
+            activity_repository.clone(),
+            fx_service.clone(),
+            projection_store,
+        )
         .with_lot_repository(lots_repository.clone()),
     );
 
@@ -618,7 +624,7 @@ async fn build_context(
             valuation_repository.clone(),
             fx_service.clone(),
         )
-        .with_loan_payments(alternative_asset_repository.clone()),
+        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone()),
     );
 
     let alternative_asset_service = Arc::new(
@@ -702,6 +708,10 @@ async fn build_context(
         cash_activity_service.clone(),
         activity_taxonomy_assignment_service.clone(),
         categorization_rules_service.clone(),
+        budget_service.clone(),
+        events_service.clone(),
+        spending_analytics_service.clone(),
+        spending_insight_service.clone(),
     ));
     let agent_environment: Arc<dyn wealthfolio_agent_tools::AgentEnvironment> =
         ai_environment.clone();
@@ -748,7 +758,9 @@ async fn build_context(
     Ok(BuiltContext {
         context: ServiceContext {
             portfolio_tasks: crate::listeners::PortfolioTasks::new(),
+            #[cfg(feature = "device-sync")]
             sync_approvals: Default::default(),
+            backup_scheduler: Arc::default(),
             sync_lifecycle: tokio::sync::Mutex::new(()),
             active: std::sync::atomic::AtomicBool::new(true),
             profile_id,
@@ -810,7 +822,7 @@ async fn build_context(
 }
 
 /// Get a friendly display name for this device based on platform.
-fn get_device_display_name() -> String {
+pub(crate) fn get_device_display_name() -> String {
     #[cfg(target_os = "macos")]
     return "My Mac".to_string();
     #[cfg(target_os = "windows")]

@@ -3,10 +3,11 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use chrono::NaiveDate;
+use chrono_tz::Tz;
 
 use super::actions::with_entries;
 use super::model::escrow_amount;
-use super::payments::{is_regular_payment, payment_amount_of};
+use super::payments::{is_regular_payment, payment_amount_of, payment_date};
 use super::{
     event_entries, money, valid_amount, LoanError, LoanEvent, LoanPayment, LoanPaymentTag,
     LoanRecord, LoanTerms, PaymentTarget, LOAN_PAYMENT_TAG_KEY,
@@ -20,7 +21,8 @@ pub enum PaymentLink {
     #[serde(rename_all = "camelCase")]
     Link {
         loan_id: String,
-        /// Escrow included in this payment; the loan's usual escrow when omitted.
+        /// Escrow included in this payment; when omitted, the loan's usual escrow,
+        /// or none for extra principal.
         #[serde(default)]
         escrow: Option<f64>,
         #[serde(default)]
@@ -53,12 +55,14 @@ impl PaymentLink {
 }
 
 /// The writes for linking or unlinking a withdrawal. Linking checks the
-/// withdrawal against the loan as stored; other metadata keys are kept.
+/// withdrawal against the loan as stored, dating it in `timezone` as the loan's
+/// payments are; other metadata keys are kept.
 pub fn link_payment(
     activity: &Activity,
     account_type: &str,
     loan: Option<&LoanRecord>,
     link: &PaymentLink,
+    timezone: Tz,
 ) -> Result<PaymentTagUpdate, LoanError> {
     let mut metadata = match &activity.metadata {
         Some(Value::Object(map)) => map.clone(),
@@ -67,12 +71,10 @@ pub fn link_payment(
     let mut loan_metadata = None;
     match link {
         PaymentLink::Unlink => {
-            if metadata.remove(LOAN_PAYMENT_TAG_KEY).is_none() {
-                return Ok(PaymentTagUpdate {
-                    activity: activity.metadata.clone(),
-                    loan: None,
-                });
-            }
+            return Ok(PaymentTagUpdate {
+                activity: untagged(activity),
+                loan: None,
+            });
         }
         PaymentLink::Link {
             loan_id,
@@ -90,11 +92,16 @@ pub fn link_payment(
             if link_escrow.is_some_and(|escrow| !fits(escrow)) {
                 return Err(LoanError::Invalid);
             }
-            let mut escrow = link_escrow.unwrap_or_else(|| escrow_amount(&loan.metadata));
+            // Extra principal includes no escrow unless named, as when the loan
+            // records an extra repayment itself.
+            let mut escrow = link_escrow.unwrap_or_else(|| match applies_to {
+                Some(PaymentTarget::Extra) => 0.0,
+                _ => escrow_amount(&loan.metadata),
+            });
             let payment = LoanPayment {
                 activity_id: activity.id.clone(),
                 account_id: activity.account_id.clone(),
-                date: activity.effective_date(),
+                date: payment_date(activity, timezone),
                 amount,
                 escrow,
                 applies_to: *applies_to,
@@ -134,6 +141,18 @@ pub fn link_payment(
         activity: (!metadata.is_empty()).then_some(Value::Object(metadata)),
         loan: loan_metadata,
     })
+}
+
+/// The withdrawal's metadata without its loan tag; other keys are kept.
+pub fn untagged(activity: &Activity) -> Option<Value> {
+    let mut metadata = match &activity.metadata {
+        Some(Value::Object(map)) => map.clone(),
+        _ => return activity.metadata.clone(),
+    };
+    if metadata.remove(LOAN_PAYMENT_TAG_KEY).is_none() {
+        return activity.metadata.clone();
+    }
+    (!metadata.is_empty()).then_some(Value::Object(metadata))
 }
 
 /// Whether the withdrawal is a regular payment once allocated with the loan's

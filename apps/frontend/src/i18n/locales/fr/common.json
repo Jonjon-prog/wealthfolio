@@ -246,7 +246,6 @@
     "asset_type_option": "Option",
     "asset_type_metal": "Métal (Matière première)",
     "asset_type_other": "Autre",
-    "select_currency": "Sélectionner une devise...",
     "select_symbol": "Sélectionner un symbole...",
     "symbol_type_security": "Titre",
     "symbol_type_crypto": "Crypto",
@@ -309,6 +308,8 @@
     "screenshot_alt": "Capture d'écran {{number}}",
     "downloading_update": "Téléchargement de la mise à jour...",
     "installing_update": "Installation de la mise à jour...",
+    "update_external_flatpak": "Cette copie de Wealthfolio a été installée avec Flatpak. Mettez-la à jour avec Flatpak ou votre centre de logiciels.",
+    "update_external_package_manager": "Cette installation ne peut pas être mise à jour depuis Wealthfolio. Mettez-la à jour de la même manière que vous l'avez installée.",
     "update_failed": "La mise à jour a échoué. Veuillez réessayer.",
     "remind_me_later": "Me le rappeler plus tard",
     "view_changelog": "Voir le journal des modifications",
@@ -503,6 +504,7 @@
       "unavailable": "Impossible d’ouvrir ce profil. Redémarrez Wealthfolio et réessayez.",
       "inUse": "Ce profil est ouvert dans une autre fenêtre Wealthfolio. Fermez-le et réessayez.",
       "credentials": "Impossible d’accéder à vos informations de connexion enregistrées. Déverrouillez votre appareil et réessayez.",
+      "serverCredentials": "Le serveur n’a pas pu accéder à son fichier de secrets (secrets.json). Demandez à l’administrateur du serveur de vérifier que WF_SECRET_KEY correspond à la clé utilisée pour créer le fichier et que le serveur peut le lire et y écrire.",
       "invalid": "Vérifiez les informations du profil et réessayez.",
       "name": "Utilisez un nom de profil de 1 à 60 caractères.",
       "avatar": "Choisissez l’un des avatars disponibles.",
@@ -519,5 +521,9 @@
       "rebind": "Reconnectez Wealthfolio Connect pour confirmer le compte et le foyer de ce profil.",
       "cooldown_many": "Trop de tentatives. Réessayez dans {{count}} secondes."
     }
-  }
+  },
+  "remove": "Supprimer",
+  "remove_item": "Retirer {{name}}",
+  "actions_for": "Actions pour {{name}}",
+  "settings_for": "Paramètres de {{name}}"
 }

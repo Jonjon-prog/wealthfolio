@@ -165,9 +165,12 @@ See [ROADMAP.md](./ROADMAP.md).
 
 Ensure you have the following installed on your machine:
 
-- [Node.js](https://nodejs.org/)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/)
+- [Node.js](https://nodejs.org/), using the version in
+  [`.node-version`](.node-version)
+- [pnpm](https://pnpm.io/), using the `packageManager` version in
+  [`package.json`](package.json)
+- [Rust](https://www.rust-lang.org/), using
+  [`rust-toolchain.toml`](rust-toolchain.toml)
 - [Tauri](https://tauri.app/)
 
 ### Building from Source
@@ -182,8 +185,12 @@ Ensure you have the following installed on your machine:
 2. **Install dependencies using pnpm**:
 
    ```bash
-   pnpm install
+   pnpm install --frozen-lockfile
+   pnpm build:types
    ```
+
+   See [Frontend tooling](docs/frontend-tooling.md) for editor setup, checks,
+   and instructions for updating an existing checkout.
 
 3. **Setup environment configuration**:
 
@@ -243,6 +250,21 @@ To populate development with existing data, use the supported backup/export and
 restore flow. A raw copy of an encrypted production database still requires its
 original encryption key; development does not copy or fall back to production
 credentials. Never point development at the live production profile directory.
+
+#### Packaging for a Distribution
+
+If a package manager delivers updates, set `WEALTHFOLIO_UPDATE_EXPLANATION` to
+the message users should see when building:
+
+```bash
+WEALTHFOLIO_UPDATE_EXPLANATION="Update Wealthfolio with your package manager." pnpm tauri build
+```
+
+The desktop app still announces new releases with their notes, but shows this
+message instead of an Update Now button and refuses to install updates itself. A
+launcher script can set the same variable at run time instead. Flatpak installs,
+and `.deb`/`.rpm` builds whose binary dpkg or rpm did not install, are detected
+without it.
 
 #### Addon Development Mode
 
@@ -779,7 +801,7 @@ for maintained addon examples including:
 - **React**: JavaScript library for building user interfaces.
 - **React Router**: Declarative routing for React.
 - **Tailwind CSS**: Utility-first CSS framework for styling.
-- **Radix UI/Shadcn**: Accessible UI components.
+- **Base UI/shadcn**: Accessible UI components.
 - **Recharts**: Charting library built with React.
 - **React Query**: Data-fetching library for React.
 - **Zod**: TypeScript-first schema declaration and validation library.
@@ -803,8 +825,9 @@ for maintained addon examples including:
 
 - **Vite**: Next-generation frontend tooling.
 - **TypeScript**: Typed superset of JavaScript.
-- **ESLint**: Pluggable linting utility for JavaScript and JSX.
-- **Prettier**: Code formatter.
+- **Oxlint**: JavaScript/TypeScript linting with type-aware checks.
+- **ESLint**: Retained checks that need its plugin or parser APIs.
+- **Oxfmt**: Code formatting and Tailwind class sorting.
 - **pnpm**: Fast, disk space efficient package manager.
 - **Turborepo**: High-performance build system for JavaScript and TypeScript
   codebases.

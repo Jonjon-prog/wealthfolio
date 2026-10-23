@@ -1,6 +1,7 @@
 //! Loan actions: a requested change is checked against the stored loan and
 //! turned into writes that the repository applies in one transaction.
 use chrono::{NaiveDate, NaiveTime, Utc};
+use chrono_tz::Tz;
 use rust_decimal::{
     prelude::{FromPrimitive, ToPrimitive},
     Decimal,
@@ -10,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::model::{decoded, ORIGINATION_DATE_KEY};
-use super::payments::is_regular_payment;
+use super::payments::{is_regular_payment, StoredPayment};
 use super::setup::apply_loan_setup;
 use super::{
     balance_notes, balance_user_note, calculate_loan, edited_balance_notes, event_entries, money,
@@ -80,7 +81,36 @@ pub struct LoanActionResult {
     pub balances_changed: bool,
 }
 
-/// A loan's stored inputs, read inside the write transaction.
+/// A loan as stored, read inside the write transaction. `dated` gives the
+/// record the loan rules work on.
+#[derive(Debug, Clone)]
+pub struct StoredLoan {
+    pub asset_id: String,
+    pub currency: String,
+    pub metadata: Value,
+    /// Manual quotes, oldest first.
+    pub balances: Vec<Quote>,
+    /// Tagged withdrawals counted as payments on this loan.
+    pub payments: Vec<StoredPayment>,
+    /// Cash accounts in the loan's currency that can pay it.
+    pub payment_accounts: Vec<String>,
+}
+
+impl StoredLoan {
+    /// The loan with its payments dated in the settings `timezone`.
+    pub fn dated(&self, timezone: Tz) -> LoanRecord {
+        LoanRecord {
+            asset_id: self.asset_id.clone(),
+            currency: self.currency.clone(),
+            metadata: self.metadata.clone(),
+            balances: self.balances.clone(),
+            payments: self.payments.iter().map(|p| p.dated(timezone)).collect(),
+            payment_accounts: self.payment_accounts.clone(),
+        }
+    }
+}
+
+/// A loan's inputs as the loan rules work on them.
 #[derive(Debug, Clone)]
 pub struct LoanRecord {
     pub asset_id: String,
@@ -141,6 +171,14 @@ pub enum LoanAction {
     Close { date: NaiveDate },
     #[serde(rename_all = "camelCase")]
     Recalculate { date: NaiveDate, annual_rate: f64 },
+    /// A new rate from the lender. The payment changes only when given.
+    #[serde(rename_all = "camelCase")]
+    ChangeRate {
+        date: NaiveDate,
+        annual_rate: f64,
+        #[serde(default)]
+        payment_amount: Option<f64>,
+    },
     #[serde(rename_all = "camelCase")]
     Renew {
         date: NaiveDate,
@@ -282,8 +320,8 @@ impl LoanRecord {
     }
 }
 
-/// Frequency and interest method in effect on `date`, including that day's events.
-fn settings_on(metadata: &Value, date: NaiveDate) -> Option<(LoanFrequency, InterestMethod)> {
+/// Frequency, interest method and rate in effect on `date`, including that day's events.
+fn settings_on(metadata: &Value, date: NaiveDate) -> Option<(LoanFrequency, InterestMethod, f64)> {
     let terms = LoanTerms::read(metadata)?;
     let mut events: Vec<_> = event_entries(metadata)
         .iter()
@@ -291,22 +329,64 @@ fn settings_on(metadata: &Value, date: NaiveDate) -> Option<(LoanFrequency, Inte
         .filter(|event| event.date() <= date)
         .collect();
     events.sort_by_key(LoanEvent::date);
-    let (mut frequency, mut method) = (terms.frequency, terms.interest_method);
+    let (mut frequency, mut method, mut rate) =
+        (terms.frequency, terms.interest_method, terms.annual_rate);
     for event in events {
         match event {
+            LoanEvent::RateChange { annual_rate, .. } => rate = annual_rate,
             LoanEvent::PaymentFrequencyChange { frequency: f, .. } => frequency = f,
             LoanEvent::Renewal {
+                annual_rate,
                 frequency: f,
                 interest_method: m,
                 ..
             } => {
+                rate = annual_rate;
                 frequency = f.unwrap_or(frequency);
                 method = m.unwrap_or(method);
             }
             _ => {}
         }
     }
-    Some((frequency, method))
+    Some((frequency, method, rate))
+}
+
+/// A new rate from `date`, and a new payment when given. The rate already in
+/// effect that day adds no event unless `record_unchanged_rate`, so recalculating
+/// at the same rate records only the payment. A change that records nothing is refused.
+fn with_rate_change(
+    metadata: &Value,
+    date: NaiveDate,
+    annual_rate: f64,
+    payment_amount: Option<f64>,
+    record_unchanged_rate: bool,
+) -> Result<Value, LoanError> {
+    let rate = checked(LoanEvent::RateChange {
+        effective_date: date,
+        annual_rate,
+        note: None,
+    })?;
+    let payment = payment_amount
+        .map(|payment_amount| {
+            checked(LoanEvent::PaymentChange {
+                effective_date: date,
+                payment_amount,
+                note: None,
+            })
+        })
+        .transpose()?;
+    let (_, _, current) = settings_on(metadata, date).ok_or(LoanError::Invalid)?;
+    let events: Vec<_> = (record_unchanged_rate || annual_rate != current)
+        .then_some(rate)
+        .into_iter()
+        .chain(payment)
+        .collect();
+    if events.is_empty() {
+        return Err(LoanError::Invalid);
+    }
+    events
+        .iter()
+        .try_fold(metadata.clone(), |next, event| with_event(&next, event))
 }
 
 pub(super) fn with_entries(metadata: &Value, entries: Vec<Value>) -> Value {
@@ -505,17 +585,32 @@ pub fn apply_loan_action(
                 annual_rate: *annual_rate,
             })
             .ok_or(LoanError::Invalid)?;
-            let rate = checked(LoanEvent::RateChange {
-                effective_date: *date,
-                annual_rate: *annual_rate,
-                note: None,
-            })?;
-            let payment = checked(LoanEvent::PaymentChange {
-                effective_date: *date,
-                payment_amount: solved.payment_amount,
-                note: None,
-            })?;
-            update.metadata = Some(with_event(&with_event(metadata, &rate)?, &payment)?);
+            update.metadata = Some(with_rate_change(
+                metadata,
+                *date,
+                *annual_rate,
+                Some(solved.payment_amount),
+                false,
+            )?);
+        }
+        LoanAction::ChangeRate {
+            date,
+            annual_rate,
+            payment_amount,
+        } => {
+            check_date(metadata, *date, today)?;
+            if LoanTerms::active(metadata).is_none() {
+                return Err(LoanError::Invalid);
+            }
+            // A letter's rate is kept with its payment even when unchanged, so a
+            // later edit to an earlier event can't carry another rate past it.
+            update.metadata = Some(with_rate_change(
+                metadata,
+                *date,
+                *annual_rate,
+                *payment_amount,
+                payment_amount.is_some(),
+            )?);
         }
         LoanAction::Renew {
             date,
@@ -535,7 +630,7 @@ pub fn apply_loan_action(
             {
                 return Err(LoanError::Invalid);
             }
-            let (current_frequency, current_method) =
+            let (current_frequency, current_method, _) =
                 settings_on(metadata, *date).ok_or(LoanError::Invalid)?;
             let frequency = frequency.filter(|f| *f != current_frequency);
             // A payment is an amount per period, so a new frequency needs its own payment.

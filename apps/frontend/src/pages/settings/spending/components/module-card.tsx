@@ -107,18 +107,18 @@ export function ModuleCard() {
         {/* Top row: state pulse + master toggle share the full row so the
             headline below gets full width on mobile. */}
         <div className="flex items-center justify-between gap-3">
-          <div className="text-background/60 flex min-w-0 items-center gap-2 text-xs font-medium uppercase tracking-widest">
+          <div className="text-background/60 flex min-w-0 items-center gap-2 text-xs font-medium tracking-widest uppercase">
             <span className="relative flex h-2 w-2 shrink-0">
               <span
                 className={cn(
                   "absolute inline-flex h-full w-full rounded-full opacity-60",
-                  enabled ? "animate-ping bg-green-300" : "bg-background/40",
+                  enabled ? "bg-success animate-ping" : "bg-background/40",
                 )}
               />
               <span
                 className={cn(
                   "relative inline-flex h-2 w-2 rounded-full",
-                  enabled ? "bg-green-300" : "bg-background/40",
+                  enabled ? "bg-success" : "bg-background/40",
                 )}
               />
             </span>
@@ -134,20 +134,21 @@ export function ModuleCard() {
             )}
           </div>
 
-          <label className="flex shrink-0 cursor-pointer select-none items-center gap-2">
-            <span className="text-background/55 hidden text-xs font-medium uppercase tracking-widest sm:inline">
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 select-none">
+            <span className="text-background/55 hidden text-xs font-medium tracking-widest uppercase sm:inline">
               {enabled
                 ? t("settings:spending.module.enabled")
                 : t("settings:spending.module.disabled")}
             </span>
             <Switch
+              aria-label={t("settings:spending.title")}
               checked={enabled}
               onCheckedChange={handleToggle}
               disabled={isLoading || mutation.isPending}
               className={cn(
-                "data-[state=checked]:bg-warning data-[state=unchecked]:bg-background/15",
-                "[&_[data-slot=switch-thumb]]:data-[state=checked]:bg-foreground",
-                "[&_[data-slot=switch-thumb]]:data-[state=unchecked]:bg-background/40",
+                "data-checked:bg-warning data-unchecked:bg-background/15",
+                "[&_[data-slot=switch-thumb]]:data-checked:bg-foreground",
+                "[&_[data-slot=switch-thumb]]:data-unchecked:bg-background/40",
               )}
             />
           </label>
@@ -230,9 +231,9 @@ export function ModuleCard() {
                 {t("settings:spending.module.no_rules_prompt")}
               </span>
             </div>
-            <span className="text-background/70 group-hover:text-background flex shrink-0 items-center gap-1 text-xs font-medium uppercase tracking-widest">
+            <span className="text-background/70 group-hover:text-background flex shrink-0 items-center gap-1 text-xs font-medium tracking-widest uppercase">
               <span className="hidden sm:inline">{t("settings:spending.module.setup_rules")}</span>
-              <Icons.ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              <Icons.ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5" />
             </span>
           </Link>
         )}
@@ -252,15 +253,15 @@ interface HeroStatProps {
 
 function HeroStat({ label, value, unit, sub, valueClassName, sublineClassName }: HeroStatProps) {
   return (
-    <div className="pr-4">
-      <div className="text-background/55 text-[10px] font-medium uppercase tracking-widest">
+    <div className="pe-4">
+      <div className="text-background/55 text-2xs font-medium tracking-widest uppercase">
         {label}
       </div>
       <div className="mt-2 flex items-baseline gap-1 tabular-nums">
         <span className={cn("text-2xl font-semibold leading-none tracking-tight", valueClassName)}>
           {value}
         </span>
-        {unit && <span className="text-background/55 ml-1 text-xs font-normal">{unit}</span>}
+        {unit && <span className="text-background/55 ms-1 text-xs font-normal">{unit}</span>}
       </div>
       {sub && <div className={cn("text-background/45 mt-1 text-xs", sublineClassName)}>{sub}</div>}
     </div>

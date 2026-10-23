@@ -86,6 +86,7 @@ pub struct AppState {
     pub profile_binding:
         Arc<std::sync::OnceLock<(Arc<wealthfolio_core::profiles::ProfileRegistry>, uuid::Uuid)>>,
     pub backup_exports: crate::api::portable_backups::BackupExports,
+    pub(crate) backup_scheduler: Arc<wealthfolio_device_sync::backups::scheduler::BackupScheduler>,
     /// Domain event sink for emitting events after mutations.
     /// Note: The sink is used by services injected at construction time; this field
     /// is kept for documentation and possible future access patterns.
@@ -480,6 +481,8 @@ async fn initialize_profile_state(
 
     let pool = db_access.create_pool_with_owner(database_owner.clone())?;
     let (sync_outbox_wake_sender, sync_outbox_wake_receiver) = tokio::sync::mpsc::channel(128);
+    #[cfg(not(feature = "device-sync"))]
+    drop(sync_outbox_wake_receiver);
     let writer_result = write_actor::spawn_writer_with_outbox_observer(
         (*pool).clone(),
         Arc::new(move || {
@@ -596,7 +599,8 @@ async fn initialize_profile_state(
             secret_store.clone(),
             Some(custom_provider_repository.clone()),
         )
-        .await?,
+        .await?
+        .with_event_sink(domain_event_sink.clone()),
     );
     let custom_provider_service = Arc::new(
         wealthfolio_core::custom_provider::CustomProviderService::new(
@@ -674,7 +678,7 @@ async fn initialize_profile_state(
             valuation_repository.clone(),
             fx_service.clone(),
         )
-        .with_loan_payments(alternative_asset_repository.clone()),
+        .with_loan_payments(alternative_asset_repository.clone(), timezone.clone()),
     );
 
     let holdings_valuation_service = Arc::new(HoldingsValuationService::new_with_timezone(
@@ -692,7 +696,11 @@ async fn initialize_profile_state(
             classification_service.clone(),
             timezone.clone(),
         )
-        .with_income_dependencies(activity_repository.clone(), fx_service.clone())
+        .with_income_dependencies(
+            activity_repository.clone(),
+            fx_service.clone(),
+            projection_store.clone(),
+        )
         .with_lot_repository(lots_repository.clone()),
     );
 
@@ -798,6 +806,7 @@ async fn initialize_profile_state(
             core_import_run_repository,
         )
         .with_timezone(timezone.clone())
+        .with_valuation_repository(valuation_repository.clone())
         .with_event_sink(domain_event_sink.clone()),
     );
     let final_cash_migration = run_final_cash_migration(
@@ -868,7 +877,7 @@ async fn initialize_profile_state(
     let categorization_rules_service = Arc::new(
         wealthfolio_spending::categorization_rules::CategorizationRulesService::new(
             categorization_rules_repo,
-            activity_repository.clone(),
+            cash_activity_service.clone(),
             activity_taxonomy_assignment_service.clone(),
         ),
     );
@@ -1017,6 +1026,10 @@ async fn initialize_profile_state(
         cash_activity_service.clone(),
         activity_taxonomy_assignment_service.clone(),
         categorization_rules_service.clone(),
+        budget_service.clone(),
+        events_service.clone(),
+        spending_analytics_service.clone(),
+        spending_insight_service.clone(),
     ));
     let agent_environment: Arc<dyn wealthfolio_agent_tools::AgentEnvironment> =
         ai_environment.clone();
@@ -1120,6 +1133,7 @@ async fn initialize_profile_state(
         sync_approvals: Default::default(),
         profile_binding,
         backup_exports: crate::api::portable_backups::BackupExports::default(),
+        backup_scheduler: Arc::default(),
         domain_event_sink,
         account_service,
         settings_service,

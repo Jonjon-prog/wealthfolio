@@ -1,7 +1,8 @@
 //! Payments from an account: tagged withdrawals matched to instalments and
 //! split into the scheduled payment and extra principal (docs/architecture/loans.md,
 //! "Payments from an account").
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
+use chrono_tz::Tz;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,6 +10,7 @@ use serde_json::Value;
 use super::{money, LoanCalculation};
 use crate::accounts::account_types;
 use crate::activities::{Activity, ACTIVITY_TYPE_WITHDRAWAL};
+use crate::utils::time_utils::activity_date_in_tz;
 
 /// Activity metadata key holding a withdrawal's loan payment tag.
 pub const LOAN_PAYMENT_TAG_KEY: &str = "loan_payment";
@@ -100,7 +102,25 @@ pub(super) fn payment_amount_of(
         .then_some(amount)
 }
 
-impl LoanPayment {
+/// Rule 5: the day Wealthfolio shows for the withdrawal, in the settings time zone.
+pub(super) fn payment_date(activity: &Activity, timezone: Tz) -> NaiveDate {
+    activity_date_in_tz(activity.activity_date, timezone)
+}
+
+/// A tagged withdrawal that still qualifies, as stored: it keeps the
+/// withdrawal's instant, and `dated` gives the payment the engine counts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredPayment {
+    pub activity_id: String,
+    pub account_id: String,
+    pub paid_at: DateTime<Utc>,
+    /// Total withdrawn, escrow included.
+    pub amount: f64,
+    pub escrow: f64,
+    pub applies_to: Option<PaymentTarget>,
+}
+
+impl StoredPayment {
     /// A tagged withdrawal that still qualifies, with the id of the loan it pays.
     pub fn from_activity(
         activity: &Activity,
@@ -113,13 +133,25 @@ impl LoanPayment {
             let payment = Self {
                 activity_id: activity.id.clone(),
                 account_id: activity.account_id.clone(),
-                date: activity.effective_date(),
+                paid_at: activity.activity_date,
                 amount,
                 escrow: tag.escrow,
                 applies_to: tag.applies_to,
             };
             (tag.loan_id, payment)
         })
+    }
+
+    /// Rule 5: the payment on the day Wealthfolio shows for it in `timezone`.
+    pub fn dated(&self, timezone: Tz) -> LoanPayment {
+        LoanPayment {
+            activity_id: self.activity_id.clone(),
+            account_id: self.account_id.clone(),
+            date: activity_date_in_tz(self.paid_at, timezone),
+            amount: self.amount,
+            escrow: self.escrow,
+            applies_to: self.applies_to,
+        }
     }
 }
 
@@ -179,6 +211,9 @@ const CENT: f64 = 0.005;
 struct Instalment {
     date: NaiveDate,
     scheduled: f64,
+    /// The scheduled payment without extra repayments recorded that day, which
+    /// their own events already count.
+    regular: f64,
     window: i64,
     remaining: f64,
 }
@@ -216,17 +251,23 @@ fn instalments(schedule: &LoanCalculation) -> Vec<Instalment> {
         .filter(|row| row.scheduled_payment)
         // An extra repayment recorded on a due date is part of what that day's
         // payment covers, so a withdrawal paying both counts it once.
-        .map(|row| (row.date, row.payment))
+        .map(|row| {
+            (
+                row.date,
+                row.payment,
+                money(row.payment - row.extra_payment),
+            )
+        })
         .collect();
     dates
         .iter()
         .enumerate()
-        .map(|(i, &(date, scheduled))| {
+        .map(|(i, &(date, scheduled, regular))| {
             let gap = [i.checked_sub(1), Some(i + 1)]
                 .into_iter()
                 .flatten()
                 .filter_map(|j| dates.get(j))
-                .map(|(other, _)| (date - *other).num_days().abs())
+                .map(|(other, ..)| (date - *other).num_days().abs())
                 .min();
             let window = match gap {
                 Some(days) if days < 20 => BIWEEKLY_WINDOW_DAYS,
@@ -235,6 +276,7 @@ fn instalments(schedule: &LoanCalculation) -> Vec<Instalment> {
             Instalment {
                 date,
                 scheduled,
+                regular,
                 window,
                 remaining: scheduled,
             }
@@ -325,7 +367,9 @@ pub(super) fn instalment_statuses(
         .map(|i| {
             let paid = money(i.scheduled - i.remaining);
             let overdue = (as_of - i.date).num_days() > i.window;
-            let status = if i.remaining <= CENT {
+            // An extra recorded that day counts through its own event, so the
+            // regular payment settles the instalment.
+            let status = if paid >= i.regular - CENT {
                 InstalmentStatus::Paid
             } else if !overdue {
                 InstalmentStatus::Due
@@ -352,8 +396,12 @@ pub(super) fn payment_suggestion(plan: &PaymentPlan) -> Option<PaymentChangeSugg
         .iter()
         .filter_map(|a| {
             let due = a.instalment?;
-            let scheduled = plan.instalments.iter().find(|i| i.date == due)?.scheduled;
-            Some((due, scheduled, money(a.applied + a.extra - scheduled)))
+            let i = plan.instalments.iter().find(|i| i.date == due)?;
+            // An extra recorded that day may be paid with the instalment or apart
+            // from it, so anything from the regular payment to both is on target.
+            let paid = a.applied + a.extra;
+            let expected = paid.max(i.regular).min(i.scheduled);
+            Some((due, i.regular, money(paid - expected)))
         })
         .collect();
     let run = matched.get(matched.len().checked_sub(SUGGESTION_RUN)?..)?;

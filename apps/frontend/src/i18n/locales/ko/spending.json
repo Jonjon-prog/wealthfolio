@@ -21,6 +21,9 @@
     "nameRequired": "이름을 입력해야 합니다",
     "namePlaceholder": "카테고리 이름",
     "icon": "아이콘",
+    "parent": "상위 카테고리",
+    "topLevel": "없음 (최상위)",
+    "parentLockedByBudget": "이동하기 전에 이 카테고리의 예산 목표를 삭제하세요. 예산은 최상위 카테고리에만 적용됩니다.",
     "color": "색상",
     "hex": "Hex",
     "create": "카테고리 생성",
@@ -49,6 +52,13 @@
     "searchCategories": "카테고리 검색...",
     "noCategoriesFound": "카테고리를 찾을 수 없습니다.",
     "clearCategory": "카테고리 지우기"
+  },
+  "activityTypes": {
+    "balanceTransferCashAdvance": "잔액 이체 / 현금 서비스",
+    "charge": "카드 사용",
+    "interestCharge": "이자 비용",
+    "refundCredit": "환급 / 크레딧",
+    "reimbursementRefund": "환급 / 환불"
   },
   "rules": {
     "editTitle": "규칙 수정",
@@ -98,6 +108,7 @@
     "selectCategory": "카테고리 선택",
     "priorityLabel": "우선순위",
     "priorityHint": "우선순위가 높은 규칙이 먼저 검사됩니다 (0-100).",
+    "priorityInvalid": "우선순위는 0 이상의 정수여야 합니다",
     "updateRule": "규칙 업데이트",
     "createRule": "규칙 생성",
     "scopeLabel": "적용 대상",
@@ -403,6 +414,7 @@
     "customSubtitle": "선택한 기간의 거래"
   },
   "split": {
+    "staleTaxonomy": "이 분할에는 이전 카테고리 유형이 사용됩니다. 더 이상 이 거래에 적용되지 않습니다.",
     "title": "거래 분할",
     "transactionFallback": "거래",
     "remainingOf": "{{amount}} 중 남은 금액",
@@ -411,7 +423,11 @@
     "removeLine": "분할 항목 {{number}} 삭제",
     "addLine": "항목 추가",
     "distributeEvenly": "균등 분배",
-    "clearSplit": "분할 지우기"
+    "clearSplit": "분할 지우기",
+    "replaceWithCategory": "분할을 하나의 카테고리로 대체",
+    "replaceDescription_one": "분할 {{count}}개를 {{category}}(으)로 대체할까요? 기존 분할이 삭제됩니다.",
+    "replaceDescription_other": "분할 {{count}}개를 {{category}}(으)로 대체할까요? 기존 분할이 삭제됩니다.",
+    "categoryProtected": "분할이 보호되어 있습니다. 분할 편집기에서 편집하거나 명시적으로 대체하세요."
   },
   "hierarchy": {
     "noCategorizedSpending": "이 기간에 분류된 지출이 없습니다.",
@@ -704,12 +720,7 @@
     "noIncome": "이 기간에 선택한 계좌에 수입이 없습니다.",
     "spent": "지출",
     "saved": "저축",
-    "incomeSaving": "수입 및 저축",
-    "nonSpendingCashflow": "{{period}}의 비지출 현금 흐름입니다.",
-    "moneyIn": "들어온 돈",
-    "incomeSources": "수입원",
     "setAside": "따로 모은 금액",
-    "savingDestinations": "저축 목적지",
     "sortSpent": "지출액",
     "sortChange": "변동",
     "sortName": "이름",
@@ -728,6 +739,48 @@
     "openTransactions": "거래 내역 열기 →",
     "moreCount_other": "+{{count}} 더보기",
     "vsRange": "{{from}} – {{to}} 대비"
+  },
+  "moneyFlow": {
+    "title": "돈의 흐름",
+    "subtitle": "{{period}} 동안 돈이 어디서 들어와 어디로 나갔는지 보여줍니다.",
+    "focusSubtitle": "{{period}}의 모든 카테고리입니다.",
+    "focusSubcategoriesSubtitle": "{{period}}의 모든 하위 카테고리입니다.",
+    "back": "전체 흐름",
+    "backTo": "{{name}}(으)로 돌아가기",
+    "chartLabel": "돈의 흐름 차트. 화살표 키로 항목 사이를 이동할 수 있습니다.",
+    "nodeAria": "{{name}}, {{amount}}",
+    "nodeActionAria": "{{name}}, {{amount}}. {{action}}",
+    "shareOfIncome": "수입의 {{pct}}",
+    "shareOfTotal": "합계의 {{pct}}",
+    "clickTransactions": "클릭하여 거래 내역 보기",
+    "clickCategories": "클릭하여 모든 카테고리 보기",
+    "clickSubcategories": "클릭하여 하위 카테고리 보기",
+    "action": {
+      "categories": "모든 카테고리 보기",
+      "subcategories": "하위 카테고리 보기",
+      "transactions": "거래 내역 보기"
+    },
+    "node": {
+      "total": "합계",
+      "shortfall": "부족분",
+      "refunds": "순 환불",
+      "surplus": "남은 금액",
+      "uncategorizedIncome": "미분류 수입",
+      "netSpending": "순 지출"
+    },
+    "hint": {
+      "total": "들어온 돈에 순 환불과 부족분을 더한 합계입니다. 항상 나간 돈과 같습니다.",
+      "totalOut": "환불 전의 지출과 따로 모은 금액 합계입니다.",
+      "shortfall": "들어온 돈을 넘어선 지출과 저축입니다.",
+      "refunds": "환불이 지출보다 많았던 카테고리입니다.",
+      "saved": "저축 및 투자 계좌로 옮긴 금액입니다.",
+      "surplus": "들어왔지만 쓰거나 따로 모으지 않은 금액입니다.",
+      "uncategorized": "아직 카테고리가 없는 지출입니다.",
+      "net": "환불 후 이 카테고리에 든 금액입니다.",
+      "direct": "하위 카테고리가 아닌 카테고리 자체에 지정된 금액입니다."
+    },
+    "groupRefunds": "순 환불 {{amount}} 차감 전 금액입니다.",
+    "categoryRefunds": "순 환불 {{refunds}} 차감 전 금액입니다. 순 지출: {{net}}."
   },
   "budgetChart": {
     "overBudget": "예산 초과",
@@ -976,6 +1029,13 @@
     "dataUnavailable": "예산 데이터를 사용할 수 없습니다",
     "migrationNeeded": "현재 로컬 데이터베이스는 업데이트된 지출 마이그레이션 이전에 생성되었습니다.",
     "addSource_other": "수입원 추가 (사용 가능 {{count}}개)",
-    "overridesTitle_other": "재정의 · {{count}}개"
+    "overridesTitle_other": "재정의 · {{count}}개",
+    "sourceMonth": "원본 월"
+  },
+  "splitEditReview": {
+    "title": "분할 삭제 검토",
+    "removed_other": "이 변경으로 분할 배분 {{count}}개가 삭제됩니다.",
+    "hiddenCategory": "기존 카테고리 배분은 유지되며 분할 삭제 후 적용될 수 있습니다.",
+    "confirm": "저장하고 분할 삭제"
   }
 }

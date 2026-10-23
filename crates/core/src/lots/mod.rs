@@ -192,6 +192,8 @@ pub struct LotRecord {
     pub original_cost_basis: String,
     /// Open cost basis remaining for the lot. Reduced proportionally on
     /// partial sells: `remaining_cost_basis -= (consumed_qty / original_quantity) × original_cost_basis`.
+    /// A return of capital lowers it (to zero at most) and a notional
+    /// distribution raises it, without moving units (engine rules R7.4).
     /// Reaches zero on full close.
     pub remaining_cost_basis: String,
     /// Original cost basis converted to base currency at acquisition date.

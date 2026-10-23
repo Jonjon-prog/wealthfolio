@@ -64,7 +64,7 @@ interface AssetDetailProps {
 }
 
 const SectionHeader: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wider">
+  <div className="text-muted-foreground mb-2 text-xs font-medium tracking-wider uppercase">
     {children}
   </div>
 );
@@ -219,7 +219,7 @@ const AssetDetailCard: React.FC<AssetDetailProps> = ({ assetData, className }) =
             <div className="text-xl font-extrabold">
               <AmountDisplay value={marketValue} currency={currency} isHidden={isBalanceHidden} />
             </div>
-            <div className="text-muted-foreground text-right text-sm font-normal">{currency}</div>
+            <div className="text-muted-foreground text-end text-sm font-normal">{currency}</div>
           </div>
         </CardTitle>
       </CardHeader>

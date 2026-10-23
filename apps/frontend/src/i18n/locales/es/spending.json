@@ -21,6 +21,9 @@
     "nameRequired": "El nombre es obligatorio",
     "namePlaceholder": "Nombre de la categoría",
     "icon": "Icono",
+    "parent": "Categoría principal",
+    "topLevel": "Ninguna (nivel superior)",
+    "parentLockedByBudget": "Elimina primero los objetivos de presupuesto de esta categoría. Los presupuestos solo se aplican a categorías de nivel superior.",
     "color": "Color",
     "hex": "Hex",
     "create": "Crear categoría",
@@ -50,6 +53,13 @@
     "searchCategories": "Buscar categorías...",
     "noCategoriesFound": "No se encontraron categorías.",
     "clearCategory": "Quitar categoría"
+  },
+  "activityTypes": {
+    "balanceTransferCashAdvance": "Transferencia de saldo / Adelanto de efectivo",
+    "charge": "Cargo",
+    "interestCharge": "Cargo por intereses",
+    "refundCredit": "Reembolso / Abono",
+    "reimbursementRefund": "Reembolso / devolución"
   },
   "rules": {
     "editTitle": "Editar regla",
@@ -99,6 +109,7 @@
     "selectCategory": "Selecciona una categoría",
     "priorityLabel": "Prioridad",
     "priorityHint": "Las reglas de mayor prioridad se comprueban primero (0-100).",
+    "priorityInvalid": "La prioridad debe ser un número entero mayor o igual que 0",
     "updateRule": "Actualizar regla",
     "createRule": "Crear regla",
     "scopeLabel": "Se aplica a",
@@ -428,6 +439,7 @@
     "customSubtitle": "Transacciones en el período seleccionado"
   },
   "split": {
+    "staleTaxonomy": "Estas divisiones usan un tipo de categoría anterior. Ya no se aplican a esta transacción.",
     "title": "Dividir transacción",
     "transactionFallback": "Transacción",
     "remainingOf": "Restante de {{amount}}",
@@ -436,7 +448,12 @@
     "removeLine": "Quitar línea dividida {{number}}",
     "addLine": "Añadir línea",
     "distributeEvenly": "Distribuir uniformemente",
-    "clearSplit": "Borrar división"
+    "clearSplit": "Borrar división",
+    "replaceWithCategory": "Reemplazar divisiones por una categoría",
+    "replaceDescription_one": "¿Reemplazar {{count}} división por {{category}}? Se eliminarán las divisiones actuales.",
+    "replaceDescription_other": "¿Reemplazar {{count}} divisiones por {{category}}? Se eliminarán las divisiones actuales.",
+    "replaceDescription_many": "¿Reemplazar {{count}} divisiones por {{category}}? Se eliminarán las divisiones actuales.",
+    "categoryProtected": "Las divisiones están protegidas. Edítelas o reemplácelas explícitamente en el editor de divisiones."
   },
   "hierarchy": {
     "noCategorizedSpending": "No hay gastos categorizados en este periodo.",
@@ -750,12 +767,7 @@
     "noIncome": "No hay ingresos en las cuentas seleccionadas para este periodo.",
     "spent": "Gastado",
     "saved": "Ahorrado",
-    "incomeSaving": "Ingresos y ahorro",
-    "nonSpendingCashflow": "Flujo de caja no relacionado con gastos para {{period}}.",
-    "moneyIn": "Dinero entrante",
-    "incomeSources": "Fuentes de ingresos",
     "setAside": "Reservado",
-    "savingDestinations": "Destinos de ahorro",
     "sortSpent": "gastado",
     "sortChange": "cambio",
     "sortName": "nombre",
@@ -778,6 +790,48 @@
     "moreCount_other": "+{{count}} más",
     "moreCount_many": "+{{count}} más",
     "vsRange": "frente a {{from}} – {{to}}"
+  },
+  "moneyFlow": {
+    "title": "Flujo de dinero",
+    "subtitle": "De dónde vino tu dinero y a dónde fue para {{period}}.",
+    "focusSubtitle": "Todas las categorías para {{period}}.",
+    "focusSubcategoriesSubtitle": "Todas las subcategorías para {{period}}.",
+    "back": "Todos los flujos",
+    "backTo": "Volver a {{name}}",
+    "chartLabel": "Diagrama del flujo de dinero. Usa las flechas para moverte entre los flujos.",
+    "nodeAria": "{{name}}, {{amount}}",
+    "nodeActionAria": "{{name}}, {{amount}}. {{action}}",
+    "shareOfIncome": "{{pct}} de los ingresos",
+    "shareOfTotal": "{{pct}} del total",
+    "clickTransactions": "Haz clic para ver las transacciones",
+    "clickCategories": "Haz clic para ver todas las categorías",
+    "clickSubcategories": "Haz clic para ver las subcategorías",
+    "action": {
+      "categories": "Ver todas las categorías",
+      "subcategories": "Ver subcategorías",
+      "transactions": "Ver transacciones"
+    },
+    "node": {
+      "total": "Total",
+      "shortfall": "Déficit",
+      "refunds": "Reembolsos netos",
+      "surplus": "Sobrante",
+      "uncategorizedIncome": "Ingresos sin categorizar",
+      "netSpending": "Gasto neto"
+    },
+    "hint": {
+      "total": "Dinero entrante más reembolsos netos y cualquier déficit. Siempre igual al dinero saliente.",
+      "totalOut": "Todo lo gastado y reservado, antes de reembolsos.",
+      "shortfall": "Gastos y ahorro por encima de lo que entró.",
+      "refunds": "Categorías donde los reembolsos superaron el gasto.",
+      "saved": "Transferido a cuentas de ahorro e inversión.",
+      "surplus": "Entró, pero no se gastó ni se reservó.",
+      "uncategorized": "Gastos que aún no tienen categoría.",
+      "net": "Lo que costó esta categoría después de los reembolsos.",
+      "direct": "Asignado a la propia categoría, no a una subcategoría."
+    },
+    "groupRefunds": "Antes de restar {{amount}} en reembolsos netos.",
+    "categoryRefunds": "Antes de restar {{refunds}} en reembolsos netos. Gasto neto: {{net}}."
   },
   "budgetChart": {
     "overBudget": "Presupuesto excedido",
@@ -1044,6 +1098,15 @@
     "addSource_many": "Añadir fuente ({{count}} disponibles)",
     "overridesTitle_one": "Excepción · {{count}}",
     "overridesTitle_other": "Excepciones · {{count}}",
-    "overridesTitle_many": "Excepciones · {{count}}"
+    "overridesTitle_many": "Excepciones · {{count}}",
+    "sourceMonth": "Mes de origen"
+  },
+  "splitEditReview": {
+    "title": "Revisar la eliminación de divisiones",
+    "hiddenCategory": "Las categorías existentes se conservan y pueden aplicarse después de eliminar las divisiones.",
+    "confirm": "Guardar y eliminar divisiones",
+    "removed_one": "Este cambio eliminará {{count}} división.",
+    "removed_many": "Este cambio eliminará {{count}} divisiones.",
+    "removed_other": "Este cambio eliminará {{count}} divisiones."
   }
 }

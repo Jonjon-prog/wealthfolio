@@ -7,10 +7,15 @@ import {
 import { LoanInterestMethodSelect } from "./loan-interest-method-select";
 import { LoanFieldInfo } from "./loan-field-info";
 import { LoanDurationInput } from "./loan-duration-input";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useLoanSchedulePreview } from "../hooks/use-loan-calculation";
-import { loanErrorField, loanErrorText, type LoanSetupField } from "./loan-error-text";
+import {
+  isLoanRefusal,
+  loanErrorField,
+  loanErrorText,
+  type LoanSetupField,
+} from "./loan-error-text";
 import type { LoanSetup } from "@/adapters/shared/alternative-assets";
 import { useForm, type Resolver } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -48,6 +53,7 @@ import {
   ResponsiveSelect,
   type ResponsiveSelectOption,
   useDateFormatting,
+  Spinner,
 } from "@wealthfolio/ui";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
 
@@ -68,6 +74,7 @@ import {
 import { paymentAccounts } from "../lib/loan-payments";
 import { type LinkableAsset } from "./alternative-asset-quick-add-modal";
 import { AlternativeAssetKind, ALTERNATIVE_ASSET_KIND_DISPLAY_NAMES } from "@/lib/types";
+import { useEffectOnChange } from "@/hooks/use-effect-on-change";
 
 /**
  * Asset data required by the sheet.
@@ -149,12 +156,16 @@ export function AssetDetailsSheet({
     defaultValues: getDefaultDetailsFormValues(assetKind, assetName, assetMetadata, assetNotes),
   });
 
-  // Reset form when asset changes or sheet opens
-  useEffect(() => {
+  // Load the saved values when the sheet opens or shows another asset. Callers
+  // rebuild `asset` on every render, and background portfolio updates re-render
+  // them, so resetting on the object itself would discard unsaved edits.
+  const assetId = asset?.id;
+  useEffectOnChange(() => {
     if (open && asset) {
       form.reset(getDefaultDetailsFormValues(asset.kind, asset.name, asset.metadata, asset.notes));
     }
-  }, [open, asset, form]);
+    // oxlint-disable-next-line react/exhaustive-deps
+  }, [open, assetId, form]);
 
   // Build linkable assets options for liability linking
   // NOTE: This must be called before any early returns to maintain hook order
@@ -226,7 +237,7 @@ export function AssetDetailsSheet({
                   {kindDisplayName}
                 </Badge>
               </SheetTitle>
-              <SheetDescription className="text-left">
+              <SheetDescription className="text-start">
                 {asset.kind === AlternativeAssetKind.LIABILITY
                   ? t("asset:detailsSheet.liability_description")
                   : t("asset:detailsSheet.asset_description")}
@@ -393,7 +404,7 @@ export function AssetDetailsSheet({
                               ? "asset:detailsSheet.notes_placeholder_liability"
                               : "asset:detailsSheet.notes_placeholder",
                           )}
-                          className="min-h-[100px] resize-none"
+                          className="min-h-25 resize-none"
                           value={field.value ?? ""}
                           onChange={(e) => field.onChange(e.target.value || null)}
                         />
@@ -415,9 +426,9 @@ export function AssetDetailsSheet({
               </Button>
               <Button type="submit" disabled={isSaving}>
                 {isSaving ? (
-                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner className="me-2 h-4 w-4" />
                 ) : (
-                  <Icons.Check className="mr-2 h-4 w-4" />
+                  <Icons.Check className="me-2 h-4 w-4" />
                 )}
                 {t("asset:detailsSheet.save_details")}
               </Button>
@@ -765,30 +776,36 @@ function LiabilityFields({
     values.automaticLoan ? liabilityLoanSetup(values) : null,
   );
   const showsMaturity = isMortgage || !!values.renewalMaturity;
-  const previewErrorField =
-    scheduleError != null
-      ? loanErrorField(
-          scheduleError,
-          [
-            "originalAmount",
-            "originationDate",
-            "interestRate",
-            "paymentAmount",
-            "firstPaymentDate",
-            "amortization",
-            ...(showsMaturity ? (["renewalMaturity"] as const) : []),
-          ],
+  // Only the loan rules refuse terms; a request that failed leaves the decision to saving.
+  const refusal = isLoanRefusal(scheduleError) ? scheduleError : null;
+  const previewErrorField = refusal
+    ? loanErrorField(
+        refusal,
+        [
+          "originalAmount",
+          "originationDate",
+          "interestRate",
+          "paymentAmount",
+          "firstPaymentDate",
           "amortization",
-        )
-      : null;
+          ...(showsMaturity ? (["renewalMaturity"] as const) : []),
+        ],
+        "amortization",
+      )
+    : null;
+  const previewErrorId = useId();
   // A field's own validation message comes first; the preview's would repeat it.
+  const showsRefusal = (field: LoanSetupField, name: Parameters<typeof form.getFieldState>[0]) =>
+    previewErrorField === field && !form.getFieldState(name, form.formState).error;
   const previewError = (field: LoanSetupField, name: Parameters<typeof form.getFieldState>[0]) =>
-    previewErrorField === field &&
-    !form.getFieldState(name, form.formState).error && (
-      <p className="text-destructive text-xs" role="alert">
-        {loanErrorText(t, scheduleError, "asset:loanEvents.invalid")}
+    showsRefusal(field, name) && (
+      <p id={previewErrorId} className="text-destructive text-xs" role="alert">
+        {loanErrorText(t, refusal, "asset:loanEvents.invalid")}
       </p>
     );
+  // Links the field a refusal is about to its message, in place of the form's own links.
+  const describedBy = (field: LoanSetupField, name: Parameters<typeof form.getFieldState>[0]) =>
+    showsRefusal(field, name) ? { "aria-describedby": previewErrorId } : {};
   const fieldLabel = (label: string, info?: string) => (
     <div className="flex items-center gap-1.5">
       <FormLabel>{label}</FormLabel>
@@ -874,6 +891,7 @@ function LiabilityFields({
                     name={field.name}
                     value={field.value}
                     onValueChange={(value) => field.onChange(value ?? null)}
+                    {...describedBy("originalAmount", "originalAmount")}
                   />
                 </FormControl>
                 {previewError("originalAmount", "originalAmount")}
@@ -894,6 +912,7 @@ function LiabilityFields({
                   <DatePickerInput
                     value={field.value ?? undefined}
                     onChange={(date) => field.onChange(date ?? null)}
+                    {...describedBy("originationDate", "originationDate")}
                   />
                 </FormControl>
                 {previewError("originationDate", "originationDate")}
@@ -915,10 +934,11 @@ function LiabilityFields({
                       value={field.value}
                       onValueChange={(value) => field.onChange(value ?? null)}
                       maxDecimalPlaces={2}
-                      className="pr-8"
+                      className="pe-8"
+                      {...describedBy("interestRate", "interestRate")}
                     />
                   </FormControl>
-                  <span className="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm">
+                  <span className="text-muted-foreground pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-sm">
                     %
                   </span>
                 </div>
@@ -951,7 +971,7 @@ function LiabilityFields({
           control={form.control}
           name="automaticLoan"
           render={({ field }) => (
-            <FormItem className="flex flex-row items-center justify-between gap-4 space-y-0 rounded-lg border p-3">
+            <FormItem className="flex flex-row items-center justify-between gap-4 rounded-lg border p-3">
               <div className="space-y-1">
                 <FormLabel>{t("asset:loanActions.automatic_schedule")}</FormLabel>
                 <FormDescription className="text-xs">
@@ -982,6 +1002,7 @@ function LiabilityFields({
                       name={field.name}
                       value={field.value}
                       onValueChange={(value) => field.onChange(value ?? null)}
+                      {...describedBy("paymentAmount", "paymentAmount")}
                     />
                   </FormControl>
                   {previewError("paymentAmount", "paymentAmount")}
@@ -1020,6 +1041,7 @@ function LiabilityFields({
                     <DatePickerInput
                       value={field.value ?? undefined}
                       onChange={(date) => field.onChange(date ?? null)}
+                      {...describedBy("firstPaymentDate", "firstPaymentDate")}
                     />
                   </FormControl>
                   {previewError("firstPaymentDate", "firstPaymentDate")}
@@ -1051,6 +1073,7 @@ function LiabilityFields({
                           shouldDirty: true,
                         })
                       }
+                      {...describedBy("amortization", "amortizationYears")}
                     />
                   </FormControl>
                   {schedule && (
@@ -1084,6 +1107,7 @@ function LiabilityFields({
                       <DatePickerInput
                         value={field.value ?? undefined}
                         onChange={(date) => field.onChange(date ?? null)}
+                        {...describedBy("renewalMaturity", "renewalMaturity")}
                       />
                     </FormControl>
                     {previewError("renewalMaturity", "renewalMaturity")}
@@ -1264,10 +1288,11 @@ function PropertyMortgageSection({
                       size="sm"
                       onClick={() => handleUnlink(liability.id)}
                       disabled={unlinkingId === liability.id}
+                      aria-label={t("asset:loanPayments.unlink")}
                       className="h-7 px-2"
                     >
                       {unlinkingId === liability.id ? (
-                        <Icons.Spinner className="h-3 w-3 animate-spin" />
+                        <Spinner className="h-3 w-3" />
                       ) : (
                         <Icons.X className="h-3 w-3" />
                       )}
@@ -1290,12 +1315,13 @@ function PropertyMortgageSection({
                 onClick={() => setShowLinkSelect(true)}
                 className="w-full"
               >
-                <Icons.Link className="mr-2 h-4 w-4" />
+                <Icons.Link className="me-2 h-4 w-4" />
                 {t("asset:detailsSheet.link_existing_mortgage")}
               </Button>
             ) : (
               <div className="space-y-2">
                 <ResponsiveSelect
+                  aria-label={t("asset:detailsSheet.link_mortgage")}
                   value={selectedMortgageId}
                   onValueChange={setSelectedMortgageId}
                   options={availableMortgages.map((m) => ({
@@ -1327,9 +1353,9 @@ function PropertyMortgageSection({
                     className="flex-1"
                   >
                     {isLinking ? (
-                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      <Spinner className="me-2 h-4 w-4" />
                     ) : (
-                      <Icons.Check className="mr-2 h-4 w-4" />
+                      <Icons.Check className="me-2 h-4 w-4" />
                     )}
                     {t("asset:detailsSheet.link")}
                   </Button>

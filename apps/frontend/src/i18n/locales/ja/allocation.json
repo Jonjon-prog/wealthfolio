@@ -372,7 +372,6 @@
     "clearAccounts": "クリア",
     "noMatchingAccounts": "一致する口座はありません。",
     "otherAccounts": "その他の口座",
-    "includeAccount": "{{account}} を含める",
     "noCashRecorded": "現金なし",
     "accountRecorded": "記録 {{amount}}",
     "cryptoOnly": "暗号資産のみ",

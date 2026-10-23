@@ -34,16 +34,18 @@ const ADDABLE_LIMIT = 5;
  */
 export function InfoTip({ text }: { text: string }) {
   return (
-    <TooltipProvider delayDuration={150}>
+    <TooltipProvider delay={150}>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            aria-label={text}
-            className="text-muted-foreground hover:text-foreground inline-flex shrink-0 align-middle"
-          >
-            <Icons.Info className="h-3.5 w-3.5" />
-          </button>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={text}
+              className="text-muted-foreground hover:text-foreground inline-flex shrink-0 align-middle"
+            />
+          }
+        >
+          <Icons.Info className="h-3.5 w-3.5" />
         </TooltipTrigger>
         <TooltipContent className="max-w-64 text-xs leading-relaxed">{text}</TooltipContent>
       </Tooltip>

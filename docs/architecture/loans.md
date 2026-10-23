@@ -111,6 +111,7 @@ Paths below are relative to the repository root.
 | Linking a withdrawal to a loan                   | `crates/core/src/assets/loan/linking.rs`                       |
 | Atomic loan writes                               | `crates/storage-sqlite/src/assets/alternative_repository.rs`   |
 | Holdings integration                             | `crates/core/src/assets/alternative_assets_service.rs`         |
+| Holdings card summary                            | `crates/core/src/assets/loan/summary.rs`                       |
 | Net worth and history                            | `crates/core/src/portfolio/net_worth/net_worth_service.rs`     |
 | Shared frontend calls                            | `apps/frontend/src/adapters/shared/alternative-assets.ts`      |
 | Desktop commands                                 | `apps/tauri/src/commands/alternative_assets.rs`                |
@@ -159,6 +160,10 @@ user notes follow as an escaped `|note=` suffix. Invalid event entries are
 ignored on read. Invalid loan terms yield no automatic calculation and retain
 manual valuation. Validate dates and numbers at input and calculation
 boundaries.
+
+Loan fields, events included, live in the asset's metadata, so device sync
+treats them as part of the asset row: when two devices change the same loan
+before syncing, the later change wins and the other is lost.
 
 `tracking_mode: "manual"` disables calculation and keeps the quote-based
 valuation used for other alternative assets. Saving details with automatic
@@ -346,9 +351,12 @@ worth. Reopening resets payoff; trailing term changes or repeated zero
 confirmations do not move an already settled payoff date.
 
 Net-worth snapshots and history must use the same dated principal as holdings
-and the loan page. Alternative assets and loans count even when there are no
-accounts. Confirmation adjustments are not cash payments. Passing time does not
-turn a projected payment into a confirmation.
+and the loan page. Holdings returns each liability's card summary (terms in
+effect, payoff date, renewal maturity, original amount) from the calculation
+that values it, so a card runs no calculation of its own. Alternative assets and
+loans count even when there are no accounts. Confirmation adjustments are not
+cash payments. Passing time does not turn a projected payment into a
+confirmation.
 
 ## Payments from an account
 
@@ -368,6 +376,9 @@ statement remains the truth.
   optional `escrow` (included in this payment) and optional `applies_to` (an
   instalment due date, or `extra`). Only the payment actions write this key;
   ordinary activity edits and imports keep it unchanged.
+- Storage reads tagged withdrawals as stored, with their instants
+  (`StoredPayment`, `StoredLoan`); core dates them in the settings timezone
+  (rule 5), so storage takes no timezone.
 
 ### Rules
 
@@ -385,10 +396,15 @@ statement remains the truth.
    active, unarchived cash account in the loan's currency; one archived or
    deactivated later is treated as not set.
 5. **Payment date.** A payment is dated by its activity date, the calendar day
-   Wealthfolio shows for that withdrawal.
+   Wealthfolio shows for that withdrawal in the settings timezone. Near midnight
+   that can differ from its date in UTC; the local day is the one that counts. A
+   date stored at UTC midnight (broker sync, and bare dates saved before they
+   were stored on their local day) counts on the day shown, which west of UTC is
+   the day before.
 6. **Escrow first.** The tag's escrow, at most the payment amount, is never
    principal or interest. Linking fills it from the loan's `escrow_amount`, so a
-   later change to that amount does not rewrite earlier payments.
+   later change to that amount does not rewrite earlier payments. A payment
+   linked as extra principal has no escrow unless the user names it.
 7. **Matching an instalment.** Unless the tag names a target, a payment settles
    the unpaid instalment whose due date is nearest, within 10 days for monthly
    loans and 6 days for biweekly ones. A tag naming an instalment due date, or
@@ -396,21 +412,23 @@ statement remains the truth.
 8. **Allocation.** Applied to an instalment, the payment covers what remains of
    that instalment's scheduled payment, its interest and principal, and any
    extra repayment recorded on the due date, so a withdrawal paying both counts
-   the extra once; an extra paid by a separate withdrawal that is not linked
-   leaves the instalment short. Whatever is left is extra principal on the
-   payment date, applied like a recorded extra repayment. A payment that settles
-   no instalment is entirely extra principal.
+   the extra once. Whatever is left is extra principal on the payment date,
+   applied like a recorded extra repayment. A payment that settles no instalment
+   is entirely extra principal.
 9. **Shortfalls and missed payments are flagged, not guessed.** From the first
    counted payment onward, an instalment more than its matching window overdue
-   with less than its scheduled payment applied is marked short or missing. The
-   balance still assumes the scheduled payment until a confirmed balance
-   corrects it, because an import that is late or incomplete must not lower
-   debt.
+   with less than its scheduled payment applied is marked short or missing. An
+   extra repayment recorded on the due date counts through its own event, so it
+   is not required from the payments, though a later payment within the window
+   still counts toward it (rule 8). The balance still assumes the scheduled
+   payment until a confirmed balance corrects it, because an import that is late
+   or incomplete must not lower debt.
 10. **A repeated difference suggests a payment change.** When the last three
     instalments settled by payments, matched or directed, each differ from the
     scheduled payment by the same amount of at least 1.00, the loan suggests a
-    dated payment change instead of counting the difference every time. Until
-    the user acts, rule 8 applies.
+    dated payment change instead of counting the difference every time. An extra
+    repayment recorded on the due date is no difference, whether paid with the
+    instalment or apart. Until the user acts, rule 8 applies.
 11. **Confirmed balances still win.** A confirmation on or after a payment's
     date overrides the estimate from that date, as before; a payment on the same
     day is already included in it.

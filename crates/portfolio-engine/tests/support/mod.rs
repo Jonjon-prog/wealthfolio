@@ -135,6 +135,9 @@ pub struct AssetSpec {
     pub instrument_type: String,
     #[serde(default)]
     pub contract_multiplier: Option<Dec>,
+    /// The host's alternative-asset fact (core derives it from the kind).
+    #[serde(default)]
+    pub alternative: bool,
 }
 
 fn investment() -> String {
@@ -278,6 +281,7 @@ impl Scenario {
                     instrument_type: (a.instrument_type != "NONE")
                         .then(|| a.instrument_type.clone()),
                     contract_multiplier: a.contract_multiplier.map(|d| d.0),
+                    alternative: a.alternative,
                 })
                 .collect(),
             activities: self
@@ -316,26 +320,6 @@ impl Scenario {
                             .and_then(|m| m.get("flow"))
                             .and_then(|f| f.get("is_external"))
                             .and_then(Value::as_bool),
-                        fx_conversion: a.metadata.as_ref().and_then(|m| m.get("fx")).map(|fx| {
-                            let text = |key: &str| {
-                                fx.get(key)
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string()
-                            };
-                            let amount = |key: &str| {
-                                fx.get(key)
-                                    .and_then(Value::as_str)
-                                    .and_then(|v| Decimal::from_str(v).ok())
-                            };
-                            RawFxConversion {
-                                rate_source: text("rateSource"),
-                                source_currency: text("sourceCurrency"),
-                                destination_currency: text("destinationCurrency"),
-                                source_amount: amount("sourceAmount"),
-                                destination_amount: amount("destinationAmount"),
-                            }
-                        }),
                         source_system: a.source_system.clone(),
                         is_user_modified: a.is_user_modified,
                         updated_at: timestamp,
@@ -453,31 +437,40 @@ impl Scenario {
         scenario
     }
 
-    /// The scenario with its accounts on the methods in turn, so transfers
-    /// pair accounts on different methods; suffixed `@MIXED`. `None` with
-    /// one account.
-    pub fn with_mixed_cost_basis_methods(&self) -> Option<Self> {
+    /// The scenario with its accounts on the methods in turn, starting
+    /// `offset` methods into `CostBasisMethod::ALL`, so transfers pair
+    /// accounts on different methods; suffixed `@MIXED`, or `@MIXED+offset`.
+    /// `None` with one account.
+    pub fn with_mixed_cost_basis_methods(&self, offset: usize) -> Option<Self> {
         if self.accounts.len() < 2 {
             return None;
         }
         let mut scenario = self.clone();
         let methods = CostBasisMethod::ALL;
         for (index, account) in scenario.accounts.iter_mut().enumerate() {
-            account.cost_basis_method = Some(methods[index % methods.len()].as_str().to_string());
+            let method = methods[(index + offset) % methods.len()];
+            account.cost_basis_method = Some(method.as_str().to_string());
         }
-        scenario.id = format!("{}@MIXED", scenario.id);
+        scenario.id = match offset {
+            0 => format!("{}@MIXED", scenario.id),
+            _ => format!("{}@MIXED+{offset}", scenario.id),
+        };
         Some(scenario)
     }
 }
 
 /// Each scenario under every cost basis method the engine computes, and with
 /// its accounts on different methods: a property law holds whatever the
-/// methods (rules R7.3, §9).
+/// methods (rules R7.3, §9). One mixed run per rotation of the methods, so in
+/// two-account scenarios each method sends to and receives from its
+/// neighbours in `CostBasisMethod::ALL`.
 pub fn under_every_method(
     scenarios: impl IntoIterator<Item = Scenario>,
 ) -> impl Iterator<Item = Scenario> {
     scenarios.into_iter().flat_map(|scenario| {
-        let mixed = scenario.with_mixed_cost_basis_methods();
+        let mixed = (0..CostBasisMethod::ALL.len())
+            .filter_map(|offset| scenario.with_mixed_cost_basis_methods(offset))
+            .collect::<Vec<_>>();
         CostBasisMethod::ALL
             .iter()
             .map(|method| scenario.with_cost_basis_method(*method))
@@ -1061,6 +1054,7 @@ impl Pipeline {
             lots,
             &self.bundle.disposals,
             &self.bundle.rejected_activities(),
+            MeasureProfile::Full,
         )
     }
 

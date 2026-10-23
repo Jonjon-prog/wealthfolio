@@ -219,19 +219,21 @@ export function ReviewPanel({
                       <p className="text-right font-mono text-xs tabular-nums">
                         {formatSignedAmount(signedLineAmount(line), currency, formatAmount)}
                       </p>
-                      <TooltipProvider delayDuration={150}>
+                      <TooltipProvider delay={150}>
                         <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="text-muted-foreground border-muted-foreground/40 w-fit cursor-help border-b border-dotted font-mono text-[11px] tabular-nums sm:justify-self-end"
-                            >
-                              {/* Rounded as Adjust positions shows it; the tooltip
-                                  says where the price comes from. */}
-                              {t("allocation:worksheet.accountUnitsSummary", {
-                                quantity: formatQuantity(displayUnits(Math.abs(line.quantity))),
-                              })}
-                            </button>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="text-muted-foreground border-muted-foreground/40 w-fit cursor-help border-b border-dotted font-mono text-[11px] tabular-nums sm:justify-self-end"
+                              />
+                            }
+                          >
+                            {/* Rounded as Adjust positions shows it; the tooltip
+                                says where the price comes from. */}
+                            {t("allocation:worksheet.accountUnitsSummary", {
+                              quantity: formatQuantity(displayUnits(Math.abs(line.quantity))),
+                            })}
                           </TooltipTrigger>
                           <TooltipContent side="left" className="max-w-80 space-y-1 text-xs">
                             <p>

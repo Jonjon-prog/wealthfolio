@@ -383,7 +383,6 @@
     "clearAccounts": "清除",
     "noMatchingAccounts": "沒有符合的帳戶。",
     "otherAccounts": "其他帳戶",
-    "includeAccount": "包含 {{account}}",
     "noCashRecorded": "無現金",
     "accountRecorded": "記錄 {{amount}}",
     "cryptoOnly": "僅限加密資產",

@@ -372,7 +372,6 @@
     "clearAccounts": "清除",
     "noMatchingAccounts": "没有匹配的账户。",
     "otherAccounts": "其他账户",
-    "includeAccount": "包含 {{account}}",
     "noCashRecorded": "无现金",
     "accountRecorded": "记录 {{amount}}",
     "cryptoOnly": "仅限加密资产",

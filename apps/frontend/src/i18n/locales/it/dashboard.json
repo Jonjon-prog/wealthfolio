@@ -65,8 +65,8 @@
     "more_goals_one": "+{{count}} altro obiettivo",
     "more_goals_many": "+{{count}} altri obiettivi",
     "more_goals_other": "+{{count}} altri obiettivi",
-    "time_no_deadline": "NESSUNA SCADENZA",
-    "time_due": "SCADENZA"
+    "time_no_deadline": "Nessuna scadenza",
+    "time_due": "Scadenza"
   },
   "tabs": {
     "investments": "Investimenti",
@@ -110,5 +110,13 @@
   },
   "accounts_count_one": "{{count}} conto",
   "accounts_count_many": "{{count}} conti",
-  "accounts_count_other": "{{count}} conti"
+  "accounts_count_other": "{{count}} conti",
+  "portfolio_filter": {
+    "choose": "Scegli portafoglio",
+    "search": "Cerca portafogli…",
+    "manage": "Gestisci portafogli",
+    "unavailable": "Il portafoglio selezionato non è più disponibile. Sono visualizzati tutti i conti.",
+    "load_error": "Impossibile caricare il portafoglio selezionato.",
+    "empty": "Nessun conto da visualizzare in questo portafoglio."
+  }
 }

@@ -1,3 +1,4 @@
+import { getTransferRate } from "../hooks/use-internal-transfer-currencies";
 import type { ComponentType } from "react";
 import {
   ACTIVITY_SUBTYPES,
@@ -131,6 +132,8 @@ export const ACTIVITY_FORM_CONFIG: Record<
       const base = {
         ...getBaseDefaults(activity, accounts),
         assetId: activity?.assetSymbol ?? activity?.assetId ?? "",
+        symbolInstrumentType: activity?.instrumentType ?? undefined,
+        symbolQuoteCcy: activity?.assetQuoteCcy ?? activity?.currency ?? undefined,
         quantity: absNum(activity?.quantity),
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
@@ -152,8 +155,6 @@ export const ACTIVITY_FORM_CONFIG: Record<
           ...base,
           assetType: "option" as const,
           assetKind: InstrumentType.OPTION,
-          symbolInstrumentType: InstrumentType.OPTION,
-          symbolQuoteCcy: activity?.currency ?? undefined,
           underlyingSymbol: parsed?.underlying ?? "",
           strikePrice: parsed?.strikePrice,
           expirationDate: parsed?.expiration,
@@ -169,8 +170,6 @@ export const ACTIVITY_FORM_CONFIG: Record<
           ...base,
           assetType: "bond" as const,
           assetKind: InstrumentType.BOND,
-          symbolInstrumentType: InstrumentType.BOND,
-          symbolQuoteCcy: activity?.currency ?? undefined,
         };
       }
 
@@ -228,6 +227,8 @@ export const ACTIVITY_FORM_CONFIG: Record<
       const base = {
         ...getBaseDefaults(activity, accounts),
         assetId: activity?.assetSymbol ?? activity?.assetId ?? "",
+        symbolInstrumentType: activity?.instrumentType ?? undefined,
+        symbolQuoteCcy: activity?.assetQuoteCcy ?? activity?.currency ?? undefined,
         quantity: absNum(activity?.quantity),
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
@@ -249,8 +250,6 @@ export const ACTIVITY_FORM_CONFIG: Record<
           ...base,
           assetType: "option" as const,
           assetKind: InstrumentType.OPTION,
-          symbolInstrumentType: InstrumentType.OPTION,
-          symbolQuoteCcy: activity?.currency ?? undefined,
           underlyingSymbol: parsed?.underlying ?? "",
           strikePrice: parsed?.strikePrice,
           expirationDate: parsed?.expiration,
@@ -266,8 +265,6 @@ export const ACTIVITY_FORM_CONFIG: Record<
           ...base,
           assetType: "bond" as const,
           assetKind: InstrumentType.BOND,
-          symbolInstrumentType: InstrumentType.BOND,
-          symbolQuoteCcy: activity?.currency ?? undefined,
         };
       }
 
@@ -470,7 +467,12 @@ export const ACTIVITY_FORM_CONFIG: Record<
         comment: activity?.comment ?? null,
         // Advanced options
         currency: activity?.currency,
-        fxRate: absNum(activity?.fxRate ?? activity?.counterpartFxRate) ?? undefined,
+        transferRate: getTransferRate(sourceAmount, destinationAmount),
+        fxRate:
+          absNum(
+            activity?.fxRate ??
+              (transferMode === "securities" ? activity?.counterpartFxRate : undefined),
+          ) ?? undefined,
         subtype: activity?.subtype ?? null,
         quoteMode:
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,

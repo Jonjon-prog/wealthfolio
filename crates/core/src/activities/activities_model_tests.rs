@@ -161,13 +161,6 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_date() {
-        let activity = create_test_activity();
-        let date = activity.effective_date();
-        assert_eq!(date.to_string(), "2024-01-15");
-    }
-
-    #[test]
     fn test_is_posted_true() {
         let activity = create_test_activity();
         assert!(activity.is_posted());
@@ -346,6 +339,28 @@ mod tests {
         let activity = create_test_new_activity();
         let result = activity.validate();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cost_adjustment_validation_requires_asset_identity() {
+        for subtype in [
+            "RETURN_OF_CAPITAL",
+            "Return of Capital",
+            "notional-distribution",
+        ] {
+            let mut activity = create_test_new_activity();
+            activity.activity_type = "ADJUSTMENT".to_string();
+            activity.subtype = Some(subtype.to_string());
+            activity.asset = None;
+            assert!(activity.validate().is_err(), "{subtype}");
+            activity.asset = Some(AssetResolutionInput {
+                symbol: Some(" ".to_string()),
+                ..Default::default()
+            });
+            assert!(activity.validate().is_err(), "{subtype}");
+            activity.asset.as_mut().unwrap().symbol = Some("ETF".to_string());
+            assert!(activity.validate().is_ok(), "{subtype}");
+        }
     }
 
     #[test]
@@ -535,6 +550,56 @@ mod tests {
     }
 
     #[test]
+    fn test_cost_basis_subtypes_are_canonicalized() {
+        assert_eq!(
+            NewActivity::canonicalize_subtype_for_activity("ADJUSTMENT", Some("return_of_capital"))
+                .as_deref(),
+            Some("RETURN_OF_CAPITAL")
+        );
+        assert_eq!(
+            NewActivity::canonicalize_subtype_for_activity("DIVIDEND", Some(" Return_Of_Capital "))
+                .as_deref(),
+            Some("RETURN_OF_CAPITAL")
+        );
+        assert_eq!(
+            NewActivity::canonicalize_subtype_for_activity(
+                "ADJUSTMENT",
+                Some("notional_distribution")
+            )
+            .as_deref(),
+            Some("NOTIONAL_DISTRIBUTION")
+        );
+    }
+
+    #[test]
+    fn test_cost_basis_labels_normalize_separators_but_unknown_labels_stay_original() {
+        for label in [
+            "Return of Capital",
+            "return-of-capital",
+            " RETURN_OF_CAPITAL ",
+        ] {
+            assert_eq!(
+                NewActivity::canonicalize_subtype(Some(label)).as_deref(),
+                Some("RETURN_OF_CAPITAL")
+            );
+        }
+        for label in [
+            "Notional Distribution",
+            "notional-distribution",
+            "notional_distribution",
+        ] {
+            assert_eq!(
+                NewActivity::canonicalize_subtype(Some(label)).as_deref(),
+                Some("NOTIONAL_DISTRIBUTION")
+            );
+        }
+        assert_eq!(
+            NewActivity::canonicalize_subtype(Some("Provider Custom-Label")).as_deref(),
+            Some("Provider Custom-Label")
+        );
+    }
+
+    #[test]
     fn test_new_activity_treats_zero_income_value_source_as_missing() {
         let mut activity = create_test_new_activity();
         activity.activity_type = "INTEREST".to_string();
@@ -583,6 +648,8 @@ mod tests {
 
     fn create_test_activity_update() -> ActivityUpdate {
         ActivityUpdate {
+            unlink_transfer_pair_id: None,
+            split_review: None,
             id: "activity-1".to_string(),
             account_id: "account-1".to_string(),
             asset: Some(AssetResolutionInput {

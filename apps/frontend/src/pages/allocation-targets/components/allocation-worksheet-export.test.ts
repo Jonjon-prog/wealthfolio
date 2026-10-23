@@ -263,4 +263,11 @@ describe("worksheet export", () => {
     expect(toCsv([['say "hi"']])).toBe(`"say ""hi"""`);
     expect(toTsv([["two\tcells\nhere"]])).toBe("two cells here");
   });
+
+  it("drops the bidi marks right-to-left text carries, and still guards a formula behind one", () => {
+    // How an Arabic interpolation isolates a value: FSI before, PDI after.
+    const table = [["⁨Brokerage⁩", "⁨=SUM(A1)⁩"]];
+    expect(toCsv(table)).toBe(`"Brokerage","'=SUM(A1)"`);
+    expect(toTsv(table)).toBe("Brokerage\t'=SUM(A1)");
+  });
 });

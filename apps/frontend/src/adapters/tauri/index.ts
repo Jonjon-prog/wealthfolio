@@ -5,7 +5,7 @@ import type { RunEnv } from "../types";
 import { RunEnvs } from "../types";
 
 // Platform constants from core
-export { isDesktop, isWeb, logger } from "./core";
+export { isTauri, isWeb, logger } from "./core";
 
 /**
  * Runtime environment identifier - always "desktop" for Tauri builds
@@ -223,6 +223,7 @@ export {
   listAgentAccessTokens,
   createAgentAccessToken,
   deleteAgentAccessToken,
+  updateAgentAccessTokenScopes,
 } from "./agent-access";
 
 // AI Streaming (Tauri Channel-based implementation)
@@ -230,6 +231,7 @@ export { streamAiChat } from "./ai-streaming";
 
 // Event Listeners (Tauri listen() implementation)
 export {
+  listenBackButton,
   listenFileDropHover,
   listenFileDrop,
   listenFileDropCancelled,
@@ -286,3 +288,13 @@ export {
   runRetirementSorr,
   runRetirementStressTests,
 } from "./fire-planner";
+
+export {
+  cloudBackupAction,
+  captureCloudBackup,
+  type CloudBackupStatus,
+  type CloudBackupCaptureStatus,
+  type CloudBackupPoint,
+  type CloudBackupOperation,
+} from "../shared/cloud-backups";
+export { downloadCloudBackup, previewCloudBackupRestore } from "./cloud-backups";

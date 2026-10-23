@@ -283,16 +283,6 @@ impl ActivityRepositoryTrait for InMemoryActivityRepository {
             .ok_or_else(|| not_found(format!("activity {activity_id}")))
     }
 
-    fn find_transfer_counterpart(
-        &self,
-        group_id: &str,
-        exclude_id: &str,
-    ) -> Result<Option<Activity>> {
-        Ok(self.visible().into_iter().find(|activity| {
-            activity.source_group_id.as_deref() == Some(group_id) && activity.id != exclude_id
-        }))
-    }
-
     fn get_activities(&self) -> Result<Vec<Activity>> {
         Ok(self.visible())
     }
@@ -947,7 +937,7 @@ impl ValuationRepositoryTrait for InMemoryValuationRepository {
             .filter_map(|account_id| {
                 rows.get(account_id)?
                     .values()
-                    .find(|row| row.total_value < Decimal::ZERO)
+                    .find(|row| row.cash_balance < Decimal::ZERO || row.total_value < Decimal::ZERO)
                     .map(|row| NegativeBalanceInfo {
                         account_id: account_id.clone(),
                         first_negative_date: row.valuation_date,

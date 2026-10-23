@@ -1,4 +1,9 @@
 import {
+  isActivityEditCancelled,
+  useActivitySplitReview,
+  useInternalTransferPairSplitReview,
+} from "@/features/spending/components/activity-split-review-provider";
+import {
   createActivity,
   deleteActivity,
   linkTransferActivities,
@@ -24,10 +29,13 @@ import { ActivityType, InstrumentType } from "@/lib/constants";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { NewActivityFormValues } from "../components/forms/schemas";
+import { buildSameAccountFxDuplicate } from "../utils/duplicate-fx-transfer";
 
 export function useActivityMutations(
   onSuccess?: (activity: { accountId?: string | null }) => void,
 ) {
+  const reviewEdits = useActivitySplitReview();
+  const reviewPair = useInternalTransferPairSplitReview();
   const queryClient = useQueryClient();
 
   const buildActivityAssetInput = ({
@@ -99,6 +107,7 @@ export function useActivityMutations(
       if (onSuccess) onSuccess(activity);
     },
     onError: (error: string) => {
+      if (isActivityEditCancelled(error)) return;
       logger.error(`Error ${action} activity: ${String(error)}`);
       toast.error(`Failed ${action} activity`, {
         description: String(error),
@@ -190,7 +199,9 @@ export function useActivityMutations(
   });
 
   const updateActivityMutation = useMutation({
-    mutationFn: async (data: NewActivityFormValues & { id: string }) => {
+    mutationFn: async (
+      data: NewActivityFormValues & { id: string; unlinkTransferPairId?: string },
+    ) => {
       // Extract asset-related fields from form data
       const {
         assetId,
@@ -276,7 +287,8 @@ export function useActivityMutations(
         metadata: metadata ? JSON.stringify(metadata) : undefined,
       };
       // Backend handles quote creation for MANUAL pricing mode
-      const result = await updateActivity(updatePayload);
+      const [reviewed] = await reviewEdits([updatePayload]);
+      const result = await updateActivity(reviewed);
 
       if (!result || typeof result !== "object" || !("id" in result)) {
         throw new Error("Failed updating activity");
@@ -307,6 +319,7 @@ export function useActivityMutations(
       });
     },
     onError: (error: string) => {
+      if (isActivityEditCancelled(error)) return;
       logger.error(`Error linking transfers: ${String(error)}`);
       toast.error("Failed to link transfers", {
         description: String(error),
@@ -324,6 +337,7 @@ export function useActivityMutations(
       });
     },
     onError: (error: string) => {
+      if (isActivityEditCancelled(error)) return;
       logger.error(`Error unlinking transfers: ${String(error)}`);
       toast.error("Failed to unlink transfers", {
         description: String(error),
@@ -332,12 +346,24 @@ export function useActivityMutations(
   });
 
   const duplicateActivity = async (activityToDuplicate: ActivityDetails) => {
+    const exchange = await buildSameAccountFxDuplicate(activityToDuplicate);
+    if (exchange) {
+      const result = await saveActivities({ creates: exchange });
+      if (result.errors.length)
+        throw new Error(result.errors.map((error) => error.message).join("; "));
+      const duplicated = result.created.find(
+        (leg) => leg.activityType === activityToDuplicate.activityType,
+      );
+      if (!duplicated || result.created.length !== 2)
+        throw new Error("Failed duplicating transfer pair.");
+      return duplicated;
+    }
     const {
       id: _id,
       createdAt: _createdAt,
       updatedAt: _updatedAt,
-      comment: _comment,
-      date,
+      comment,
+      date: _date,
       assetId: _assetId,
       assetSymbol,
       exchangeMic,
@@ -376,8 +402,8 @@ export function useActivityMutations(
       fee: restOfActivityData.fee,
       tax: restOfActivityData.tax,
       fxRate: restOfActivityData.fxRate ?? undefined,
-      activityDate: date,
-      comment: "Duplicated",
+      activityDate: new Date(),
+      comment,
       metadata: boundaryMetadata,
       asset: buildAssetResolutionInput({
         id: _assetId,
@@ -420,6 +446,7 @@ export function useActivityMutations(
       };
 
       // Backend handles quote creation for MANUAL pricing mode
+      normalizedRequest.updates = await reviewEdits(normalizedRequest.updates ?? []);
       return await saveActivities(normalizedRequest);
     },
     onSuccess: (result: ActivityBulkMutationResult) => {
@@ -438,6 +465,7 @@ export function useActivityMutations(
       }
     },
     onError: (error: string) => {
+      if (isActivityEditCancelled(error)) return;
       logger.error(`Error saving activities: ${String(error)}`);
       toast.error("Failed to save activities", {
         description: String(error),
@@ -447,13 +475,16 @@ export function useActivityMutations(
 
   const saveInternalTransferPairMutation = useMutation({
     mutationFn: async (request: InternalTransferPairRequest) => {
-      return await saveInternalTransferPair(request);
+      const reviewed =
+        request.transferOutId || request.transferInId ? await reviewPair(request) : request;
+      return await saveInternalTransferPair(reviewed);
     },
     onSuccess: (result: InternalTransferPairResponse) => {
       queryClient.invalidateQueries();
       if (onSuccess) onSuccess({ accountId: result.transferOut.accountId });
     },
     onError: (error: string) => {
+      if (isActivityEditCancelled(error)) return;
       logger.error(`Error saving internal transfer pair: ${String(error)}`);
       toast.error("Failed to save transfer", {
         description: String(error),

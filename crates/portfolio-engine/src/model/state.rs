@@ -133,10 +133,16 @@ pub struct Position {
     pub cost_basis_account: Option<Decimal>,
     #[serde(default, with = "crate::model::decimal_serde::option")]
     pub cost_basis_base: Option<Decimal>,
+    /// The lot a disposal closed last: a return of capital paid once no
+    /// units are left is a capital gain on it (rules R7.4). Lot data: a
+    /// state without its lots leaves it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_closed_lot: Option<String>,
 }
 
 impl Position {
-    /// Every field but the lots, without copying them.
+    /// Every field but the lots and the lot it last closed, without copying
+    /// the lots.
     fn clone_totals(&self) -> Self {
         Self {
             asset: self.asset.clone(),
@@ -150,6 +156,7 @@ impl Position {
             inception: self.inception,
             cost_basis_account: self.cost_basis_account,
             cost_basis_base: self.cost_basis_base,
+            last_closed_lot: None,
         }
     }
 }
@@ -192,11 +199,61 @@ pub struct Lot {
     /// Cumulative post-acquisition split ratio; effective units = quantity × ratio.
     #[serde(with = "crate::model::decimal_serde")]
     pub split_ratio: Decimal,
+    /// Book cost in `account_currency` / `base_currency` once a return of
+    /// capital or notional distribution moved it at its own day's rate
+    /// (rules R7.4); `None`: the cost at the acquisition rate. The purchase
+    /// keeps its acquisition rates. A disposal takes its units' share.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::model::decimal_serde::option"
+    )]
+    pub book_cost_account: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::model::decimal_serde::option"
+    )]
+    pub book_cost_base: Option<Decimal>,
+    /// Book cost when this transferred lot opened, including its own fee.
+    /// Later adjustments/disposals change current cost, not these amounts.
+    /// Read models persist them in the existing original-cost columns;
+    /// acquisition price, dates, rates and charges remain purchase facts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::model::decimal_serde::option"
+    )]
+    pub opening_cost_basis: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::model::decimal_serde::option"
+    )]
+    pub opening_cost_basis_base: Option<Decimal>,
 }
 
 impl Lot {
     pub fn effective_quantity(&self) -> Decimal {
         self.quantity * self.split_ratio
+    }
+
+    /// Stored book cost in `target` (see [`Lot::book_cost_account`]), when a
+    /// cost basis adjustment recorded one. Codes compare exactly, as rates do.
+    pub fn stored_book_cost_in(&self, target: &str) -> Option<Decimal> {
+        let matches =
+            |currency: &Option<Currency>| currency.as_ref().is_some_and(|c| c.as_str() == target);
+        if matches(&self.account_currency) {
+            if let Some(book) = self.book_cost_account {
+                return Some(book);
+            }
+        }
+        if matches(&self.base_currency) {
+            if let Some(book) = self.book_cost_base {
+                return Some(book);
+            }
+        }
+        None
     }
 
     /// Stored acquisition rate to `target`, when the lot recorded one.

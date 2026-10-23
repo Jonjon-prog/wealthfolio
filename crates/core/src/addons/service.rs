@@ -254,7 +254,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         (
             "activities",
             "spending",
-            vec!["searchCashActivities"],
+            vec![
+                "searchCashActivities",
+                "assignCategory",
+                "unassignCategory",
+                "setEvent",
+            ],
             "Access to categorized spending transactions",
         ),
         (
@@ -329,6 +334,10 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             vec![
                 "isEnabled",
                 "getCategories",
+                "getContext",
+                "getBudget",
+                "getEvents",
+                "getEventTypes",
                 "getReport",
                 "getRules",
                 "saveRule",
@@ -336,6 +345,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
                 "rerunRules",
             ],
             "Access to spending reports, categories, and categorization rules",
+        ),
+        (
+            "budgets",
+            "spending",
+            vec!["upsertBudgetTarget"],
+            "Change default and monthly budget targets",
         ),
         (
             "settings",
@@ -850,7 +865,8 @@ fn extract_addon_zip_archive(zip_data: Vec<u8>) -> Result<ExtractedAddonArchive,
             continue;
         }
 
-        let file_name = file.name().to_string();
+        // Archives zipped on Windows (e.g. Compress-Archive) use '\\' as separator.
+        let file_name = file.name().replace('\\', "/");
         validated_addon_archive_path(&file_name)?;
 
         if file_name.ends_with(".map") {

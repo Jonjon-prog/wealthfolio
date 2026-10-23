@@ -269,6 +269,29 @@ fn a_repeated_difference_suggests_a_payment_change() {
 }
 
 #[test]
+fn an_extra_recorded_on_due_dates_suggests_no_payment_change() {
+    // Extra repayments of 40 recorded on three due dates.
+    let with_extras = |amount| {
+        let mut request = monthly(
+            ["2026-03-01", "2026-04-01", "2026-05-01"]
+                .iter()
+                .map(|day| pay(day, day, amount))
+                .collect(),
+        );
+        request.metadata["loan_events"] = json!(["2026-03-01", "2026-04-01", "2026-05-01"]
+            .iter()
+            .map(|day| json!({ "type": "extra_repayment", "effectiveDate": day, "amount": 40 }))
+            .collect::<Vec<_>>());
+        calc(&request).payment_suggestion
+    };
+    // The regular payment, with the extras paid separately or in the same withdrawal.
+    assert_eq!(with_extras(100.0), None);
+    assert_eq!(with_extras(140.0), None);
+    // Ten more every time is a payment of 110, extras aside.
+    assert_eq!(with_extras(150.0).map(|s| s.payment_amount), Some(110.0));
+}
+
+#[test]
 fn a_confirmed_balance_still_wins_over_payments() {
     let mut request = monthly(vec![pay("mar", "2026-03-01", 150.0)]);
     request.balances.push(LoanBalance {
@@ -354,10 +377,10 @@ fn a_tagged_posted_cash_withdrawal_in_the_loans_currency_is_a_payment() {
     let activity = withdrawal(Some(
         json!({"loan_id": "loan", "escrow": 30, "applies_to": "extra"}),
     ));
-    let (loan, payment) = LoanPayment::from_activity(&activity, "CASH", "CAD").unwrap();
+    let (loan, payment) = StoredPayment::from_activity(&activity, "CASH", "CAD").unwrap();
     assert_eq!(loan, "loan");
     assert_eq!(
-        payment,
+        payment.dated(Tz::UTC),
         LoanPayment {
             activity_id: "act".into(),
             account_id: "chequing".into(),
@@ -370,11 +393,22 @@ fn a_tagged_posted_cash_withdrawal_in_the_loans_currency_is_a_payment() {
 }
 
 #[test]
+fn a_payment_is_dated_by_the_day_shown_in_the_settings_time_zone() {
+    // 8 pm on March 1 in Toronto is already March 2 in UTC.
+    let mut activity = withdrawal(Some(json!({"loan_id": "loan"})));
+    activity.activity_date = "2026-03-02T01:00:00Z".parse().unwrap();
+    let (_, payment) = StoredPayment::from_activity(&activity, "CASH", "CAD").unwrap();
+    let day = |timezone| payment.dated(timezone).date;
+    assert_eq!(day(chrono_tz::America::Toronto), date("2026-03-01"));
+    assert_eq!(day(Tz::UTC), date("2026-03-02"));
+}
+
+#[test]
 fn anything_that_stops_qualifying_is_ignored() {
     use crate::activities::ActivityStatus;
     let tag = || Some(json!({"loan_id": "loan"}));
     let counts = |activity: &Activity, account: &str, currency: &str| {
-        LoanPayment::from_activity(activity, account, currency).is_some()
+        StoredPayment::from_activity(activity, account, currency).is_some()
     };
     assert!(counts(&withdrawal(tag()), "CASH", "CAD"));
     assert!(!counts(&withdrawal(None), "CASH", "CAD"));
@@ -433,4 +467,24 @@ fn the_payment_on_a_due_date_covers_an_extra_recorded_for_that_day() {
         vec![pay("a", "2026-03-01", 100.0), pay("u", "2026-03-01", 100.0)],
     );
     assert_eq!(double.current_balance, 600.0);
+}
+
+#[test]
+fn an_extra_paid_separately_does_not_leave_its_due_date_short() {
+    // An extra repayment recorded on March's due date, its withdrawal not linked.
+    let with_extra = |payments: Vec<LoanPayment>| {
+        let mut request = monthly(payments);
+        request.metadata["loan_events"] =
+            json!([{ "type": "extra_repayment", "effectiveDate": "2026-03-01", "amount": 40 }]);
+        calc(&request)
+    };
+    let regular = with_extra(vec![pay("r", "2026-03-01", 100.0)]);
+    assert_eq!(regular.current_balance, 660.0);
+    assert_eq!(status(&regular, "2026-03-01"), Some(InstalmentStatus::Paid));
+    // Less than the scheduled payment is still short.
+    let partial = with_extra(vec![pay("r", "2026-03-01", 60.0)]);
+    assert_eq!(
+        status(&partial, "2026-03-01"),
+        Some(InstalmentStatus::Short)
+    );
 }

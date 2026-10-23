@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { addDays, parseISO } from "date-fns";
-import { Button, Icons, useAmountFormatting, useDateFormatting } from "@wealthfolio/ui";
+import { Button, useAmountFormatting, useDateFormatting, Spinner } from "@wealthfolio/ui";
 import { Sheet, SheetDescription, SheetTitle } from "@wealthfolio/ui/components/ui/sheet";
 import { linkLoanPayment, searchActivities } from "@/adapters";
 import type { PaymentAllocation } from "@/adapters/shared/alternative-assets";
 import { useAccounts } from "@/hooks/use-accounts";
 import { QueryKeys } from "@/lib/query-keys";
+import { useSettingsContext } from "@/lib/settings-provider";
 import { formatDateISO } from "@/lib/utils";
 import { invalidateAlternativeAssetQueries } from "../hooks/use-alternative-asset-mutations";
 import { activityDay, isPaymentCandidate } from "../lib/loan-payments";
@@ -48,6 +49,7 @@ export function LoanPaymentsSheet({
   const dates = useDateFormatting();
   const { formatAmount } = useAmountFormatting();
   const { accounts } = useAccounts({ filterActive: false });
+  const { settings } = useSettingsContext();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const accountName = (id: string) =>
@@ -131,9 +133,7 @@ export function LoanPaymentsSheet({
                       disabled={busy != null}
                       onClick={() => change(allocation.activityId, { type: "unlink" })}
                     >
-                      {busy === allocation.activityId && (
-                        <Icons.Spinner className="mr-1 size-3 animate-spin" />
-                      )}
+                      {busy === allocation.activityId && <Spinner className="me-1 size-3" />}
                       {t("asset:loanPayments.unlink")}
                     </Button>
                   </span>
@@ -149,7 +149,7 @@ export function LoanPaymentsSheet({
                   {t("asset:loanPayments.needs_account")}
                 </p>
               ) : isLoading ? (
-                <Icons.Spinner className="text-muted-foreground size-4 animate-spin" />
+                <Spinner className="text-muted-foreground size-4" />
               ) : candidates.length === 0 ? (
                 <p className="text-muted-foreground text-sm">
                   {t("asset:loanPayments.no_candidates", {
@@ -164,7 +164,7 @@ export function LoanPaymentsSheet({
                     className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
                   >
                     <span className="min-w-0 truncate">
-                      {day(activityDay(activity))}
+                      {day(activityDay(activity, settings?.timezone))}
                       {activity.comment ? ` · ${activity.comment}` : ""}
                     </span>
                     <span className="flex items-center gap-3">
@@ -178,9 +178,7 @@ export function LoanPaymentsSheet({
                           change(activity.id, { type: "link", loanId, appliesTo: dueDate })
                         }
                       >
-                        {busy === activity.id && (
-                          <Icons.Spinner className="mr-1 size-3 animate-spin" />
-                        )}
+                        {busy === activity.id && <Spinner className="me-1 size-3" />}
                         {t("asset:loanPayments.link")}
                       </Button>
                     </span>
