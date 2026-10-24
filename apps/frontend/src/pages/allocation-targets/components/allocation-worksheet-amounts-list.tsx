@@ -204,7 +204,7 @@ export function AmountsList({
       <div
         className={cn(
           AMOUNTS_GRID,
-          "text-muted-foreground bg-muted/15 hidden border-b px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] sm:grid sm:items-center",
+          "text-muted-foreground bg-muted/15 text-2xs hidden border-b px-5 py-2.5 font-mono uppercase tracking-[0.14em] sm:grid sm:items-center",
         )}
       >
         <span>{t("allocation:worksheet.position")}</span>
@@ -254,7 +254,7 @@ function CollapsedLine({ rows, value, currency, isOpen, onToggle }: CollapsedLin
       aria-expanded={isOpen}
       data-collapsed-rows
       className={cn(
-        "flex w-full items-center justify-between gap-3 px-4 py-3 text-left sm:px-5",
+        "flex w-full items-center justify-between gap-3 px-4 py-3 text-start sm:px-5",
         touching.length > 0 && "bg-muted/60",
       )}
     >
@@ -392,17 +392,17 @@ function AmountRow({
       <div className={AMOUNTS_GRID}>
         {/* Symbol above name, so the name is not cut short beside the symbol. */}
         <div className="flex min-w-0 items-start gap-2.5">
-          <span className="flex w-5 shrink-0 flex-wrap gap-[3px] pt-[7px]" title={classesText}>
+          <span className="pt-1.75 flex w-5 shrink-0 flex-wrap gap-[3px]" title={classesText}>
             {position.categoryExposures.map((exposure) =>
               exposure.categoryId === UNCLASSIFIED_CATEGORY_ID ? (
                 <span
                   key={exposure.categoryId}
-                  className="border-muted-foreground h-[7px] w-[7px] rounded-full border border-dashed"
+                  className="border-muted-foreground h-1.75 w-1.75 rounded-full border border-dashed"
                 />
               ) : (
                 <span
                   key={exposure.categoryId}
-                  className="bg-muted-foreground h-[7px] w-[7px] rounded-full"
+                  className="bg-muted-foreground h-1.75 w-1.75 rounded-full"
                   style={{ background: classColors.get(exposure.categoryId) }}
                 />
               ),
@@ -410,11 +410,9 @@ function AmountRow({
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[13px] font-semibold leading-5">
-                {position.symbol}
-              </span>
+              <span className="font-mono text-sm font-semibold leading-5">{position.symbol}</span>
               {shareBps !== null && (
-                <span className="border-foreground shrink-0 rounded border px-1 font-mono text-[11px]">
+                <span className="border-foreground text-2xs shrink-0 rounded border px-1 font-mono">
                   {Math.round(shareBps / 100)}%
                 </span>
               )}
@@ -428,7 +426,7 @@ function AmountRow({
 
         {/* The projected weight stands out, so the eye finds what changes without
             reading the arrow; no colour says which way. */}
-        <span className="text-right font-mono text-xs tabular-nums sm:pt-2 sm:text-left">
+        <span className="text-end font-mono text-xs tabular-nums sm:pt-2 sm:text-start">
           {isChanged ? (
             <>
               <span className="text-muted-foreground">{position.currentPct.toFixed(1)} → </span>
@@ -511,13 +509,13 @@ function AmountRow({
           </div>
           {/* A final percentage is typed; the amount it comes to stays in view. */}
           {editMode === "after_percentage" && isChanged && (
-            <p className="text-muted-foreground mt-0.5 text-right font-mono text-[10px] tabular-nums">
+            <p className="text-muted-foreground text-2xs mt-0.5 text-end font-mono tabular-nums">
               ≈ {formatSignedAmount(changeAmount, currency, formatAmount)}
             </p>
           )}
           {/* The price, so an amount can be sized; the units it comes to, secondary. */}
           {editMode === "amount" && unitPrice !== undefined && (
-            <p className="text-muted-foreground mt-0.5 text-right font-mono text-[10px] tabular-nums">
+            <p className="text-muted-foreground text-2xs mt-0.5 text-end font-mono tabular-nums">
               {Math.abs(changeAmount) >= AMOUNT_EPSILON
                 ? t("allocation:worksheet.unitsAtPrice", {
                     count: unitsFor(changeAmount, unitPrice, wholeSharesOnly),
@@ -556,7 +554,7 @@ function AmountRow({
                 type="button"
                 disabled={projectedValue <= AMOUNT_EPSILON}
                 onClick={() => actions.onReduceToZero(position)}
-                className="text-foreground block text-[11px] underline underline-offset-2 disabled:pointer-events-none disabled:opacity-40"
+                className="text-foreground text-2xs block underline underline-offset-2 disabled:pointer-events-none disabled:opacity-40"
               >
                 {t("allocation:worksheet.reduceToZero")}
               </button>
@@ -638,8 +636,8 @@ function RowStatusCell({
   const { formatAmount } = useAmountFormatting();
   if (!status) return null;
 
-  const warning = "text-amber-800 dark:text-amber-200";
-  const linkClass = "max-w-full truncate text-left underline-offset-4 hover:underline";
+  const warning = "text-warning-subtle-foreground";
+  const linkClass = "max-w-full truncate text-start underline-offset-4 hover:underline";
   switch (status.kind) {
     case "placement":
       // The account allocation opens from here until Placement has its own panel.
@@ -681,7 +679,7 @@ function RowStatusCell({
       // Expected on almost every line under whole units, so not a problem colour,
       // and shown whole rather than cut short.
       return (
-        <span className="text-muted-foreground block font-mono text-[11px] leading-snug">
+        <span className="text-muted-foreground text-2xs block font-mono leading-snug">
           {t("allocation:worksheet.roundedTo", {
             amount: formatSignedAmount(status.amount, currency, formatAmount),
           })}

@@ -98,17 +98,17 @@ export function ReviewPanel({
   }
 
   const held = (heldLines.length > 0 || worksheetIssue) && (
-    <div className="border-b border-amber-400/40 bg-amber-50/40 px-4 py-4 sm:px-5 dark:bg-amber-950/10">
-      <p className="text-xs font-medium text-amber-950 dark:text-amber-200">
+    <div className="border-warning-subtle-border bg-warning-subtle border-b px-4 py-4 sm:px-5">
+      <p className="text-warning-subtle-foreground text-xs font-medium">
         {t("allocation:worksheet.heldTitle")}
       </p>
       {worksheetIssue && (
-        <p className="mt-1 text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
+        <p className="text-warning-subtle-foreground/80 mt-1 text-xs leading-relaxed">
           {worksheetIssue}
         </p>
       )}
       {heldLines.length > 0 && (
-        <ul className="mt-2 divide-y divide-amber-400/20">
+        <ul className="divide-warning-subtle-border mt-2 divide-y">
           {heldLines.map((line) => (
             <li
               key={line.assetId}
@@ -167,11 +167,11 @@ export function ReviewPanel({
             <h3 className="font-mono text-sm font-semibold">
               {t("allocation:worksheet.reviewChanges")}
             </h3>
-            <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-[10px]">
+            <span className="bg-muted text-muted-foreground text-2xs rounded-full px-2 py-0.5 font-mono">
               {t("allocation:worksheet.lineCount", { count: result.lines.length })}
             </span>
             {isStale && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-800 dark:text-amber-200">
+              <span className="bg-warning-subtle text-warning-subtle-foreground text-2xs rounded-full px-2 py-0.5 font-mono">
                 {isCalculating
                   ? t("allocation:worksheet.updatingPreview")
                   : t("allocation:worksheet.previewOutOfDate")}
@@ -216,7 +216,7 @@ export function ReviewPanel({
                         <span className="font-mono font-semibold">{line.symbol}</span>
                         <span className="text-muted-foreground"> · {line.name}</span>
                       </p>
-                      <p className="text-right font-mono text-xs tabular-nums">
+                      <p className="text-end font-mono text-xs tabular-nums">
                         {formatSignedAmount(signedLineAmount(line), currency, formatAmount)}
                       </p>
                       <TooltipProvider delay={150}>
@@ -225,7 +225,7 @@ export function ReviewPanel({
                             render={
                               <button
                                 type="button"
-                                className="text-muted-foreground border-muted-foreground/40 w-fit cursor-help border-b border-dotted font-mono text-[11px] tabular-nums sm:justify-self-end"
+                                className="text-muted-foreground border-muted-foreground/40 text-2xs w-fit cursor-help border-b border-dotted font-mono tabular-nums sm:justify-self-end"
                               />
                             }
                           >
@@ -261,7 +261,7 @@ export function ReviewPanel({
                         </Tooltip>
                       </TooltipProvider>
                       <p
-                        className="truncate text-right text-[11px] text-amber-800 dark:text-amber-200"
+                        className="text-2xs text-warning-subtle-foreground truncate text-end"
                         title={warnings.join("\n")}
                       >
                         {warnings.length > 0 &&
@@ -282,16 +282,16 @@ export function ReviewPanel({
                 <p className="pt-2 text-xs font-semibold">
                   {t("allocation:worksheet.accountTotal")}
                 </p>
-                <p className="border-foreground border-t-[1.5px] pt-2 text-right font-mono text-xs font-semibold tabular-nums">
+                <p className="border-foreground border-t-[1.5px] pt-2 text-end font-mono text-xs font-semibold tabular-nums">
                   {formatSignedAmount(net, currency, formatAmount)}
                 </p>
                 <span className="hidden sm:block" />
                 {funding && (
                   <p
                     className={cn(
-                      "col-span-2 mt-1.5 justify-self-end text-right font-mono text-xs font-semibold tabular-nums sm:col-span-1",
+                      "col-span-2 mt-1.5 justify-self-end text-end font-mono text-xs font-semibold tabular-nums sm:col-span-1",
                       isShort
-                        ? "rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                        ? "bg-warning-subtle text-warning-subtle-foreground rounded px-1.5 py-0.5"
                         : "text-foreground",
                     )}
                   >
@@ -307,7 +307,7 @@ export function ReviewPanel({
                 {/* The deposit the account's figures count on, said with them, and
                     a shortfall's way out: a deposit the user adds. */}
                 {((depositsByAccount[accountId] ?? 0) > 0 || (funding && isShort)) && (
-                  <p className="text-muted-foreground col-span-full flex flex-wrap justify-end gap-x-3 text-right text-[11px]">
+                  <p className="text-muted-foreground text-2xs col-span-full flex flex-wrap justify-end gap-x-3 text-end">
                     {(depositsByAccount[accountId] ?? 0) > 0 && (
                       <span>
                         {t("allocation:worksheet.depositIncluded", {

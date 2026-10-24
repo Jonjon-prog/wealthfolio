@@ -413,7 +413,7 @@ function buildPositions(
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-muted-foreground font-mono text-[11px] uppercase tracking-[0.16em]">
+    <p className="text-muted-foreground text-2xs font-mono uppercase tracking-[0.16em]">
       {children}
     </p>
   );
@@ -483,14 +483,14 @@ function FundingSummary({
                   <span
                     className={cn(
                       "shrink-0 font-mono tabular-nums",
-                      isShortOfFunding(funding.remaining) && "text-amber-800 dark:text-amber-200",
+                      isShortOfFunding(funding.remaining) && "text-warning-subtle-foreground",
                     )}
                   >
                     {amountOf(funding.remaining)}
                   </span>
                 </div>
                 {isShortOfFunding(funding.remaining) && (
-                  <p className="mt-0.5 flex flex-wrap items-baseline justify-between gap-x-2 text-[11px] text-amber-800 dark:text-amber-200">
+                  <p className="text-2xs text-warning-subtle-foreground mt-0.5 flex flex-wrap items-baseline justify-between gap-x-2">
                     <span>
                       {t("allocation:worksheet.fundingNeeded", {
                         amount: formatAmount(-funding.remaining, currency),
@@ -589,7 +589,7 @@ function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSum
       <Eyebrow>{t("allocation:worksheet.calculatedSummary")}</Eyebrow>
       {/* One paragraph rather than a line per note, to give the list below the room. */}
       {notes.length > 0 && (
-        <p className="text-muted-foreground mt-2 text-[13px] leading-relaxed">{notes.join(" ")}</p>
+        <p className="text-muted-foreground mt-2 text-sm leading-relaxed">{notes.join(" ")}</p>
       )}
       {calculated.unresolved.length > 0 && (
         <div className="mt-3">
@@ -636,10 +636,10 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={<Button size="sm" variant="ghost" />}>
-        <Icons.Plus className="mr-1.5 h-4 w-4" />
+        <Icons.Plus className="me-1.5 h-4 w-4" />
         {t("allocation:worksheet.addPosition")}
       </PopoverTrigger>
-      <PopoverContent className="w-[340px] max-w-[calc(100vw-2rem)] p-0" align="start">
+      <PopoverContent className="w-85 max-w-[calc(100vw-2rem)] p-0" align="start">
         <Command>
           <CommandInput placeholder={t("allocation:worksheet.searchSecurities")} />
           <CommandList>
@@ -1920,12 +1920,12 @@ export function AllocationWorksheetTab({
       variant="outline"
       disabled={!!generationIssue || calculator.isPending}
       onClick={() => void recalculateFromTarget()}
-      className="border-amber-500/70 bg-amber-50 font-semibold text-amber-900 hover:bg-amber-100 hover:text-amber-950 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60 dark:hover:text-amber-100"
+      className="border-warning bg-warning-subtle text-warning-subtle-foreground hover:bg-warning-subtle/70 hover:text-warning-subtle-foreground font-semibold"
     >
       {calculator.isPending ? (
-        <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />
+        <Icons.Spinner className="me-1.5 h-4 w-4 animate-spin" />
       ) : (
-        <Icons.RefreshCw className="mr-1.5 h-4 w-4" />
+        <Icons.RefreshCw className="me-1.5 h-4 w-4" />
       )}
       {t("allocation:worksheet.recalculateFromTarget")}
     </Button>
@@ -2103,7 +2103,7 @@ export function AllocationWorksheetTab({
       {setupChangedMessage && (
         <p
           role="status"
-          className="flex items-start gap-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200"
+          className="text-warning-subtle-foreground flex items-start gap-2 text-xs leading-relaxed"
         >
           <Icons.AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {setupChangedMessage}
@@ -2114,11 +2114,11 @@ export function AllocationWorksheetTab({
         disabled={nextNeedsCalculation && (!!generationIssue || calculator.isPending)}
         onClick={goToAdjust}
       >
-        {calculator.isPending && <Icons.Spinner className="mr-1.5 h-4 w-4 animate-spin" />}
+        {calculator.isPending && <Icons.Spinner className="me-1.5 h-4 w-4 animate-spin" />}
         {t("allocation:worksheet.nextPanel", {
           panel: t("allocation:worksheet.stepAmounts"),
         })}
-        {!calculator.isPending && <Icons.ArrowRight className="ml-1.5 h-4 w-4" />}
+        {!calculator.isPending && <Icons.ArrowRight className="ms-1.5 h-4 w-4" />}
       </Button>
       {!generated && (
         <>
@@ -2192,9 +2192,9 @@ export function AllocationWorksheetTab({
       {isOutOfDate && panel !== "setup" && (
         <div
           role="status"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/50 bg-amber-50/60 px-4 py-2.5 dark:bg-amber-950/15"
+          className="border-warning-subtle-border bg-warning-subtle flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-2.5"
         >
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-amber-950/80 dark:text-amber-100/80">
+          <p className="text-warning-subtle-foreground/80 min-w-0 flex-1 text-xs leading-relaxed">
             {outOfDateMessage}
           </p>
           {recalculateButton}
@@ -2291,7 +2291,7 @@ export function AllocationWorksheetTab({
                     </div>
                     {generated && (
                       <Button size="sm" variant="ghost" onClick={resetToCalculated}>
-                        <Icons.Undo className="mr-1.5 h-4 w-4" />
+                        <Icons.Undo className="me-1.5 h-4 w-4" />
                         {t("allocation:worksheet.resetToCalculated")}
                       </Button>
                     )}
@@ -2435,23 +2435,21 @@ export function AllocationWorksheetTab({
                     {t("allocation:worksheet.nextPanel", {
                       panel: t("allocation:worksheet.stepReview"),
                     })}
-                    <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                    <Icons.ArrowRight className="ms-1.5 h-4 w-4" />
                   </Button>
                 ) : (
                   <>
                     <p
                       className={cn(
                         "text-xs leading-relaxed",
-                        prepared.issue
-                          ? "text-amber-800 dark:text-amber-200"
-                          : "text-muted-foreground",
+                        prepared.issue ? "text-warning-subtle-foreground" : "text-muted-foreground",
                       )}
                     >
                       {exportMessage}
                     </p>
                     <div className="grid gap-2">
                       <Button disabled={!canExport} onClick={() => void exportWorksheet("csv")}>
-                        <Icons.Download className="mr-1.5 h-4 w-4" />
+                        <Icons.Download className="me-1.5 h-4 w-4" />
                         {t("allocation:worksheet.exportCsv")}
                       </Button>
                       <Button
@@ -2459,7 +2457,7 @@ export function AllocationWorksheetTab({
                         disabled={!canExport}
                         onClick={() => void exportWorksheet("copy")}
                       >
-                        <Icons.Copy className="mr-1.5 h-4 w-4" />
+                        <Icons.Copy className="me-1.5 h-4 w-4" />
                         {t("allocation:worksheet.copyForSpreadsheet")}
                       </Button>
                     </div>
@@ -2519,7 +2517,7 @@ function WorksheetStepper({ panel, onSelect, setupChanged }: WorksheetStepperPro
       id: "setup",
       label: t("allocation:worksheet.stepSetup"),
       note: setupChanged ? (
-        <span title={setupChanged} className="h-1.5 w-1.5 rounded-full bg-amber-500">
+        <span title={setupChanged} className="bg-warning h-1.5 w-1.5 rounded-full">
           <span className="sr-only">{setupChanged}</span>
         </span>
       ) : undefined,
@@ -2546,7 +2544,7 @@ function WorksheetStepper({ panel, onSelect, setupChanged }: WorksheetStepperPro
               : "text-muted-foreground hover:text-foreground",
           )}
         >
-          <span className="font-mono text-[10px] opacity-60">{index + 1}</span>
+          <span className="text-2xs font-mono opacity-60">{index + 1}</span>
           {step.label}
           {step.note}
         </button>

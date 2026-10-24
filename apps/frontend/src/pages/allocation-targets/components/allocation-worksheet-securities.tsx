@@ -308,7 +308,7 @@ export function SecuritiesCard({
           <div className="relative px-4 pt-3">
             <Icons.Search
               aria-hidden="true"
-              className="text-muted-foreground absolute left-6 top-[calc(50%+6px)] h-3.5 w-3.5 -translate-y-1/2"
+              className="text-muted-foreground absolute start-6 top-[calc(50%+0.375rem)] h-3.5 w-3.5 -translate-y-1/2"
             />
             <input
               type="search"
@@ -316,13 +316,13 @@ export function SecuritiesCard({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("allocation:worksheet.securitiesSearch")}
               aria-label={t("allocation:worksheet.securitiesSearch")}
-              className="border-input bg-background focus-visible:ring-ring h-8 w-full rounded-md border pl-8 pr-2.5 text-sm outline-none focus-visible:ring-1"
+              className="border-input bg-background focus-visible:ring-ring h-8 w-full rounded-md border pe-2.5 ps-8 text-sm outline-none focus-visible:ring-1"
             />
           </div>
 
           {addables.length > 0 && (
             <div className="mx-4 mt-2 rounded-lg border">
-              <p className="text-muted-foreground px-3 pt-2 text-[11px] font-medium uppercase tracking-wide">
+              <p className="text-muted-foreground text-2xs px-3 pt-2 font-medium uppercase tracking-wide">
                 {t("allocation:worksheet.securitiesNotHeld")}
               </p>
               {addables.map((asset) => (
@@ -350,7 +350,7 @@ export function SecuritiesCard({
                     aria-label={t("allocation:worksheet.securityAdd", { symbol: symbolOf(asset) })}
                     className="hover:border-foreground/40 shrink-0 rounded-full border px-2.5 py-0.5 text-xs transition-colors"
                   >
-                    <Icons.Plus className="mr-1 inline h-3 w-3" />
+                    <Icons.Plus className="me-1 inline h-3 w-3" />
                     {t("common:add")}
                   </button>
                 </div>
@@ -358,11 +358,11 @@ export function SecuritiesCard({
             </div>
           )}
 
-          <div className="mt-3 max-h-[min(55vh,520px)] overflow-y-auto">
+          <div className="mt-3 max-h-[min(55vh,32.5rem)] overflow-y-auto">
             {/* Each switch is named once, over its column; Reduce only matters with Rebalance. */}
             <div
               aria-hidden="true"
-              className="bg-card text-muted-foreground sticky top-0 z-10 flex items-center border-y px-4 py-1.5 text-[11px] font-medium"
+              className="bg-card text-muted-foreground text-2xs sticky top-0 z-10 flex items-center border-y px-4 py-1.5 font-medium"
             >
               <span className="flex-1">{t("allocation:worksheet.security")}</span>
               <span className={SWITCH_COLUMN}>{t("allocation:worksheet.allowIncrease")}</span>
@@ -411,7 +411,7 @@ export function SecuritiesCard({
                           onClick={() =>
                             forIncrease ? onSetIncrease(ids, !allOn) : onSetReduce(ids, !allOn)
                           }
-                          className="text-muted-foreground hover:text-foreground ml-auto underline-offset-2 hover:underline"
+                          className="text-muted-foreground hover:text-foreground ms-auto underline-offset-2 hover:underline"
                         >
                           {t(
                             allOn
@@ -469,7 +469,7 @@ export function SecuritiesCard({
                         <span className="font-mono font-semibold">{symbolOf(asset)}</span>
                         {asset.name && <span className="text-muted-foreground"> {asset.name}</span>}
                       </span>
-                      <span className="block text-[11px] text-blue-700 dark:text-blue-300">
+                      <span className="text-2xs text-info-subtle-foreground block">
                         {t("allocation:worksheet.securityNewHint")}
                       </span>
                     </span>
@@ -556,7 +556,7 @@ function SecurityRow({
           {holding.name && <span className="text-muted-foreground"> {holding.name}</span>}
         </span>
         <span
-          className="text-muted-foreground block truncate text-[11px]"
+          className="text-muted-foreground text-2xs block truncate"
           title={alsoIn.length > 0 ? alsoIn.join(", ") : undefined}
         >
           <span className="font-mono tabular-nums">

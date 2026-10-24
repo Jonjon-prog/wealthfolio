@@ -136,7 +136,7 @@ export function ModelPresetPicker({
 
   return (
     <div className="space-y-3">
-      <p className="text-muted-foreground text-[11px] leading-relaxed">
+      <p className="text-muted-foreground text-2xs leading-relaxed">
         {t("allocation:presets.disclosure")}
       </p>
       <div

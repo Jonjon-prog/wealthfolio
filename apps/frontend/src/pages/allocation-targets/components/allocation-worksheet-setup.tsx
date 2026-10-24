@@ -154,7 +154,7 @@ export function WorksheetSetup(props: WorksheetSetupProps) {
                 {props.blockingIssues.map((issue) => (
                   <li
                     key={issue}
-                    className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200"
+                    className="text-warning-subtle-foreground flex items-start gap-2 text-xs"
                   >
                     <span
                       aria-hidden="true"
@@ -290,7 +290,7 @@ function AccountsLedger({
         <InfoTip
           text={`${t("allocation:worksheet.ledgerHint")} ${t("allocation:worksheet.amountsInCurrency", { currency })}`}
         />
-        <div className="ml-auto flex h-6 items-center gap-3 text-xs">
+        <div className="ms-auto flex h-6 items-center gap-3 text-xs">
           <button
             type="button"
             disabled={selectedAccountIds.length === accounts.length}
@@ -323,7 +323,7 @@ function AccountsLedger({
           <div className="relative col-span-2 max-w-72">
             <Icons.Search
               aria-hidden="true"
-              className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+              className="absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
             />
             <input
               type="search"
@@ -331,7 +331,7 @@ function AccountsLedger({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("allocation:worksheet.findAccount")}
               aria-label={t("allocation:worksheet.findAccount")}
-              className="border-input bg-background text-foreground focus-visible:ring-ring h-7 w-full rounded-md border pl-7 pr-2 text-xs font-normal outline-none focus-visible:ring-1"
+              className="border-input bg-background text-foreground focus-visible:ring-ring h-7 w-full rounded-md border pe-2 ps-7 text-xs font-normal outline-none focus-visible:ring-1"
             />
           </div>
         ) : (
@@ -340,7 +340,7 @@ function AccountsLedger({
             <span aria-hidden="true">{t("allocation:worksheet.account")}</span>
           </>
         )}
-        <span aria-hidden="true" className="text-right">
+        <span aria-hidden="true" className="text-end">
           {t("allocation:worksheet.cashToDeploy")}
         </span>
       </div>
@@ -377,7 +377,7 @@ function AccountsLedger({
                   </span>
                 )}
                 {cash.isKnown && (
-                  <span className="text-muted-foreground ml-auto font-mono tabular-nums">
+                  <span className="text-muted-foreground ms-auto font-mono tabular-nums">
                     {formatAmount(subtotal, currency)}
                   </span>
                 )}
@@ -435,7 +435,7 @@ function AccountsLedger({
                   className="text-muted-foreground min-w-0 flex-1 cursor-pointer truncate text-sm"
                 >
                   {account.name}
-                  <span className="ml-2 text-xs">{detailsOf(account)}</span>
+                  <span className="ms-2 text-xs">{detailsOf(account)}</span>
                 </label>
               </div>
             );
@@ -508,7 +508,7 @@ function LedgerRow({
         <span className="block truncate text-sm font-medium">{account.name}</span>
         <span className="text-muted-foreground block truncate text-xs">{detailsLine}</span>
         {isAboveRecorded && recorded !== undefined && (
-          <span className="block text-xs text-amber-800 dark:text-amber-200">
+          <span className="text-warning-subtle-foreground block text-xs">
             {t("allocation:worksheet.exceedsObservedCashIssue", {
               amount: formatAmount(recorded, currency),
             })}
@@ -531,7 +531,7 @@ function LedgerRow({
           currency={currency}
           fractionDigits={fractionDigits}
         />
-        <div className={cn(AMOUNT_WIDTH, "shrink-0 text-right")}>
+        <div className={cn(AMOUNT_WIDTH, "shrink-0 text-end")}>
           {!isKnown ? (
             <div className="flex h-8 items-center justify-end">
               <Skeleton className="h-4 w-16" />
@@ -607,7 +607,7 @@ function DepositControl({
         }}
       >
         <span className="has-[input:focus-visible]:ring-ring bg-background flex h-7 w-28 items-center gap-1 rounded-md border border-dashed px-1.5 has-[input:focus-visible]:ring-1">
-          <span aria-hidden="true" className="text-muted-foreground text-[11px]">
+          <span aria-hidden="true" className="text-muted-foreground text-2xs">
             +
           </span>
           <AmountField
@@ -642,7 +642,7 @@ function DepositControl({
       <button
         type="button"
         onClick={() => onEditingChange(true)}
-        className="text-muted-foreground hover:text-foreground shrink-0 text-[11px] underline decoration-dotted underline-offset-2"
+        className="text-muted-foreground hover:text-foreground text-2xs shrink-0 underline decoration-dotted underline-offset-2"
       >
         {t("allocation:worksheet.depositIncluded", { amount: formatAmount(amount, currency) })}
       </button>
@@ -662,9 +662,9 @@ function DepositControl({
       }
       aria-label={t("allocation:worksheet.addContributionFor", { account: account.name })}
       // Shown with its row on hover or focus where there is hover; always on touch.
-      className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center text-[11px] transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100"
+      className="text-muted-foreground hover:text-foreground text-2xs inline-flex shrink-0 items-center transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100"
     >
-      <Icons.Plus aria-hidden="true" className="h-3 w-3 sm:mr-0.5" />
+      <Icons.Plus aria-hidden="true" className="h-3 w-3 sm:me-0.5" />
       <span className="hidden sm:inline">{t("allocation:worksheet.depositAdd")}</span>
     </button>
   );
@@ -719,12 +719,12 @@ function AmountField({
       inputMode="decimal"
       placeholder="0"
       className={cn(
-        "text-right font-mono tabular-nums outline-none",
+        "text-end font-mono tabular-nums outline-none",
         isCompact
-          ? "h-full w-full min-w-0 bg-transparent text-[11px]"
+          ? "text-2xs h-full w-full min-w-0 bg-transparent"
           : // A soft field that reads as a figure at rest; its edge shows on hover and focus.
             "bg-muted/50 hover:border-input focus-visible:border-input focus-visible:bg-background focus-visible:ring-ring h-8 w-full rounded-md border border-transparent px-2 text-sm transition-colors focus-visible:ring-1",
-        isWarning && "border-amber-500 bg-amber-50/60 dark:bg-amber-950/20",
+        isWarning && "border-warning bg-warning-subtle",
       )}
     />
   );
@@ -844,7 +844,7 @@ function GapToTarget({
       </ul>
       <div
         aria-hidden="true"
-        className="text-muted-foreground mt-4 flex gap-4 border-t pt-2.5 text-[10px]"
+        className="text-muted-foreground text-2xs mt-4 flex gap-4 border-t pt-2.5"
       >
         <span className="inline-flex items-center gap-1.5">
           <span className="bg-muted-foreground/60 h-2 w-3.5 rounded-full" />
@@ -898,12 +898,12 @@ function GapRow({
           style={{ background: color }}
         />
         <span className="min-w-0 truncate">{row.categoryName}</span>
-        <span className="text-muted-foreground shrink-0 font-mono text-[11px] tabular-nums">
+        <span className="text-muted-foreground text-2xs shrink-0 font-mono tabular-nums">
           {formatPercent(row.currentBps / 10_000, { digits: 1 })} →{" "}
           {formatPercent(row.targetBps / 10_000, { digits: 1 })}
         </span>
         {/* Signed the way it moves: + to add, − to reduce. */}
-        <span className="ml-auto shrink-0 font-mono tabular-nums">
+        <span className="ms-auto shrink-0 font-mono tabular-nums">
           {row.valueDelta < 0 ? "+" : "−"}
           {formatRoundedAmount(Math.abs(row.valueDelta), currency)}
         </span>
@@ -911,7 +911,7 @@ function GapRow({
       {/* Drawn as the allocation page draws it: where it is, and a mark at the target. */}
       <span
         aria-hidden="true"
-        className="bg-muted relative ml-[1.125rem] mt-2 block h-2 rounded-full"
+        className="bg-muted relative ms-[1.125rem] mt-2 block h-2 rounded-full"
       >
         {bandTo > bandFrom && (
           <span
@@ -920,7 +920,7 @@ function GapRow({
           />
         )}
         <span
-          className="absolute inset-y-0 left-0 rounded-full opacity-60"
+          className="absolute inset-y-0 start-0 rounded-full opacity-60"
           style={{ width: `${barPercent(row.currentBps)}%`, background: color }}
         />
         <span
@@ -931,8 +931,8 @@ function GapRow({
       {note && (
         <span
           className={cn(
-            "mt-1.5 flex items-center gap-1 pl-[1.125rem] text-[11px]",
-            note.isWarning ? "text-amber-800 dark:text-amber-200" : "text-muted-foreground",
+            "text-2xs mt-1.5 flex items-center gap-1 ps-[1.125rem]",
+            note.isWarning ? "text-warning-subtle-foreground" : "text-muted-foreground",
           )}
         >
           <span className="min-w-0 truncate">{note.text}</span>
@@ -995,7 +995,7 @@ function CashToDeploy({
   const isRebalance = mode === "rebalance";
 
   const status = cash.isTotalAboveRecorded ? (
-    <span className="text-amber-800 dark:text-amber-200">
+    <span className="text-warning-subtle-foreground">
       {t("allocation:worksheet.cashAboveRecorded", {
         amount: formatAmount(cash.recordedTotal, currency),
       })}
@@ -1084,7 +1084,7 @@ function CashToDeploy({
         {isReading && (
           <Skeleton
             aria-hidden="true"
-            className="absolute left-10 top-1/2 h-5 w-32 -translate-y-1/2"
+            className="absolute start-10 top-1/2 h-5 w-32 -translate-y-1/2"
           />
         )}
       </div>

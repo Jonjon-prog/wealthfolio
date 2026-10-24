@@ -197,12 +197,12 @@ export function AccountAllocation({
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em]">
+          <p className="text-2xs font-mono font-medium uppercase tracking-[0.12em]">
             {t("allocation:worksheet.accountAllocation")}
           </p>
           <p className="text-muted-foreground mt-1 text-xs">{t(hint, { account: holderName })}</p>
           {listedCapacity !== undefined && listedCapacity < requested - 0.02 && (
-            <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+            <p className="text-warning-subtle-foreground mt-1 text-xs">
               {t("allocation:worksheet.placementCanFundTotal", {
                 amount: format(listedCapacity),
                 requested: format(requested),
@@ -228,13 +228,11 @@ export function AccountAllocation({
           {/* Colour means a problem here; a complete or accepted allocation is not one. */}
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-mono text-[11px]",
+              "text-2xs inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-mono",
               badge.tone === "done" && "text-foreground border",
               badge.tone === "accepted" && "text-muted-foreground border",
-              badge.tone === "over" &&
-                "bg-red-100 text-red-900 dark:bg-red-950/35 dark:text-red-200",
-              badge.tone === "problem" &&
-                "bg-amber-100 text-amber-900 dark:bg-amber-950/35 dark:text-amber-200",
+              badge.tone === "over" && "bg-destructive-subtle text-destructive-subtle-foreground",
+              badge.tone === "problem" && "bg-warning-subtle text-warning-subtle-foreground",
             )}
           >
             {badge.tone === "done" && <Icons.Check className="h-3 w-3" />}
@@ -300,17 +298,17 @@ export function AccountAllocation({
               key={account.id}
               className="grid gap-2 py-3 first:pt-0 last:pb-0 sm:col-span-full sm:grid-cols-[minmax(0,1fr)_auto_8.5rem] sm:items-start sm:gap-y-0 sm:supports-[grid-template-columns:subgrid]:grid-cols-subgrid"
             >
-              <div className="min-w-0 sm:pr-3">
+              <div className="min-w-0 sm:pe-3">
                 <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
                   <span className="truncate">{nameOf(account)}</span>
                   {impliedHolder === account.id && (
-                    <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-normal">
+                    <span className="text-muted-foreground text-2xs inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 font-normal">
                       <Icons.Check className="h-2.5 w-2.5" />
                       {t("allocation:worksheet.holdsThisSecurity")}
                     </span>
                   )}
                 </p>
-                <p className="text-muted-foreground mt-0.5 text-[11px]">
+                <p className="text-muted-foreground text-2xs mt-0.5">
                   {/* The security this account already holds, named so it never
                       reads as the account's cash. */}
                   {holding &&
@@ -343,7 +341,7 @@ export function AccountAllocation({
                     figure once there is one, the page's own estimate before.
                     Covering it is one click away, never done for the user. */}
                 {need >= 0.01 ? (
-                  <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+                  <p className="text-2xs text-warning-subtle-foreground mt-0.5 flex flex-wrap items-baseline gap-x-2 font-medium">
                     <span>{t("allocation:worksheet.fundingNeeded", { amount: format(need) })}</span>
                     <AddDepositButton
                       amount={need}
@@ -356,7 +354,7 @@ export function AccountAllocation({
                   !isReduce &&
                   estimate &&
                   estimate.deficit >= AMOUNT_EPSILON && (
-                    <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">
+                    <p className="text-2xs text-warning-subtle-foreground mt-0.5">
                       {t("allocation:worksheet.accountFundingDeficit", {
                         amount: format(estimate.deficit),
                       })}
@@ -408,7 +406,7 @@ export function AccountAllocation({
                   />
                 )}
                 {currentUnits !== undefined && currentAmount > AMOUNT_EPSILON && (
-                  <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+                  <span className="text-muted-foreground text-2xs font-mono tabular-nums">
                     {t("allocation:worksheet.accountUnitsSummary", {
                       quantity: formatQuantity(
                         wholeSharesOnly ? Math.floor(currentUnits) : displayUnits(currentUnits),
@@ -421,7 +419,7 @@ export function AccountAllocation({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-8 justify-self-end px-2 font-mono text-[11px] tabular-nums sm:ml-2 sm:h-9"
+                  className="text-2xs h-8 justify-self-end px-2 font-mono tabular-nums sm:ms-2 sm:h-9"
                   aria-label={t("allocation:worksheet.useAmountIn", {
                     amount: format(amountToUse),
                     account: nameOf(account),

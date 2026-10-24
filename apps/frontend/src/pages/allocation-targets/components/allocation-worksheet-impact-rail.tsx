@@ -172,17 +172,17 @@ export function ImpactRail({
           aria-busy={isCalculating}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-muted-foreground font-mono text-[11px] uppercase tracking-[0.16em]">
+            <p className="text-muted-foreground text-2xs font-mono uppercase tracking-[0.16em]">
               {t("allocation:worksheet.portfolioImpact")}
             </p>
             {/* Updating is routine; an out-of-date preview is amber, as everywhere else. */}
             {(isCalculating || (result && isStale)) && (
               <span
                 className={cn(
-                  "rounded-full px-2 py-1 font-mono text-[10px]",
+                  "text-2xs rounded-full px-2 py-1 font-mono",
                   isCalculating
                     ? "bg-muted text-muted-foreground"
-                    : "bg-amber-100 text-amber-900 dark:bg-amber-950/35 dark:text-amber-200",
+                    : "bg-warning-subtle text-warning-subtle-foreground",
                 )}
               >
                 {isCalculating
@@ -202,7 +202,7 @@ export function ImpactRail({
             {/* Pointing at a row never adds a line: what part of it has no
                 category takes this line's place, so the classes stay put. */}
             {activeRow && unclassifiedBps > 0 ? (
-              <p className="truncate text-amber-800 dark:text-amber-200" title={unclassifiedNote}>
+              <p className="text-warning-subtle-foreground truncate" title={unclassifiedNote}>
                 {unclassifiedNote}
               </p>
             ) : (
@@ -233,7 +233,7 @@ export function ImpactRail({
               segment from current to projected reads as the move. */}
           <p
             data-track-legend
-            className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1.5 text-[10px]"
+            className="text-muted-foreground text-2xs flex flex-wrap items-center gap-x-3 gap-y-1 px-2 pb-1.5"
           >
             <span className="inline-flex items-center gap-1">
               <span className="inline-flex items-center">
@@ -313,7 +313,7 @@ export function ImpactRail({
           {calculationError && (
             <div
               role="alert"
-              className="border-destructive/30 bg-destructive/5 rounded-lg border p-3"
+              className="border-destructive-subtle-border bg-destructive-subtle rounded-lg border p-3"
             >
               <p className="text-destructive text-xs font-semibold">{calculationError.title}</p>
               {calculationError.description && (
@@ -336,7 +336,7 @@ export function ImpactRail({
           {/* What to fix is a line with its way there; the step's one primary
               action sits under this card. */}
           {issueMessage && (
-            <p className="flex items-start gap-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+            <p className="text-warning-subtle-foreground flex items-start gap-2 text-xs leading-relaxed">
               <Icons.AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>
                 {!calculationError && <>{issueMessage} </>}
@@ -354,17 +354,17 @@ export function ImpactRail({
 
           {isCalculating && !issueMessage && (
             <p className="text-muted-foreground flex items-center text-xs">
-              <Icons.Spinner className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              <Icons.Spinner className="me-1.5 h-3.5 w-3.5 animate-spin" />
               {t("allocation:worksheet.updatingFromSources")}
             </p>
           )}
 
           {result && !isStale && result.warnings.length > 0 && (
-            <details className="rounded-lg border border-amber-400/50 bg-amber-50/50 px-3 py-2 dark:bg-amber-950/15">
-              <summary className="cursor-pointer text-xs font-medium text-amber-950 dark:text-amber-200">
+            <details className="border-warning-subtle-border bg-warning-subtle rounded-lg border px-3 py-2">
+              <summary className="text-warning-subtle-foreground cursor-pointer text-xs font-medium">
                 {t("allocation:worksheet.warningCount", { count: result.warnings.length })}
               </summary>
-              <ul className="mt-2 space-y-2 text-xs text-amber-950/75 dark:text-amber-100/75">
+              <ul className="text-warning-subtle-foreground/80 mt-2 space-y-2 text-xs">
                 {result.warnings.map((warning) => (
                   <li key={warning.id}>
                     • {describeWarning(warning)}
@@ -374,7 +374,7 @@ export function ImpactRail({
                         <Button
                           variant="link"
                           size="sm"
-                          className="ml-1 h-auto p-0 text-xs text-amber-900 underline dark:text-amber-200"
+                          className="text-warning-subtle-foreground ms-1 h-auto p-0 text-xs underline"
                           onClick={() => onClassifySecurity(warning.lineId!)}
                         >
                           {t("allocation:worksheet.classifySecurity")}
@@ -439,7 +439,7 @@ function ImpactClassRow({
       onBlur={() => unpoint(target)}
       onClick={() => toggleSelected(target)}
       className={cn(
-        "block w-full rounded-md px-2 py-2 text-left transition-[opacity,background-color]",
+        "block w-full rounded-md px-2 py-2 text-start transition-[opacity,background-color]",
         (emphasis === "active" || emphasis === "lit") && "bg-muted/60",
         emphasis === "dim" && "opacity-40",
         isSelected && "ring-foreground ring-[1.5px] ring-inset",
@@ -453,7 +453,7 @@ function ImpactClassRow({
         {/* Only the projected figure turns amber when it stays outside its range:
             the target is not the problem. */}
         <span
-          className="text-muted-foreground shrink-0 font-mono text-[11px] tabular-nums"
+          className="text-muted-foreground text-2xs shrink-0 font-mono tabular-nums"
           title={t("allocation:worksheet.classFiguresTitle")}
         >
           {formatWeight(item.currentBps)} →{" "}
@@ -461,7 +461,7 @@ function ImpactClassRow({
             data-outside-range={isOutsideRange || undefined}
             className={cn(
               "font-semibold",
-              isOutsideRange ? "text-amber-700 dark:text-amber-300" : "text-foreground",
+              isOutsideRange ? "text-warning-subtle-foreground" : "text-foreground",
             )}
           >
             {formatWeight(item.projectedBps)}
@@ -470,10 +470,10 @@ function ImpactClassRow({
         </span>
       </span>
       <span className="relative mt-1.5 block h-3" aria-hidden>
-        <span className="bg-border/60 absolute left-0 right-0 top-[5.5px] h-px" />
+        <span className="bg-border/60 absolute end-0 start-0 top-[0.34375rem] h-px" />
         {/* The move, in the class's colour, so no legend is needed to read it. */}
         <span
-          className="absolute top-[5px] h-0.5"
+          className="top-1.25 absolute h-0.5"
           style={{
             left: `${Math.min(currentAt, projectedAt)}%`,
             width: `${Math.abs(projectedAt - currentAt)}%`,
@@ -500,7 +500,7 @@ function ImpactClassRow({
       <span
         data-class-detail
         title={shareText ?? note ?? undefined}
-        className="mt-1.5 flex h-4 items-center justify-between gap-2 text-[11px] leading-4"
+        className="text-2xs mt-1.5 flex h-4 items-center justify-between gap-2 leading-4"
       >
         {shareText ? (
           <>
@@ -508,7 +508,7 @@ function ImpactClassRow({
             {shareAmount && <span className="shrink-0 font-mono tabular-nums">{shareAmount}</span>}
           </>
         ) : note ? (
-          <span className="truncate text-amber-800 dark:text-amber-200">{note}</span>
+          <span className="text-warning-subtle-foreground truncate">{note}</span>
         ) : netChange ? (
           <>
             <span className="text-muted-foreground truncate">
