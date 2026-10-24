@@ -1564,6 +1564,25 @@ export function AllocationWorksheetTab({
     if (placedFor && direction && direction !== placedFor) {
       next.accountAmounts = current?.setAsideAccountAmounts ?? {};
       next.setAsideAccountAmounts = current?.accountAmounts;
+    } else {
+      // A change placed whole in one account, as the calculation places a
+      // security in the only account that holds it, follows its total there:
+      // otherwise the preview would keep the old amount, or stop at "left to
+      // allocate". Only a split across accounts stays as entered.
+      const placed = Object.entries(current?.accountAmounts ?? {}).filter(
+        ([, amount]) => amount.trim() !== "",
+      );
+      const before = Math.abs(positionChangeAmount(current, position, basis));
+      const after = positionChangeAmount(next, position, basis);
+      if (
+        placed.length === 1 &&
+        (!(before >= AMOUNT_EPSILON) ||
+          Math.abs(decimalInputOrZero(placed[0][1]) - before) < AMOUNT_EPSILON) &&
+        Number.isFinite(after) &&
+        Math.abs(after) >= AMOUNT_EPSILON
+      ) {
+        next.accountAmounts = { [placed[0][0]]: formatDecimalInput(Math.abs(after), 6) };
+      }
     }
     next.placedDirection = direction;
     updateAdjustment(position.assetId, next);

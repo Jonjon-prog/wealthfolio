@@ -837,6 +837,33 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(screen.getByRole("button", { name: "2 accounts" })).toBeInTheDocument();
   });
 
+  it("lets a change placed whole in one account follow its total there", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    // The calculation places VTI in Brokerage, the only account that holds it.
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], lineId: "calc:vti:acc-1", accountId: "acc-1" }],
+    });
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    const previewedValues = () =>
+      previewMock.mock.calls
+        .at(-1)?.[0]
+        .lines.map((line: { accountId: string; value: number }) => [line.accountId, line.value]);
+
+    // Typed: the preview gets the new total, not the calculated one.
+    const total = screen.getByLabelText("Adjustment for VTI");
+    await user.clear(total);
+    await user.type(total, "3000");
+    expect(screen.queryByRole("button", { name: /left to allocate/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(previewedValues()).toEqual([["acc-1", 3000]]), { timeout: 2000 });
+
+    // Stepped one unit at a time, the same.
+    await user.click(screen.getByRole("button", { name: "Add one unit of VTI" }));
+    await waitFor(() => expect(previewedValues()).toEqual([["acc-1", 3100]]), { timeout: 2000 });
+  });
+
   it("states when the listed accounts cannot fund the change between them", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
     heldAccountIds.current = ["acc-1", "acc-2"];
