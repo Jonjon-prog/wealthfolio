@@ -492,11 +492,8 @@ pub struct LimitsInput {
 }
 
 /// Funding that can pay for only some securities (§6). A crypto account takes
-/// an increase only in crypto, so the cash it deploys and what its reductions
-/// raise cannot buy anything else.
-///
-/// It can also take more of what it already holds. That is left out, so the
-/// funding is never sized past what the accounts can place.
+/// an increase only in crypto or in what it already holds, so the cash it
+/// deploys and what its reductions raise cannot buy anything else.
 #[derive(Debug, Clone, Default)]
 pub struct RestrictedFunding {
     /// The accounts whose funding is restricted, with the cash each deploys:

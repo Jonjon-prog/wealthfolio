@@ -974,13 +974,18 @@ impl AllocationWorksheetService {
                 .iter()
                 .map(|account| (account.id.clone(), deployed(&account.id)))
                 .collect(),
+            // What a crypto account can receive, as eligibility decides it: crypto,
+            // or more of what it already holds.
             asset_ids: securities
                 .iter()
                 .filter(|security| {
-                    assets_by_id.get(&security.asset_id).is_some_and(|asset| {
-                        restricted
+                    let asset = assets_by_id.get(&security.asset_id);
+                    restricted.iter().any(|account| {
+                        security
+                            .positions
                             .iter()
-                            .any(|account| Self::can_receive(account, asset))
+                            .any(|position| position.account_id == account.id)
+                            || asset.is_some_and(|asset| Self::can_receive(account, asset))
                     })
                 })
                 .map(|security| security.asset_id.clone())
@@ -3607,6 +3612,45 @@ mod tests {
             .sum();
         assert_eq!(increases, dec!(1000));
         assert!(calculated.funding_shortfalls.is_empty());
+    }
+
+    #[test]
+    fn cash_in_a_crypto_account_pays_for_more_of_a_stock_it_holds() {
+        // A crypto account can take more of what it already holds (§6), and the
+        // preview accepts it, so its cash funds that increase in the calculation
+        // too, rather than leaving the calculation with nothing to fund.
+        let mut portfolio = brokerage(9000, 1000, 0);
+        portfolio.account_ids = vec!["crypto-1"];
+        portfolio.positions = vec![
+            position("vti", "crypto-1", "EQUITY", dec!(60)),
+            position("bnd", "crypto-1", "FIXED_INCOME", dec!(20)),
+        ];
+        portfolio.cash = vec![CashBalance {
+            account_id: "crypto-1",
+            category_id: Some("CASH"),
+            amount: dec!(2000),
+        }];
+
+        let calculated = portfolio
+            .generate(WorksheetMode::InvestCash, tracked(dec!(1000)))
+            .unwrap();
+
+        let increases: Vec<_> = calculated
+            .adjustments
+            .iter()
+            .filter(|adjustment| adjustment.amount > Decimal::ZERO)
+            .collect();
+        assert_eq!(
+            increases
+                .iter()
+                .map(|adjustment| adjustment.amount)
+                .sum::<Decimal>()
+                .round_dp(2),
+            dec!(1000)
+        );
+        assert!(increases
+            .iter()
+            .all(|adjustment| adjustment.account_id.as_deref() == Some("crypto-1")));
     }
 
     #[test]
