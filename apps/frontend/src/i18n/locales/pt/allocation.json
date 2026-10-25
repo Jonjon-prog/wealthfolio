@@ -219,7 +219,7 @@
     "failed": "Não foi possível calcular a prévia da alocação.",
     "firstUseDisclosure": "O Wealthfolio pode calcular ajustes a partir da sua meta e dos ativos que você marcar como elegíveis, distribuídos na proporção do que você já possui. Todos os valores continuam editáveis antes da sua revisão. Ele não recomenda investimentos nem envia ordens.",
     "firstUseTitle": "Como funciona a planilha de rebalanceamento",
-    "fullDisclosure": "O Wealthfolio calcula ajustes a partir da sua meta, dos ativos que você marcou como elegíveis e da regra de distribuição escolhida, usando suas posições, preços e taxas de câmbio registrados. Cada linha pode ser editada ou removida. Ele não escolhe investimentos, não determina quais mudanças são adequadas nem executa transações. Os resultados reais podem ser diferentes porque os preços podem mudar e taxas, impostos e execução não estão incluídos.",
+    "fullDisclosure": "O Wealthfolio calcula ajustes a partir da sua meta e dos ativos que você marcou como elegíveis, distribuídos na proporção do que você já possui, usando suas posições, preços e taxas de câmbio registrados. Cada linha pode ser editada ou removida. Ele não escolhe investimentos, não determina quais mudanças são adequadas nem executa transações. Os resultados reais podem ser diferentes porque os preços podem mudar e taxas, impostos e execução não estão incluídos.",
     "fullyAllocated": "Totalmente distribuído",
     "fundingLabel": "Financiamento restante",
     "fundingLeft": "restantes após a planilha, nas contas escolhidas.",

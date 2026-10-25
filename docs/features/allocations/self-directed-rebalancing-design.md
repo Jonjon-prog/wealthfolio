@@ -23,9 +23,9 @@ it also removes the part of the feature people actually used: not having to work
 out the amounts by hand.
 
 This document describes the middle ground agreed in #1486. The user supplies the
-target, the eligible securities and the allocation rule; the app does the
-arithmetic and prefills the worksheet with the result; the user edits and
-reviews it before anything leaves the app.
+target and the eligible securities; the app applies a stated, mechanical
+allocation rule, does the arithmetic and prefills the worksheet with the result;
+the user edits and reviews it before anything leaves the app.
 
 This is a product-risk and architecture decision, not a conclusion about how any
 feature is treated by a regulator. Nothing here rests on wording or disclaimers
@@ -58,7 +58,7 @@ Applied to this feature:
 | Mode: Invest cash or Rebalance           | User                   | Keep (§4)         |
 | Difference arithmetic                    | Nobody (math)          | Keep              |
 | Eligible securities                      | User                   | Keep (#1486)      |
-| Allocation rule                          | User picks from rules  | Keep              |
+| Allocation rule                          | Stated (one rule)      | Keep (§4.2)       |
 | Which security inside a category         | The rule, mechanically | Prefill, editable |
 | Which account receives an increase       | Only when unambiguous  | §6                |
 | Ranking securities or accounts by merit  | Would be the app       | Never build       |

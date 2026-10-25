@@ -219,7 +219,7 @@
     "failed": "L'aperçu de répartition n'a pas pu être calculé.",
     "firstUseDisclosure": "Wealthfolio peut calculer des ajustements à partir de votre cible et des titres que vous marquez comme éligibles, répartis en proportion de ce que vous détenez déjà. Chaque montant reste modifiable avant votre examen. Il ne recommande pas d'investissements et ne passe pas d'ordres.",
     "firstUseTitle": "Fonctionnement de la feuille de rééquilibrage",
-    "fullDisclosure": "Wealthfolio calcule des ajustements à partir de votre cible, des titres que vous avez marqués comme éligibles et de la règle de répartition choisie, en utilisant vos positions, prix et taux de change enregistrés. Chaque ligne peut être modifiée ou supprimée. Il ne choisit pas d'investissements, ne détermine pas les changements adaptés et n'exécute pas de transactions. Les résultats réels peuvent différer, car les prix peuvent évoluer et les frais, impôts et conditions d'exécution ne sont pas inclus.",
+    "fullDisclosure": "Wealthfolio calcule des ajustements à partir de votre cible et des titres que vous avez marqués comme éligibles, répartis en proportion de ce que vous détenez déjà, en utilisant vos positions, prix et taux de change enregistrés. Chaque ligne peut être modifiée ou supprimée. Il ne choisit pas d'investissements, ne détermine pas les changements adaptés et n'exécute pas de transactions. Les résultats réels peuvent différer, car les prix peuvent évoluer et les frais, impôts et conditions d'exécution ne sont pas inclus.",
     "fullyAllocated": "Entièrement réparti",
     "fundingLabel": "Financement restant",
     "fundingLeft": "restants après ces ajustements, sur les comptes choisis.",

@@ -237,7 +237,7 @@ describe("worksheet export", () => {
 
   it("breaks a long sentence inside its cell so it does not widen the table", () => {
     const sentence =
-      "Wealthfolio calculates adjustments from your target, the securities you marked as eligible, and the allocation rule you chose.";
+      "Wealthfolio calculates adjustments from your target and the securities you marked as eligible, split in proportion to what you already hold.";
     const wrapped = wrapText(sentence);
 
     expect(wrapped.split("\n").every((line) => line.length <= 70)).toBe(true);

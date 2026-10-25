@@ -219,7 +219,7 @@
     "failed": "No se pudo calcular la vista previa de la asignación.",
     "firstUseDisclosure": "Wealthfolio puede calcular ajustes a partir de tu objetivo y los valores que marques como elegibles, repartidos en proporción a lo que ya tienes. Cada cifra sigue siendo editable antes de revisarla. No recomienda inversiones ni envía órdenes.",
     "firstUseTitle": "Cómo funciona la hoja de reequilibrio",
-    "fullDisclosure": "Wealthfolio calcula ajustes a partir de tu objetivo, los valores que marcaste como elegibles y la regla de reparto que elegiste, usando tus posiciones, precios y tipos de cambio registrados. Cada línea se puede editar o eliminar. No elige inversiones, no determina qué cambios son adecuados ni ejecuta transacciones. Los resultados reales pueden diferir porque los precios pueden cambiar y no se incluyen comisiones, impuestos ni ejecución.",
+    "fullDisclosure": "Wealthfolio calcula ajustes a partir de tu objetivo y los valores que marcaste como elegibles, repartidos en proporción a lo que ya tienes, usando tus posiciones, precios y tipos de cambio registrados. Cada línea se puede editar o eliminar. No elige inversiones, no determina qué cambios son adecuados ni ejecuta transacciones. Los resultados reales pueden diferir porque los precios pueden cambiar y no se incluyen comisiones, impuestos ni ejecución.",
     "fullyAllocated": "Totalmente repartido",
     "fundingLabel": "Financiación restante",
     "fundingLeft": "restantes tras la hoja, en las cuentas elegidas.",

@@ -219,7 +219,7 @@
     "failed": "Impossibile calcolare l'anteprima dell'allocazione.",
     "firstUseDisclosure": "Wealthfolio può calcolare rettifiche a partire dal tuo obiettivo e dai titoli che contrassegni come idonei, ripartite in proporzione a ciò che già detieni. Ogni valore resta modificabile prima della revisione. Non raccomanda investimenti né invia ordini.",
     "firstUseTitle": "Come funziona il foglio di ribilanciamento",
-    "fullDisclosure": "Wealthfolio calcola rettifiche a partire dal tuo obiettivo, dai titoli che hai contrassegnato come idonei e dalla regola di ripartizione scelta, usando posizioni, prezzi e tassi di cambio registrati. Ogni riga può essere modificata o rimossa. Non sceglie investimenti, non determina quali variazioni siano adatte e non esegue transazioni. I risultati effettivi possono differire perché i prezzi possono cambiare e commissioni, imposte ed esecuzione non sono inclusi.",
+    "fullDisclosure": "Wealthfolio calcola rettifiche a partire dal tuo obiettivo e dai titoli che hai contrassegnato come idonei, ripartite in proporzione a ciò che già detieni, usando posizioni, prezzi e tassi di cambio registrati. Ogni riga può essere modificata o rimossa. Non sceglie investimenti, non determina quali variazioni siano adatte e non esegue transazioni. I risultati effettivi possono differire perché i prezzi possono cambiare e commissioni, imposte ed esecuzione non sono inclusi.",
     "fullyAllocated": "Interamente ripartito",
     "fundingLabel": "Finanziamento residuo",
     "fundingLeft": "restanti dopo il foglio, sui conti scelti.",

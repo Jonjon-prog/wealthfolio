@@ -213,7 +213,7 @@
     "failed": "The allocation preview could not be calculated.",
     "firstUseDisclosure": "Wealthfolio can calculate adjustments from your target and the securities you mark as eligible, split in proportion to what you already hold. Every figure stays editable before you review it. It does not recommend investments or place trades.",
     "firstUseTitle": "How the rebalancing worksheet works",
-    "fullDisclosure": "Wealthfolio calculates adjustments from your target, the securities you marked as eligible, and the allocation rule you chose, using your recorded holdings, prices, and exchange rates. Every line can be edited or removed. It does not choose investments, determine suitable changes, or execute transactions. Actual results may differ because prices can change and fees, taxes, and execution are not included.",
+    "fullDisclosure": "Wealthfolio calculates adjustments from your target and the securities you marked as eligible, split in proportion to what you already hold, using your recorded holdings, prices, and exchange rates. Every line can be edited or removed. It does not choose investments, determine suitable changes, or execute transactions. Actual results may differ because prices can change and fees, taxes, and execution are not included.",
     "fullyAllocated": "Fully allocated",
     "fundingLabel": "Funding left",
     "fundingLeft": "left after the worksheet, across the accounts you chose.",

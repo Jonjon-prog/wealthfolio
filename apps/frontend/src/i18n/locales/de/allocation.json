@@ -213,7 +213,7 @@
     "failed": "Die Allokationsvorschau konnte nicht berechnet werden.",
     "firstUseDisclosure": "Wealthfolio kann Anpassungen aus Ihrem Ziel und den als geeignet markierten Wertpapieren berechnen, aufgeteilt im Verhältnis zu Ihren bestehenden Beständen. Jeder Wert bleibt vor Ihrer Prüfung bearbeitbar. Es empfiehlt keine Anlagen und platziert keine Aufträge.",
     "firstUseTitle": "So funktioniert das Rebalancing-Arbeitsblatt",
-    "fullDisclosure": "Wealthfolio berechnet Anpassungen aus Ihrem Ziel, den als geeignet markierten Wertpapieren und der gewählten Verteilungsregel, auf Basis Ihrer erfassten Bestände, Preise und Wechselkurse. Jede Zeile kann bearbeitet oder entfernt werden. Es wählt keine Anlagen aus, bestimmt keine geeigneten Änderungen und führt keine Transaktionen aus. Tatsächliche Ergebnisse können abweichen, da sich Preise ändern können und Gebühren, Steuern und Ausführung nicht berücksichtigt sind.",
+    "fullDisclosure": "Wealthfolio berechnet Anpassungen aus Ihrem Ziel und den als geeignet markierten Wertpapieren, aufgeteilt im Verhältnis zu dem, was Sie bereits halten, auf Basis Ihrer erfassten Bestände, Preise und Wechselkurse. Jede Zeile kann bearbeitet oder entfernt werden. Es wählt keine Anlagen aus, bestimmt keine geeigneten Änderungen und führt keine Transaktionen aus. Tatsächliche Ergebnisse können abweichen, da sich Preise ändern können und Gebühren, Steuern und Ausführung nicht berücksichtigt sind.",
     "fullyAllocated": "Vollständig verteilt",
     "fundingLabel": "Verbleibende Finanzierung",
     "fundingLeft": "verbleiben nach dem Arbeitsblatt über die gewählten Konten.",
