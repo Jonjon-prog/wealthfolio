@@ -1330,7 +1330,7 @@ export function AllocationWorksheetTab({
       const positionUnitPrice = unitPriceFor(position);
       const slack = placementSlack(
         requestedAmount,
-        minLineSize,
+        allocatedAmount,
         profile.wholeSharesOnly ? positionUnitPrice : undefined,
       );
       const shortfall = requestedAmount - allocatedAmount;

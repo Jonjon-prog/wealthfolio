@@ -304,19 +304,20 @@ export function isAsCalculated(
 
 /**
  * How far a change split across accounts may be from the change, either way,
- * and still be accepted: the larger of 1% of the change and the target's
- * minimum line size, never under two cents. A remainder that small moves no
- * category in a way that matters and would be flagged as too small to trade
- * on its own, so it is stated rather than demanded. Under a whole-unit policy
- * the last fraction of a unit buys nothing, so up to a unit's price may be
- * left unplaced too.
+ * and still be accepted: 1% of the change, never under two cents. A remainder
+ * that small moves no category in a way that matters, so it is stated rather
+ * than demanded. Rounding is apart from it: under a whole-unit policy, once
+ * part of the change is placed, what is left short of one more unit buys
+ * nothing, so it may stay unplaced too. A change with nothing placed is never
+ * accepted.
  */
 export function placementSlack(
   requested: number,
-  minLineSize: number,
+  allocated: number,
   wholeUnitPrice: number | undefined,
 ): { short: number; over: number } {
-  const over = Math.max(0.02, requested * 0.01, minLineSize);
+  const over = Math.max(0.02, requested * 0.01);
+  if (allocated < AMOUNT_EPSILON) return { short: 0, over };
   return { short: wholeUnitPrice ? Math.max(over, wholeUnitPrice) : over, over };
 }
 

@@ -487,13 +487,21 @@ describe("impactClasses", () => {
 });
 
 describe("placementSlack", () => {
-  it("accepts 1% of the change, or the minimum line size when that is larger", () => {
-    expect(placementSlack(58964.43, 0, undefined)).toEqual({ short: 589.6443, over: 589.6443 });
-    expect(placementSlack(919.29, 50, undefined)).toEqual({ short: 50, over: 50 });
+  it("accepts 1% of the change, never less than two cents", () => {
+    expect(placementSlack(58964.43, 58500, undefined)).toEqual({
+      short: 589.6443,
+      over: 589.6443,
+    });
+    expect(placementSlack(1, 1, undefined)).toEqual({ short: 0.02, over: 0.02 });
   });
 
-  it("never asks for less than two cents, and leaves a part unit under whole units", () => {
-    expect(placementSlack(1, 0, undefined)).toEqual({ short: 0.02, over: 0.02 });
-    expect(placementSlack(1000, 0, 336.64)).toEqual({ short: 336.64, over: 10 });
+  it("leaves less than a unit unplaced under whole units, once part of the change is placed", () => {
+    // Three units at $280 of a $1,000 change: the $160 left buys nothing.
+    expect(placementSlack(1000, 840, 280)).toEqual({ short: 280, over: 10 });
+  });
+
+  it("never accepts a change with nothing placed", () => {
+    expect(placementSlack(50, 0, 100)).toEqual({ short: 0, over: 0.5 });
+    expect(placementSlack(600, 0, undefined).short).toBe(0);
   });
 });

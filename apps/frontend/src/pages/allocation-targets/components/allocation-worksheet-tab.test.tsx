@@ -258,7 +258,10 @@ function previewLine(
   };
 }
 
-async function renderWorksheet(report: DriftReport = driftReport) {
+async function renderWorksheet(
+  report: DriftReport = driftReport,
+  target: AllocationTarget = profile,
+) {
   const user = userEvent.setup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const Providers = ({ children }: { children: ReactNode }) => (
@@ -268,7 +271,7 @@ async function renderWorksheet(report: DriftReport = driftReport) {
   );
   render(
     <AllocationWorksheetTab
-      profile={profile}
+      profile={target}
       driftReport={report}
       accountScope={{ type: "all" }}
       sourceVersion="source-1"
@@ -767,6 +770,33 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await user.clear(within(allocation()).getByLabelText("Amount for Brokerage"));
     await user.type(within(allocation()).getByLabelText("Amount for Brokerage"), "1187");
     expect(screen.getByRole("button", { name: "$13.00 left to allocate" })).toBeInTheDocument();
+  });
+
+  it("keeps the minimum line size out of what a split may leave unplaced", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const user = await renderWorksheet(driftReport, { ...profile, minTradeAmount: "500" });
+    await calculateFromTarget(user);
+    await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+    const allocation = () =>
+      screen.getByText("Account allocation").closest<HTMLElement>("[data-account-allocation]")!;
+
+    // $700 of the $1,200.00 change: past 1% of it, whatever the minimum line.
+    await user.type(within(allocation()).getByLabelText("Amount for Brokerage"), "700");
+    expect(screen.getByRole("button", { name: "$500.00 left to allocate" })).toBeInTheDocument();
+  });
+
+  it("does not take a change smaller than one unit as placed when nothing is", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const user = await renderWorksheet(driftReport, { ...profile, wholeSharesOnly: true });
+    await calculateFromTarget(user);
+
+    // $50 of VTI at $100 a unit, with no account chosen.
+    const total = screen.getByLabelText("Adjustment for VTI");
+    await user.clear(total);
+    await user.type(total, "50");
+    expect(screen.getByRole("button", { name: "Choose accounts" })).toBeInTheDocument();
   });
 
   it("lets the adjustment follow what the accounts hold, in one click", async () => {
