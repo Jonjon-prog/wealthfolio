@@ -358,6 +358,16 @@ describe("what an account can take of a change", () => {
     expect(amountAccountCanTake(1000, 450, 100, true, 2)).toBe(400);
   });
 
+  it("offers whole units rounded up to the cent, so the preview keeps every unit", () => {
+    // Three units at a price stored as 39.849998: cut down to the cent, 119.54
+    // floors to two units in the preview.
+    const offered = amountAccountCanTake(119.55, 1000, 39.849998, true, 2);
+    expect(offered).toBe(119.55);
+    expect(Math.floor(offered / 39.849998)).toBe(3);
+    // Rounding up stays within what the account can fund.
+    expect(amountAccountCanTake(119.55, 119.55, 39.849998, true, 2)).toBe(119.55);
+  });
+
   it("offers nothing while the account's funding is not known", () => {
     expect(amountAccountCanTake(1200, undefined, undefined, false, 2)).toBe(0);
   });

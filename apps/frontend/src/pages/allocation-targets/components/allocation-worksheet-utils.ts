@@ -412,7 +412,14 @@ export function amountAccountCanTake(
   // amount in by hand.
   const wholeUnits =
     wholeSharesOnly && unitPrice ? Math.floor(capped / unitPrice + 1e-9) * unitPrice : capped;
-  return floorToDigits(wholeUnits > AMOUNT_EPSILON ? wholeUnits : capped, fractionDigits);
+  if (wholeUnits <= AMOUNT_EPSILON) return floorToDigits(capped, fractionDigits);
+  // Whole units are rounded up to the cent, as a unit step is: the preview
+  // floors the quantity, so three units at 39.849998 offered as 119.54 would
+  // come back as two. `capped` is in cents and holds the units, so rounding
+  // up never passes it.
+  return wholeSharesOnly && unitPrice
+    ? Math.ceil(wholeUnits * scale - 1e-6) / scale
+    : floorToDigits(wholeUnits, fractionDigits);
 }
 
 /**
