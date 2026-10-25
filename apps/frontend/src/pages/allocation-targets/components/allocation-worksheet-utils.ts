@@ -79,6 +79,12 @@ export interface PositionAdjustment {
   placedDirection?: 1 | -1;
   /** What was placed while the change went the other way, until it turns back. */
   setAsideAccountAmounts?: Record<string, string>;
+  /**
+   * Whether the change was placed whole in one account at the last total that
+   * could be read, so a cleared total retyped still follows it there, and a
+   * partial placement still does not.
+   */
+  placedWhole?: boolean;
 }
 
 export type PositionAdjustments = Record<string, PositionAdjustment>;

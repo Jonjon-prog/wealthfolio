@@ -894,6 +894,26 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await waitFor(() => expect(previewedValues()).toEqual([["acc-1", 3100]]), { timeout: 2000 });
   });
 
+  it("keeps a partial placement when the total is cleared and retyped", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+    const allocation = screen
+      .getByText("Account allocation")
+      .closest<HTMLElement>("[data-account-allocation]")!;
+    await user.type(within(allocation).getByLabelText("Amount for Brokerage"), "1000");
+
+    // $1,000.00 of $1,200.00 is not the whole change, so retyping the total
+    // leaves it for the user to adjust rather than following the new total.
+    const total = screen.getByLabelText("Adjustment for VTI");
+    await user.clear(total);
+    await user.type(total, "1100");
+    expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("1000.00");
+    expect(screen.getByRole("button", { name: "$100.00 left to allocate" })).toBeInTheDocument();
+  });
+
   it("states when the listed accounts cannot fund the change between them", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
     heldAccountIds.current = ["acc-1", "acc-2"];
