@@ -493,6 +493,7 @@
     "allocationAcceptedOver": "多出 {{amount}}，已接受",
     "useAmount": "使用 {{amount}}",
     "useAmountIn": "在 {{account}} 中使用 {{amount}}",
-    "useAsAdjustment": "将 {{amount}} 用作调整额"
+    "useAsAdjustment": "将 {{amount}} 用作调整额",
+    "calculationInterrupted": "计算期间工作表已更改。请重试。"
   }
 }

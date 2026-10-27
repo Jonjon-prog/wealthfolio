@@ -807,6 +807,7 @@ export function AllocationWorksheetTab({
   const [highlightStore] = useState(createHighlightStore);
   const calculationVersionRef = useRef(0);
   const generationInputsKeyRef = useRef("");
+  const needsPlacedPreviewRef = useRef(false);
   const calculateRef = useRef<(() => Promise<void>) | null>(null);
   const autoCalculateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedScopeRef = useRef("");
@@ -1122,6 +1123,15 @@ export function AllocationWorksheetTab({
     firstUseOpen,
     sourcesSettling,
   ]);
+
+  // An estimated result can reveal a price that makes the account split valid.
+  // Validate those account lines before Review/export, without another user edit.
+  useEffect(() => {
+    if (sourcesSettling || !needsPlacedPreviewRef.current) return;
+    calculationVersionRef.current += 1;
+    setIsResultStale(true);
+    void calculateRef.current?.();
+  }, [result, sourcesSettling]);
 
   const loadingHeading = (backAction || heading) && (
     <div className="flex flex-wrap items-center gap-3">
@@ -1521,6 +1531,8 @@ export function AllocationWorksheetTab({
     [...prepared.rowIssues.values()].every(
       (issue) => issue.kind === "allocation" && issue.placement?.reason !== "no_account",
     );
+  const isPlacedResult = Boolean(result && result.lines.every((line) => line.accountId));
+  needsPlacedPreviewRef.current = Boolean(result && !isPlacedResult && !prepared.issue);
   const isPreviewUpdating =
     worksheet.isPending ||
     (isResultStale && (!prepared.issue || isIndicative) && calculationError === null);
@@ -1837,11 +1849,19 @@ export function AllocationWorksheetTab({
         eligibleAssetIds: generationInputs.eligibleAssetIds,
         sellableAssetIds: generationInputs.sellableAssetIds,
       });
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        if (inputsKey === generationInputsKeyRef.current)
+          setGenerateError(t("allocation:worksheet.calculationInterrupted"));
+        return;
+      }
       setGenerated({ calculated, inputsKey });
       applyCalculated(calculated);
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        if (inputsKey === generationInputsKeyRef.current)
+          setGenerateError(t("allocation:worksheet.calculationInterrupted"));
+        return;
+      }
       setGenerateError(errorMessage(error).replace(/^.*?Invalid input:\s*/i, "") || null);
     }
   }
@@ -1961,7 +1981,9 @@ export function AllocationWorksheetTab({
 
   // Warnings and an out-of-date worksheet travel with the file; only a change
   // the review cannot include, or a result being recomputed, holds it back.
-  const canExport = Boolean(result && !isResultStale && !prepared.issue && !calculationError);
+  const canExport = Boolean(
+    isPlacedResult && !isResultStale && !prepared.issue && !calculationError,
+  );
   const exportMessage = prepared.issue
     ? t("allocation:worksheet.exportHeld")
     : !result
@@ -1985,93 +2007,95 @@ export function AllocationWorksheetTab({
 
   async function exportWorksheet(format: "copy" | "csv") {
     if (!result || !canExport) return;
-    const calculated = generated?.calculated ?? null;
-    const scaling = calculated ? calculationNotes(calculated, t) : [];
-    const table = worksheetExportRows(
-      {
-        result,
-        calculated,
-        accountNames,
-        accountIds: changeAccountIds,
-        trackedCashToUse,
-        externalCash: externalTotal,
-        depositsByAccount: externalContribution,
-        editedAssetIds: calculated ? editedAssetIds(adjustments, calculated) : undefined,
-        describeWarning: wordWarning,
-      },
-      {
-        title: t("allocation:worksheet.title"),
-        target: t("allocation:worksheet.exportTarget"),
-        calculatedAt: t("allocation:worksheet.exportCalculatedAt"),
-        accounts: t("allocation:worksheet.accountsLabel"),
-        mode: t("allocation:worksheet.modeLabel"),
-        // What the worksheet was calculated from, or that it was entered by hand.
-        modeValue: !calculated
-          ? t("allocation:worksheet.exportNotCalculated")
-          : calculated.mode === "rebalance"
-            ? t("allocation:worksheet.modeRebalance")
-            : t("allocation:worksheet.modeInvestCash"),
-        rule: t("allocation:worksheet.ruleLabel"),
-        ruleValue: calculated
-          ? t("allocation:worksheet.ruleCurrentHoldingProportions")
-          : t("allocation:worksheet.exportNotCalculated"),
-        trackedCash: t("allocation:worksheet.exportTrackedCash"),
-        externalCash: t("allocation:worksheet.externalCash"),
-        eligible: t("allocation:worksheet.exportEligible"),
-        eligibleValue:
-          eligibility.eligibleAssetIds === undefined
-            ? t("allocation:worksheet.exportAllRecorded")
-            : String(eligibility.eligibleAssetIds.length),
-        scaling,
-        outOfDate: !isOutOfDate
-          ? undefined
-          : inputsChanged
-            ? t("allocation:worksheet.exportOutOfDate")
-            : t("allocation:worksheet.exportPricesChanged", {
-                percent: PRICE_MOVE_THRESHOLD * 100,
-              }),
-        note: t("allocation:worksheet.exportNote"),
-        category: t("allocation:worksheet.exportCategory"),
-        symbol: t("activity:table_symbol"),
-        security: t("allocation:worksheet.security"),
-        account: t("allocation:worksheet.account"),
-        amount: t("allocation:worksheet.exportAmount"),
-        quantity: t("allocation:worksheet.exportQuantity"),
-        price: t("allocation:worksheet.unitPrice"),
-        priceDate: t("allocation:worksheet.exportPriceDate"),
-        warnings: t("allocation:worksheet.exportWarnings"),
-        status: t("allocation:worksheet.exportStatus"),
-        statusUnresolved: t("allocation:worksheet.exportStatusUnresolved"),
-        statusCalculated: t("allocation:worksheet.exportStatusCalculated"),
-        statusEdited: t("allocation:worksheet.exportStatusEdited"),
-        direction: t("allocation:worksheet.exportDirection"),
-        increase: t("allocation:worksheet.allowIncrease"),
-        reduce: t("allocation:worksheet.allowReduce"),
-        deposit: t("allocation:worksheet.depositAdd"),
-        unknownAccount: t("allocation:worksheet.unknownAccount"),
-        total: t("allocation:worksheet.accountTotal"),
-        cashLeft: t("allocation:result.cashRemaining"),
-        limitationsTitle: t("allocation:worksheet.limitationsTitle"),
-        limitations: t("allocation:worksheet.fullDisclosure"),
-      },
-    );
-    if (format === "csv") {
-      // The runtime's own save: a native dialog in the app, a download on the web.
-      try {
+    try {
+      const calculated = generated?.calculated ?? null;
+      const scaling = calculated ? calculationNotes(calculated, t) : [];
+      const table = worksheetExportRows(
+        {
+          result,
+          calculated,
+          accountNames,
+          accountIds: changeAccountIds,
+          trackedCashToUse,
+          externalCash: externalTotal,
+          depositsByAccount: externalContribution,
+          editedAssetIds: calculated ? editedAssetIds(adjustments, calculated) : undefined,
+          describeWarning: wordWarning,
+        },
+        {
+          title: t("allocation:worksheet.title"),
+          target: t("allocation:worksheet.exportTarget"),
+          calculatedAt: t("allocation:worksheet.exportCalculatedAt"),
+          accounts: t("allocation:worksheet.accountsLabel"),
+          mode: t("allocation:worksheet.modeLabel"),
+          // What the worksheet was calculated from, or that it was entered by hand.
+          modeValue: !calculated
+            ? t("allocation:worksheet.exportNotCalculated")
+            : calculated.mode === "rebalance"
+              ? t("allocation:worksheet.modeRebalance")
+              : t("allocation:worksheet.modeInvestCash"),
+          rule: t("allocation:worksheet.ruleLabel"),
+          ruleValue: calculated
+            ? t("allocation:worksheet.ruleCurrentHoldingProportions")
+            : t("allocation:worksheet.exportNotCalculated"),
+          trackedCash: t("allocation:worksheet.exportTrackedCash"),
+          externalCash: t("allocation:worksheet.externalCash"),
+          eligible: t("allocation:worksheet.exportEligible"),
+          eligibleValue:
+            eligibility.eligibleAssetIds === undefined
+              ? t("allocation:worksheet.exportAllRecorded")
+              : String(eligibility.eligibleAssetIds.length),
+          scaling,
+          outOfDate: !isOutOfDate
+            ? undefined
+            : inputsChanged
+              ? t("allocation:worksheet.exportOutOfDate")
+              : t("allocation:worksheet.exportPricesChanged", {
+                  percent: PRICE_MOVE_THRESHOLD * 100,
+                }),
+          note: t("allocation:worksheet.exportNote"),
+          category: t("allocation:worksheet.exportCategory"),
+          symbol: t("activity:table_symbol"),
+          security: t("allocation:worksheet.security"),
+          account: t("allocation:worksheet.account"),
+          amount: t("allocation:worksheet.exportAmount"),
+          quantity: t("allocation:worksheet.exportQuantity"),
+          price: t("allocation:worksheet.unitPrice"),
+          priceDate: t("allocation:worksheet.exportPriceDate"),
+          warnings: t("allocation:worksheet.exportWarnings"),
+          status: t("allocation:worksheet.exportStatus"),
+          statusUnresolved: t("allocation:worksheet.exportStatusUnresolved"),
+          statusCalculated: t("allocation:worksheet.exportStatusCalculated"),
+          statusEdited: t("allocation:worksheet.exportStatusEdited"),
+          direction: t("allocation:worksheet.exportDirection"),
+          increase: t("allocation:worksheet.allowIncrease"),
+          reduce: t("allocation:worksheet.allowReduce"),
+          deposit: t("allocation:worksheet.depositAdd"),
+          unknownAccount: t("allocation:worksheet.unknownAccount"),
+          total: t("allocation:worksheet.accountTotal"),
+          cashLeft: t("allocation:result.cashRemaining"),
+          limitationsTitle: t("allocation:worksheet.limitationsTitle"),
+          limitations: t("allocation:worksheet.fullDisclosure"),
+        },
+      );
+      if (format === "csv") {
+        // The runtime's own save: a native dialog in the app, a download on the web.
         await openFileSaveDialog(
           csvFile(toCsv(table, decimalSeparator)),
           `rebalancing-worksheet-${result.calculatedAt.slice(0, 10)}.csv`,
         );
-      } catch {
-        toast.error(t("allocation:worksheet.exportFailed"));
+      } else {
+        await navigator.clipboard.writeText(toTsv(table, decimalSeparator));
+        toast.success(t("allocation:worksheet.tableCopied"));
       }
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(toTsv(table, decimalSeparator));
-      toast.success(t("allocation:worksheet.tableCopied"));
     } catch {
-      toast.error(t("allocation:worksheet.copyFailed"));
+      toast.error(
+        t(
+          format === "csv"
+            ? "allocation:worksheet.exportFailed"
+            : "allocation:worksheet.copyFailed",
+        ),
+      );
     }
   }
   // Amber like the out-of-date notice it answers.
@@ -2557,7 +2581,7 @@ export function AllocationWorksheetTab({
                 ) : (
                   <ReviewPanel
                     describeWarning={wordWarning}
-                    result={prepared.issue ? null : result}
+                    result={prepared.issue || !isPlacedResult ? null : result}
                     isStale={isResultStale}
                     isCalculating={isPreviewUpdating}
                     worksheetIssue={

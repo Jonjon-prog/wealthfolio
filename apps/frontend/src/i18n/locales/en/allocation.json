@@ -506,6 +506,7 @@
     "allocationAcceptedOver": "{{amount}} over, accepted",
     "useAmount": "Use {{amount}}",
     "useAmountIn": "Use {{amount}} in {{account}}",
-    "useAsAdjustment": "Use {{amount}} as the adjustment"
+    "useAsAdjustment": "Use {{amount}} as the adjustment",
+    "calculationInterrupted": "The worksheet changed while calculating. Please try again."
   }
 }

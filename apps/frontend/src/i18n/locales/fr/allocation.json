@@ -521,6 +521,7 @@
     "allocationAcceptedOver": "{{amount}} en trop, accepté",
     "useAmount": "Utiliser {{amount}}",
     "useAmountIn": "Utiliser {{amount}} dans {{account}}",
-    "useAsAdjustment": "Utiliser {{amount}} comme ajustement"
+    "useAsAdjustment": "Utiliser {{amount}} comme ajustement",
+    "calculationInterrupted": "La feuille a changé pendant le calcul. Veuillez réessayer."
   }
 }

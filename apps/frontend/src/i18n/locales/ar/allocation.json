@@ -566,6 +566,7 @@
     "warningCount_other": "{{count}} عنصر للمراجعة في هذه المعاينة",
     "warningCount_two": "عنصران للمراجعة في هذه المعاينة",
     "warningCount_zero": "{{count}} عنصر للمراجعة في هذه المعاينة",
-    "weight": "الوزن"
+    "weight": "الوزن",
+    "calculationInterrupted": "تغيّرت ورقة العمل أثناء الحساب. يُرجى المحاولة مرة أخرى."
   }
 }

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { chartSliceColor } from "@wealthfolio/ui";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountType, HoldingType } from "@/lib/constants";
@@ -21,6 +22,7 @@ import { clearProfilePreferences } from "@/hooks/use-persistent-state";
 import type { AllocationWorksheetRequest } from "../hooks/use-allocation-worksheet";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
+import * as worksheetExport from "./allocation-worksheet-export";
 
 const {
   generateMock,
@@ -399,6 +401,10 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     await user.tab();
 
     expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("500.00");
+    await goTo(user, "Setup");
+    expect(
+      screen.getByText("The worksheet changed while calculating. Please try again."),
+    ).toBeInTheDocument();
   });
 
   it("ignores a calculation when its Setup inputs changed while it was running", async () => {
@@ -1234,6 +1240,83 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
     },
   );
+
+  it.each([
+    ["Export CSV", "The file could not be saved."],
+    ["Copy for spreadsheet", "The table could not be copied."],
+  ])("reports table-generation errors from %s", async (action, message) => {
+    accountsRef.current = [account("acc-1", "Brokerage")];
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    await goTo(user, "Review");
+    await waitFor(() => expect(screen.getByRole("button", { name: action })).toBeEnabled());
+    const rows = vi.spyOn(worksheetExport, "worksheetExportRows").mockImplementationOnce(() => {
+      throw new Error("Invalid export table");
+    });
+    const error = vi.spyOn(toast, "error").mockReturnValue("export-error");
+    try {
+      await user.click(screen.getByRole("button", { name: action }));
+      expect(error).toHaveBeenCalledWith(message);
+    } finally {
+      rows.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("validates accounts after a new resolved price clears an estimated placement issue", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    let finishEstimate!: () => void;
+    let finishPlaced!: () => void;
+    previewMock.mockImplementation((request) => {
+      if (request.lines.length === 0) return Promise.resolve(previewResult);
+      const data = {
+        ...previewResult,
+        lines: request.lines.map((line) =>
+          previewLine({
+            ...line,
+            accountId: line.accountId ?? null,
+            unitPrice: 99,
+            estimatedAmount: Math.floor(line.value / 99) * 99,
+            quantity: Math.floor(line.value / 99),
+          }),
+        ),
+      };
+      return new Promise((resolve) => {
+        if (request.lines.some((line) => !line.accountId)) finishEstimate = () => resolve(data);
+        else finishPlaced = () => resolve(data);
+      });
+    });
+    const user = await renderWorksheet(driftReport, { ...profile, wholeSharesOnly: true });
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2,000.00"),
+    );
+    await goTo(user, "Adjust positions");
+    await user.type(screen.getByLabelText("Adjustment for VTI"), "297");
+    await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+    await user.type(screen.getByLabelText("Amount for Brokerage"), "99");
+    await user.type(screen.getByLabelText("Amount for Retirement"), "198");
+    // Let the last placement edit's debounce send the estimate at the old price.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await act(async () => finishEstimate());
+    await goTo(user, "Review");
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    await waitFor(
+      () =>
+        expect(
+          previewMock.mock.lastCall?.[0].lines.map((line) => [line.accountId, line.value]),
+        ).toEqual([
+          ["acc-1", 99],
+          ["acc-2", 198],
+        ]),
+      { timeout: 2000 },
+    );
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    await act(async () => finishPlaced());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+    expect(screen.getByText("Brokerage", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Retirement", { exact: true })).toBeInTheDocument();
+  });
 
   it("validates whole-unit placement at the same resolved price the controls use", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
@@ -2585,19 +2668,34 @@ describe("AllocationWorksheetTab Amounts panel", () => {
   });
 
   it("states the preview's warnings on the row whose line they are about", async () => {
-    previewMock.mockResolvedValue({
-      ...preview,
-      lines: [{ lineId: "position:bnd:acc-1:increase", assetId: "bnd" }],
-      warnings: [
-        {
-          id: "w1",
-          kind: "stale_quote",
-          lineId: "position:bnd:acc-1:increase",
-          message: "BND is priced from a quote dated 3 Sep.",
-          acknowledgementRequired: false,
-        },
-      ],
-    } as unknown as AllocationWorksheetResult);
+    previewMock.mockImplementation(
+      async (request) =>
+        ({
+          ...preview,
+          lines: request.lines.length
+            ? [
+                previewLine({
+                  lineId: "position:bnd:acc-1:increase",
+                  assetId: "bnd",
+                  accountId: "acc-1",
+                  estimatedAmount: 100,
+                  quantity: 1,
+                }),
+              ]
+            : [],
+          warnings: request.lines.length
+            ? [
+                {
+                  id: "w1",
+                  kind: "stale_quote",
+                  lineId: "position:bnd:acc-1:increase",
+                  message: "BND is priced from a quote dated 3 Sep.",
+                  acknowledgementRequired: false,
+                },
+              ]
+            : [],
+        }) as unknown as AllocationWorksheetResult,
+    );
     const user = await renderWorksheet(report);
     await goTo(user, "Adjust positions");
 

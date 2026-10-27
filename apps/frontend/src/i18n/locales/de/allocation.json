@@ -506,6 +506,7 @@
     "allocationAcceptedOver": "{{amount}} zu viel, akzeptiert",
     "useAmount": "{{amount}} verwenden",
     "useAmountIn": "{{amount}} in {{account}} verwenden",
-    "useAsAdjustment": "{{amount}} als Anpassung verwenden"
+    "useAsAdjustment": "{{amount}} als Anpassung verwenden",
+    "calculationInterrupted": "Das Arbeitsblatt hat sich während der Berechnung geändert. Bitte erneut versuchen."
   }
 }

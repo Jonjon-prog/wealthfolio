@@ -493,6 +493,7 @@
     "allocationAcceptedOver": "{{amount}} 超過（許容）",
     "useAmount": "{{amount}} を使う",
     "useAmountIn": "{{account}} で {{amount}} を使う",
-    "useAsAdjustment": "{{amount}} を調整額にする"
+    "useAsAdjustment": "{{amount}} を調整額にする",
+    "calculationInterrupted": "計算中にワークシートが変更されました。もう一度お試しください。"
   }
 }
