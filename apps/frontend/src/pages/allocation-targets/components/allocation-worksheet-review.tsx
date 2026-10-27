@@ -94,6 +94,7 @@ export function ReviewPanel({
   );
   const groups = new Map<string, AllocationWorksheetLineResult[]>();
   for (const line of result?.lines ?? []) {
+    if (!line.accountId) continue;
     groups.set(line.accountId, [...(groups.get(line.accountId) ?? []), line]);
   }
 
@@ -180,6 +181,11 @@ export function ReviewPanel({
           </div>
           <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
             {isStale ? t("allocation:worksheet.reviewStale") : t("allocation:worksheet.reviewHint")}
+          </p>
+          <p className="text-muted-foreground mt-1 text-xs tabular-nums" data-total-adjusted>
+            {t("allocation:worksheet.totalAdjusted", {
+              amount: formatAmount(result.increaseTotal + result.reductionTotal, currency),
+            })}
           </p>
         </div>
       </div>

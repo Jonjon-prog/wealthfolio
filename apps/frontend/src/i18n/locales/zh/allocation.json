@@ -49,7 +49,7 @@
     "noneOutsideRange": "没有类别超出其目标区间。",
     "moreOutsideTarget_one": "另有 {{count}} 项超出目标",
     "moreOutsideTarget_other": "另有 {{count}} 项超出目标",
-    "openWorksheet": "打开再平衡工作表 →"
+    "openWorksheet": "打开再平衡 →"
   },
   "overview": {
     "allInsideTarget": "全部 {{categories}} 均在目标内",
@@ -184,6 +184,12 @@
     "allAccountsProtected": "所有账户均受保护"
   },
   "worksheet": {
+    "categoriesOutsideTarget_other": "仍有 {{count}} 个类别偏离目标",
+    "withinTargetRange": "所有类别均在目标范围内",
+    "unresolvedAmountShort": "{{amount}} 未分配",
+    "viewUnresolvedAmounts": "查看未分配金额",
+    "calculationDetails": "计算详情",
+    "positionDetails": "{{symbol}}详情",
     "account": "账户",
     "accountAllocation": "按账户分配",
     "accountAmountLabel": "{{account}} 的金额",
@@ -244,6 +250,7 @@
     "noQuoteShort": "需要价格",
     "outsideRangeImpact": "{{before}} → {{after}} 个类别超出区间",
     "overAllocatedBy": "比调整额多 {{amount}}",
+    "indicativePreview": "预计影响：账户分配尚未完成",
     "portfolioImpact": "对投资组合的影响",
     "position": "持仓",
     "positionErrorGeneric": "无法计算预览",
@@ -362,8 +369,7 @@
     "removeOneUnitIn": "在 {{account}} 减少一份",
     "accountTotal": "合计",
     "exportNote": "备注",
-    "setupScope_other": "目标按 {{count}} 个账户衡量",
-    "planningCurrency": "规划货币 {{currency}}",
+    "setupScope_other": "按全部 {{count}} 个账户计算",
     "summaryLabel": "摘要",
     "blockedTitle": "计算之前",
     "selectedAccountCount": "已选 {{selected}} / {{total}}",

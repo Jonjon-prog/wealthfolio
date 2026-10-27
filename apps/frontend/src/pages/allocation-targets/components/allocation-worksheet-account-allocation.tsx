@@ -85,9 +85,12 @@ export function AccountAllocation({
   const fractionDigits = currencyFractionDigits(currency);
   const nameOf = (account: Account) => accountNames.get(account.id) ?? account.name;
   const [typingAccountId, setTypingAccountId] = useState<string | null>(null);
+  const [typingValue, setTypingValue] = useState("");
   // At the currency's precision except while it is typed in, like the row's field.
   const atRest = (accountId: string, value: string) =>
-    typingAccountId === accountId ? value : amountAtRest(value, fractionDigits, decimalSeparator);
+    typingAccountId === accountId
+      ? typingValue
+      : amountAtRest(value, fractionDigits, decimalSeparator);
   // The same unit steps as the row: the account's amount moves, the units follow.
   const canStep = unitPrice !== undefined && unitPrice > 0;
   const stepAccount = (accountId: string, amount: number, step: 1 | -1) => {
@@ -197,7 +200,7 @@ export function AccountAllocation({
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-2xs font-mono font-medium uppercase tracking-[0.12em]">
+          <p className="text-2xs font-mono font-medium tracking-[0.12em] uppercase">
             {t("allocation:worksheet.accountAllocation")}
           </p>
           <p className="text-muted-foreground mt-1 text-xs">{t(hint, { account: holderName })}</p>
@@ -398,9 +401,15 @@ export function AccountAllocation({
                         ? formatDecimalInput(requested, 6)
                         : (adjustment.accountAmounts[account.id] ?? ""),
                     )}
-                    onFocus={() => setTypingAccountId(account.id)}
+                    onFocus={(event) => {
+                      setTypingAccountId(account.id);
+                      setTypingValue(event.currentTarget.value);
+                    }}
                     onBlur={() => setTypingAccountId(null)}
-                    onChange={(event) => onAmountChange(account.id, event.target.value)}
+                    onChange={(event) => {
+                      setTypingValue(event.target.value);
+                      onAmountChange(account.id, event.target.value);
+                    }}
                     inputMode="decimal"
                     placeholder="0"
                   />

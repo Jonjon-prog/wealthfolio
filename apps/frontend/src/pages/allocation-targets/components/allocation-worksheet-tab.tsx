@@ -16,6 +16,10 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   Icons,
   Popover,
   PopoverContent,
@@ -67,7 +71,7 @@ import { AddDepositButton } from "./allocation-worksheet-account-allocation";
 import { AmountsList, type AmountsRowModel } from "./allocation-worksheet-amounts-list";
 import { cashToUse, editableAmounts } from "./allocation-worksheet-cash";
 import { createHighlightStore, HighlightStoreContext } from "./allocation-worksheet-highlight";
-import { rowStatus, type PlacementProblem } from "./allocation-worksheet-amounts";
+import { rowStatus, unitsFor, type PlacementProblem } from "./allocation-worksheet-amounts";
 import { ImpactRail } from "./allocation-worksheet-impact-rail";
 import { csvFile, toCsv, toTsv, worksheetExportRows } from "./allocation-worksheet-export";
 import { ReviewPanel } from "./allocation-worksheet-review";
@@ -124,6 +128,8 @@ const AUTO_CALCULATE_DEBOUNCE_MS = 500;
 type WorksheetPanel = "setup" | "amounts" | "review";
 
 interface AllocationWorksheetTabProps {
+  backAction?: ReactNode;
+  heading?: ReactNode;
   profile: AllocationTarget | null;
   driftReport: DriftReport | null;
   accountScope: AccountScope;
@@ -156,6 +162,8 @@ interface WorksheetDraft {
 
 interface PreparedWorksheet {
   lines: AllocationWorksheetLineInput[];
+  /** Position totals, independent of incomplete account placements. */
+  positionLines: AllocationWorksheetLineInput[];
   issue?: PreparedWorksheetIssue;
   /** Every row's own issue, keyed by asset. */
   rowIssues: Map<string, PreparedWorksheetIssue>;
@@ -413,7 +421,7 @@ function buildPositions(
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-muted-foreground text-2xs font-mono uppercase tracking-[0.16em]">
+    <p className="text-muted-foreground text-2xs font-mono tracking-[0.16em] uppercase">
       {children}
     </p>
   );
@@ -464,7 +472,7 @@ function FundingSummary({
         </p>
       ) : (
         <>
-          <p className="mt-2 font-mono text-xl font-semibold leading-tight">{amountOf(left)}</p>
+          <p className="mt-2 font-mono text-xl leading-tight font-semibold">{amountOf(left)}</p>
           <p className="text-muted-foreground mt-1 text-xs">
             {t(
               isEstimate
@@ -514,6 +522,7 @@ function FundingSummary({
 }
 
 interface CalculatedSummaryProps {
+  presentation?: "review" | "notice" | "details";
   calculated: CalculatedAdjustments;
   currency: string;
   accountNames: Map<string, string>;
@@ -561,7 +570,12 @@ function calculationNotes(calculated: CalculatedAdjustments, t: TFunction): stri
   return notes;
 }
 
-function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSummaryProps) {
+function CalculatedSummary({
+  calculated,
+  currency,
+  accountNames,
+  presentation = "review",
+}: CalculatedSummaryProps) {
   const { t } = useTranslation();
   const { formatAmount } = useAmountFormatting();
   const notes = calculationNotes(calculated, t);
@@ -582,40 +596,79 @@ function CalculatedSummary({ calculated, currency, accountNames }: CalculatedSum
     );
   }
 
-  if (notes.length === 0 && calculated.unresolved.length === 0) return null;
+  const unresolved = calculated.unresolved.length > 0 && (
+    <ul className="divide-y">
+      {calculated.unresolved.map((item) => (
+        <li
+          key={item.categoryId}
+          className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-1.5 text-xs"
+        >
+          <span className="min-w-0">
+            <span className="font-medium">{item.categoryName}</span>
+            <span className="text-muted-foreground">
+              {" · "}
+              {t(UNRESOLVED_REASON_KEYS[item.reason])}
+            </span>
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {formatSignedAmount(item.amount, currency, formatAmount)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 
+  if (presentation === "details") {
+    if (notes.length === 0) return null;
+    return (
+      <details className="group border-t px-4 py-3 sm:px-5" data-calculation-details>
+        <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center gap-2 text-xs [&::-webkit-details-marker]:hidden">
+          <Icons.ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
+          {t("allocation:worksheet.calculationDetails")}
+        </summary>
+        <ul className="text-muted-foreground mt-3 space-y-1 text-xs leading-relaxed">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </details>
+    );
+  }
+
+  if (presentation === "notice") {
+    if (!unresolved) return null;
+    return (
+      <div
+        className="flex items-start gap-2.5 border-b px-4 py-3 sm:px-5"
+        id="worksheet-unresolved"
+        role="note"
+        aria-label={t("allocation:worksheet.unresolvedTitle")}
+      >
+        <Icons.AlertCircle className="text-warning-subtle-foreground mt-1.5 h-4 w-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          {unresolved}
+          <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+            {t("allocation:worksheet.unresolvedHint")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (notes.length === 0 && !unresolved) return null;
   return (
     <div className="bg-muted/10 border-b px-4 py-4 sm:px-5">
       <Eyebrow>{t("allocation:worksheet.calculatedSummary")}</Eyebrow>
-      {/* One paragraph rather than a line per note, to give the list below the room. */}
       {notes.length > 0 && (
         <p className="text-muted-foreground mt-2 text-sm leading-relaxed">{notes.join(" ")}</p>
       )}
-      {calculated.unresolved.length > 0 && (
+      {unresolved && (
         <div className="mt-3">
           <p className="text-xs font-medium">{t("allocation:worksheet.unresolvedTitle")}</p>
           <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
             {t("allocation:worksheet.unresolvedHint")}
           </p>
-          <ul className="mt-2 divide-y">
-            {calculated.unresolved.map((item) => (
-              <li
-                key={item.categoryId}
-                className="flex items-baseline justify-between gap-3 py-1.5 text-xs"
-              >
-                <span className="min-w-0">
-                  <span className="font-medium">{item.categoryName}</span>
-                  <span className="text-muted-foreground">
-                    {" · "}
-                    {t(UNRESOLVED_REASON_KEYS[item.reason])}
-                  </span>
-                </span>
-                <span className="shrink-0 font-mono tabular-nums">
-                  {formatSignedAmount(item.amount, currency, formatAmount)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-2">{unresolved}</div>
         </div>
       )}
     </div>
@@ -678,6 +731,8 @@ function AddPositionButton({ assets, excludedAssetIds, onSelect }: AddPositionBu
 const SPLIT_RULE: AllocationRule = "current_holding_proportions";
 
 export function AllocationWorksheetTab({
+  backAction,
+  heading,
   profile,
   driftReport,
   accountScope,
@@ -1044,7 +1099,7 @@ export function AllocationWorksheetTab({
       if (autoCalculateTimerRef.current) clearTimeout(autoCalculateTimerRef.current);
     };
     // The dependencies represent user input or source-data changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [
     adjustments,
     trackedCash,
@@ -1066,10 +1121,22 @@ export function AllocationWorksheetTab({
     sourcesSettling,
   ]);
 
+  const loadingHeading = (backAction || heading) && (
+    <div className="flex flex-wrap items-center gap-3">
+      {backAction}
+      {heading}
+    </div>
+  );
   if (isSourceLoading || assetsLoading || accountsLoading || holdingsLoading) {
-    return <Skeleton className="h-[38rem] w-full rounded-xl" />;
+    return (
+      <div className="space-y-5">
+        {loadingHeading}
+        <Skeleton className="h-[38rem] w-full rounded-xl" />
+      </div>
+    );
   }
-  if (!profile || !driftReport) return null;
+  if (!profile || !driftReport)
+    return loadingHeading ? <div className="mb-5">{loadingHeading}</div> : null;
 
   const currency = driftReport.baseCurrency;
   const fundingByAccount = new Map(
@@ -1211,6 +1278,7 @@ export function AllocationWorksheetTab({
   const minLineSize = decimalInputOrZero(profile.minTradeAmount ?? "");
   const prepared: PreparedWorksheet = (() => {
     const lines: AllocationWorksheetLineInput[] = [];
+    const positionLines: AllocationWorksheetLineInput[] = [];
     let increaseTotal = 0;
     let reductionTotal = 0;
     let issue: PreparedWorksheetIssue | undefined = cashIssue;
@@ -1262,6 +1330,17 @@ export function AllocationWorksheetTab({
       }
 
       const requestedAmount = Math.abs(changeAmount);
+      // Keep a full sale in units, just like its account-assigned lines below.
+      // Converting its recorded value at a newer quote can exceed what is held.
+      const reducesEntirePosition =
+        changeAmount < 0 && Math.abs(requestedAmount - position.value) <= 0.02;
+      positionLines.push({
+        lineId: `position:${position.assetId}:preview`,
+        direction: changeAmount > 0 ? "increase" : "reduce",
+        assetId: position.assetId,
+        inputMode: reducesEntirePosition ? "quantity" : "amount",
+        value: reducesEntirePosition ? position.quantity : Number(requestedAmount.toFixed(6)),
+      });
       if (changeAmount > 0) increaseTotal += requestedAmount;
       else reductionTotal += requestedAmount;
 
@@ -1335,7 +1414,24 @@ export function AllocationWorksheetTab({
       );
       const shortfall = requestedAmount - allocatedAmount;
       const excess = allocatedAmount - requestedAmount;
-      if (eligibleAccounts.length > 1 && (shortfall > slack.short || excess > slack.over)) {
+      // Each account rounds separately in core. A split must cover the whole
+      // units requested, even when its dollar amounts add up or fit within 1%.
+      const wholeUnits =
+        profile.wholeSharesOnly && positionUnitPrice
+          ? {
+              requested: unitsFor(requestedAmount, positionUnitPrice, true),
+              placed: allocations.reduce(
+                (sum, allocation) => sum + unitsFor(allocation.amount, positionUnitPrice, true),
+                0,
+              ),
+            }
+          : null;
+      const nothingPlaced = wholeUnits ? wholeUnits.placed === 0 : allocatedAmount < AMOUNT_EPSILON;
+      const missingUnits = wholeUnits ? Math.max(0, wholeUnits.requested - wholeUnits.placed) : 0;
+      if (
+        eligibleAccounts.length > 1 &&
+        (nothingPlaced || missingUnits > 0 || shortfall > slack.short || excess > slack.over)
+      ) {
         flag({
           message: t("allocation:worksheet.allocateAccountsIssue", {
             symbol: position.symbol,
@@ -1346,9 +1442,12 @@ export function AllocationWorksheetTab({
           placement:
             excess > slack.over
               ? { reason: "over", amount: excess }
-              : allocatedAmount < AMOUNT_EPSILON
+              : nothingPlaced
                 ? { reason: "not_placed" }
-                : { reason: "left", amount: shortfall },
+                : {
+                    reason: "left",
+                    amount: Math.max(shortfall, missingUnits * (positionUnitPrice ?? 0)),
+                  },
         });
         continue;
       }
@@ -1381,6 +1480,7 @@ export function AllocationWorksheetTab({
 
     return {
       lines,
+      positionLines,
       issue,
       rowIssues,
       placedAccountIds,
@@ -1389,8 +1489,12 @@ export function AllocationWorksheetTab({
       reductionTotal,
     };
   })();
+  const isIndicative =
+    prepared.issue?.kind === "allocation" &&
+    [...prepared.rowIssues.values()].every((issue) => issue.kind === "allocation");
   const isPreviewUpdating =
-    worksheet.isPending || (isResultStale && !prepared.issue && calculationError === null);
+    worksheet.isPending ||
+    (isResultStale && (!prepared.issue || isIndicative) && calculationError === null);
   const resultByAsset = new Map<string, { amount: number; quantity: number }>();
   if (result && !isResultStale) {
     for (const line of result.lines) {
@@ -1705,7 +1809,16 @@ export function AllocationWorksheetTab({
   }
 
   function reviewPreparedIssue() {
-    if (prepared.issue) openIssue(prepared.issue);
+    if (prepared.issue) {
+      openIssue(prepared.issue);
+    } else if (unresolvedAmounts.length > 0) {
+      setPanel("amounts");
+      requestAnimationFrame(() => {
+        document
+          .getElementById("worksheet-unresolved")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
   }
 
   /** Opens the panel that owns an issue and puts the cursor where it is fixed. */
@@ -1737,10 +1850,10 @@ export function AllocationWorksheetTab({
     // A worksheet with no adjustments is valid: it projects the allocation as
     // it stands today.
     if (firstUseOpen) return;
-    // A row that cannot be previewed yet must not hide what the selected
-    // accounts record. The same preview without lines reads it, and its result
-    // stays out of Adjust and Review.
-    const cashOnly = Boolean(prepared.issue);
+    // Placement is separate from portfolio impact: while accounts are incomplete,
+    // preview each position's total without inventing an account assignment.
+    // Invalid amounts still need correction; an empty preview can read cash first.
+    const cashOnly = Boolean(prepared.issue) && (!isIndicative || !cash.isKnown);
     if (cashOnly && cash.isKnown) return;
     if (autoCalculateTimerRef.current) clearTimeout(autoCalculateTimerRef.current);
     setCalculationError(null);
@@ -1750,7 +1863,7 @@ export function AllocationWorksheetTab({
         targetId: profile!.id,
         filter: accountScope,
         cash: cashOnly ? { trackedCashToUse: 0, externalContribution: {} } : cashInput,
-        lines: cashOnly ? [] : prepared.lines,
+        lines: cashOnly ? [] : isIndicative ? prepared.positionLines : prepared.lines,
         selectedAccountIds: changeAccountIds,
       });
       // What the accounts record depends on the sources alone and is filed
@@ -1771,7 +1884,9 @@ export function AllocationWorksheetTab({
     } catch (error) {
       if (calculationVersion !== calculationVersionRef.current) return;
       const rawMessage = errorMessage(error);
-      const affectedLine = prepared.lines.find((line) => rawMessage.includes(line.lineId));
+      const affectedLine = [...prepared.lines, ...prepared.positionLines].find((line) =>
+        rawMessage.includes(line.lineId),
+      );
       const affectedPosition = affectedLine ? positionByAsset.get(affectedLine.assetId) : undefined;
       let detail = rawMessage.replace(/^.*?Invalid input:\s*/i, "");
       if (affectedLine) {
@@ -2144,7 +2259,7 @@ export function AllocationWorksheetTab({
   );
 
   return (
-    <div ref={worksheetRef} className="space-y-4">
+    <div ref={worksheetRef} className="min-w-0 space-y-4">
       <AlertDialog open={firstUseOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -2180,15 +2295,26 @@ export function AllocationWorksheetTab({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* The target's scope and planning currency ride on the steps' row:
-          they hold for every step and take no room of their own. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <WorksheetStepper panel={panel} onSelect={setPanel} setupChanged={setupChangedMessage} />
-        <p className="text-muted-foreground text-xs">
-          {t("allocation:worksheet.setupScope", { count: scopedAccounts.length })}
-          {" · "}
-          {t("allocation:worksheet.planningCurrency", { currency })}
-        </p>
+      <div
+        className="flex min-w-0 flex-col gap-x-3 gap-y-2 sm:flex-row sm:items-start"
+        data-worksheet-header
+      >
+        {backAction && (
+          <div className="flex min-h-10 shrink-0 items-center gap-3">
+            {backAction}
+            <span className="bg-border hidden h-5 w-px sm:block" />
+          </div>
+        )}
+        <div className="@container/worksheet-heading min-w-0 flex-1">
+          <div className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2 @[36rem]/worksheet-heading:grid-cols-[auto_minmax(0,1fr)]">
+            {heading && <div className="flex min-h-10 min-w-0 items-center">{heading}</div>}
+            <WorksheetStepper
+              panel={panel}
+              onSelect={setPanel}
+              setupChanged={setupChangedMessage}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Where amounts are read, a stale worksheet says so first. Setup offers the
@@ -2273,7 +2399,7 @@ export function AllocationWorksheetTab({
             <Card id="worksheet-positions" className="min-w-0 overflow-hidden">
               <CardContent className="p-0">
                 {panel === "amounts" && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4 sm:p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
                     <div className="border-border bg-muted/20 flex rounded-full border p-1">
                       {(["amount", "after_percentage"] as const).map((option) => (
                         <button
@@ -2281,7 +2407,7 @@ export function AllocationWorksheetTab({
                           type="button"
                           onClick={() => switchEditMode(option)}
                           className={cn(
-                            "rounded-full px-3.5 py-1.5 font-mono text-xs transition-colors",
+                            "rounded-full px-3.5 py-1.5 text-xs transition-colors",
                             editMode === option
                               ? "bg-foreground text-background"
                               : "text-muted-foreground hover:text-foreground",
@@ -2294,19 +2420,30 @@ export function AllocationWorksheetTab({
                       ))}
                     </div>
                     {generated && (
-                      <Button size="sm" variant="ghost" onClick={resetToCalculated}>
-                        <Icons.Undo className="me-1.5 h-4 w-4" />
-                        {t("allocation:worksheet.resetToCalculated")}
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button size="icon" variant="ghost" aria-label={t("common:actions")} />
+                          }
+                        >
+                          <Icons.MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={resetToCalculated}>
+                            <Icons.Undo className="me-1.5 h-4 w-4" />
+                            {t("allocation:worksheet.resetToCalculated")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                   </div>
                 )}
 
-                {/* On both panels: what the calculation could not place is
-                    exactly what the review is missing, and hiding it there leaves
-                    the leftover cash unexplained. */}
+                {/* Unplaced amounts stay visible; calculation notes sit below
+                    the editable positions, with the full summary on Review. */}
                 {generated && (
                   <CalculatedSummary
+                    presentation={panel === "amounts" ? "notice" : "review"}
                     calculated={generated.calculated}
                     currency={currency}
                     accountNames={accountNames}
@@ -2359,6 +2496,14 @@ export function AllocationWorksheetTab({
                         }}
                       />
                     )}
+                    {generated && (
+                      <CalculatedSummary
+                        presentation="details"
+                        calculated={generated.calculated}
+                        currency={currency}
+                        accountNames={accountNames}
+                      />
+                    )}
                     <div className="border-t px-2 py-1.5 sm:px-3">
                       <AddPositionButton
                         assets={eligibleAssets}
@@ -2370,7 +2515,7 @@ export function AllocationWorksheetTab({
                 ) : (
                   <ReviewPanel
                     describeWarning={wordWarning}
-                    result={result}
+                    result={prepared.issue ? null : result}
                     isStale={isResultStale}
                     isCalculating={isPreviewUpdating}
                     worksheetIssue={
@@ -2411,12 +2556,13 @@ export function AllocationWorksheetTab({
                 report={driftReport}
                 result={result}
                 isStale={isResultStale}
+                isIndicative={isIndicative}
                 classes={classes}
                 rows={amountsRows.map((row) => ({
                   assetId: row.position.assetId,
                   symbol: row.position.symbol,
                   shares: row.position.categoryExposures,
-                  change: row.changeAmount,
+                  change: resultByAsset.get(row.position.assetId)?.amount ?? row.changeAmount,
                   valueIn: valueInClassByAsset.get(row.position.assetId) ?? {},
                 }))}
                 unresolved={unresolvedAmounts}
@@ -2533,7 +2679,7 @@ function WorksheetStepper({ panel, onSelect, setupChanged }: WorksheetStepperPro
   return (
     <nav
       aria-label={t("allocation:worksheet.title")}
-      className="border-border bg-muted/20 inline-flex flex-wrap rounded-full border p-1"
+      className="border-border bg-muted/20 row-start-2 inline-flex max-w-full flex-wrap justify-self-start rounded-full border p-1 @[36rem]/worksheet-heading:col-start-2 @[36rem]/worksheet-heading:row-start-1"
     >
       {steps.map((step, index) => (
         <button

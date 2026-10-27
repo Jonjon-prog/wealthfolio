@@ -2919,7 +2919,8 @@ export interface AllocationWorksheetLineInput {
   lineId: string;
   direction: WorksheetDirection;
   assetId: string;
-  accountId: string;
+  /** Omitted for an indicative portfolio preview before account placement. */
+  accountId?: string;
   inputMode: WorksheetInputMode;
   value: number;
 }
@@ -2983,7 +2984,7 @@ export interface AllocationWorksheetLineResult {
   lineId: string;
   direction: WorksheetDirection;
   assetId: string;
-  accountId: string;
+  accountId: string | null;
   symbol: string;
   name: string;
   inputMode: WorksheetInputMode;

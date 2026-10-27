@@ -49,7 +49,7 @@
     "noneOutsideRange": "목표 범위를 벗어난 카테고리가 없습니다.",
     "moreOutsideTarget_one": "목표 범위를 벗어난 항목 {{count}}개 더 있음",
     "moreOutsideTarget_other": "목표 범위를 벗어난 항목 {{count}}개 더 있음",
-    "openWorksheet": "리밸런싱 워크시트 열기 →"
+    "openWorksheet": "리밸런싱 열기 →"
   },
   "overview": {
     "allInsideTarget": "모든 {{categories}}이(가) 목표 범위 내",
@@ -184,6 +184,12 @@
     "allAccountsProtected": "모든 계좌가 보호되고 있습니다"
   },
   "worksheet": {
+    "categoriesOutsideTarget_other": "{{count}}개 카테고리가 아직 목표 범위 밖에 있습니다",
+    "withinTargetRange": "모든 카테고리가 목표 범위 내에 있습니다",
+    "unresolvedAmountShort": "{{amount}} 미배정",
+    "viewUnresolvedAmounts": "미배정 금액 보기",
+    "calculationDetails": "계산 세부 정보",
+    "positionDetails": "{{symbol}} 세부 정보",
     "account": "계좌",
     "accountAllocation": "계좌별 배분",
     "accountAmountLabel": "{{account}} 금액",
@@ -244,6 +250,7 @@
     "noQuoteShort": "가격 필요",
     "outsideRangeImpact": "범위를 벗어난 카테고리 {{before}} → {{after}}",
     "overAllocatedBy": "조정액보다 {{amount}} 많음",
+    "indicativePreview": "예상 영향: 계좌 배분 미완료",
     "portfolioImpact": "포트폴리오 영향",
     "position": "포지션",
     "positionErrorGeneric": "미리보기를 계산할 수 없습니다",
@@ -362,8 +369,7 @@
     "removeOneUnitIn": "{{account}}에서 1주 빼기",
     "accountTotal": "합계",
     "exportNote": "참고",
-    "setupScope_other": "{{count}}개 계좌로 측정하는 목표",
-    "planningCurrency": "계획 통화 {{currency}}",
+    "setupScope_other": "전체 {{count}}개 계좌 기준",
     "summaryLabel": "요약",
     "blockedTitle": "계산하기 전에",
     "selectedAccountCount": "{{total}}개 중 {{selected}}개 선택됨",

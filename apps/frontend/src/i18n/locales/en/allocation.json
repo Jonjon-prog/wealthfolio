@@ -49,7 +49,7 @@
     "noneOutsideRange": "No category is outside its target range.",
     "moreOutsideTarget_one": "{{count}} more outside target",
     "moreOutsideTarget_other": "{{count}} more outside target",
-    "openWorksheet": "Open worksheet →"
+    "openWorksheet": "Open rebalancing →"
   },
   "overview": {
     "allInsideTarget": "All {{categories}} inside target",
@@ -187,6 +187,13 @@
     "allAccountsProtected": "All accounts are protected"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "{{count}} category still outside target",
+    "categoriesOutsideTarget_other": "{{count}} categories still outside target",
+    "withinTargetRange": "All categories within target range",
+    "unresolvedAmountShort": "{{amount}} unresolved",
+    "viewUnresolvedAmounts": "View unplaced amounts",
+    "calculationDetails": "Calculation details",
+    "positionDetails": "Details for {{symbol}}",
     "account": "Account",
     "accountAllocation": "Account allocation",
     "accountAmountLabel": "Amount for {{account}}",
@@ -250,6 +257,7 @@
     "noQuoteShort": "Price required",
     "outsideRangeImpact": "{{before}} → {{after}} categories outside range",
     "overAllocatedBy": "{{amount}} more than the adjustment",
+    "indicativePreview": "Estimated impact: account allocation incomplete",
     "portfolioImpact": "Portfolio impact",
     "position": "Position",
     "positionErrorGeneric": "The preview could not be calculated",
@@ -372,9 +380,8 @@
     "removeOneUnitIn": "Remove one unit in {{account}}",
     "accountTotal": "Total",
     "exportNote": "Note",
-    "setupScope_one": "Target measured across {{count}} account",
-    "setupScope_other": "Target measured across {{count}} accounts",
-    "planningCurrency": "Planning currency {{currency}}",
+    "setupScope_one": "Across {{count}} account",
+    "setupScope_other": "Across all {{count}} accounts",
     "summaryLabel": "Summary",
     "blockedTitle": "Before you can calculate",
     "selectedAccountCount": "{{selected}} of {{total}} selected",

@@ -154,6 +154,25 @@ function csvLines(overrides: Partial<WorksheetExportLabels> = {}) {
 }
 
 describe("worksheet export", () => {
+  it("rejects an indicative preview until its changes are placed in accounts", () => {
+    expect(() =>
+      worksheetExportRows(
+        {
+          result: { ...result, lines: [{ ...result.lines[0], accountId: null }] },
+          calculated: null,
+          accountNames: new Map(),
+          accountIds: [],
+          trackedCashToUse: 0,
+          externalCash: 0,
+          depositsByAccount: {},
+          editedAssetIds: undefined,
+          describeWarning: (warning) => warning.message,
+        },
+        labels,
+      ),
+    ).toThrow("Place every adjustment in an account before exporting");
+  });
+
   it("opens on the lines, grouped by account then symbol, with the reductions negative", () => {
     const lines = csvLines();
 

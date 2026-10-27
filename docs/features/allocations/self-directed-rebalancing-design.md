@@ -267,6 +267,10 @@ values comes from.
   updates the live portfolio-impact preview and nothing else. The debounced core
   calculation still runs to validate the edited worksheet and produce that
   preview; it does not re-derive the adjustments.
+- While account allocation is incomplete, core previews the position totals
+  without assigning them to accounts. The rail labels this as estimated impact;
+  per-account funding and export require every adjustment to be placed first.
+  Current and projected markers remain distinguishable when they overlap.
 - **Adjustments are regenerated only on an explicit user action**, of which
   there are exactly two: **Recalculate from target**, which rebuilds them from
   the current target, eligible securities and allocation rule, and **Reset to
@@ -307,10 +311,11 @@ entered"). See §7.
   tiebreak, no largest-position heuristic. A split that is off, either way, by
   less than 1% of the change is accepted and stated ("$11.00 unplaced,
   accepted"): such a remainder moves no category in a way that matters. Rounding
-  is apart from it: under whole units, once part of a change is placed, a
-  remainder short of one more unit buys nothing and is accepted too. More than
-  that still blocks, and so does a change with nothing placed, so a change left
-  half placed is not missed.
+  is apart from it: under whole units, account placements must cover the whole
+  units in the requested change, counting each account's rounded-down quantity
+  separately. Once those units are placed, a remainder short of one more unit
+  buys nothing and is accepted too. A missing whole unit still blocks, even
+  within 1%, as does a split where every account rounds down to zero units.
 - **Funding is validated per account.** An increase in one account cannot be
   funded by cash recorded in another; no transfer between accounts is assumed or
   implied. Where an account is short, the worksheet says by how much and offers

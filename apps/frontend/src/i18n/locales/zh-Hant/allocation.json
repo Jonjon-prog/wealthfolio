@@ -49,7 +49,7 @@
     "noneOutsideRange": "沒有類別超出其目標區間。",
     "moreOutsideTarget_one": "另有 {{count}} 項超出目標",
     "moreOutsideTarget_other": "另有 {{count}} 項超出目標",
-    "openWorksheet": "開啟再平衡工作表 →"
+    "openWorksheet": "開啟再平衡 →"
   },
   "overview": {
     "allInsideTarget": "全部 {{categories}} 都在目標內",
@@ -187,6 +187,12 @@
     "allAccountsProtected": "所有帳戶均受保護"
   },
   "worksheet": {
+    "categoriesOutsideTarget_other": "仍有 {{count}} 個類別偏離目標",
+    "withinTargetRange": "所有類別均在目標範圍內",
+    "unresolvedAmountShort": "{{amount}} 未分配",
+    "viewUnresolvedAmounts": "檢視未分配金額",
+    "calculationDetails": "計算詳情",
+    "positionDetails": "{{symbol}}詳情",
     "account": "帳戶",
     "accountAllocation": "依帳戶分配",
     "accountAmountLabel": "{{account}} 的金額",
@@ -250,6 +256,7 @@
     "noQuoteShort": "需要價格",
     "outsideRangeImpact": "{{before}} → {{after}} 個類別超出區間",
     "overAllocatedBy": "比調整額多 {{amount}}",
+    "indicativePreview": "預估影響：帳戶分配尚未完成",
     "portfolioImpact": "對投資組合的影響",
     "position": "持有部位",
     "positionErrorGeneric": "無法計算預覽",
@@ -372,9 +379,8 @@
     "removeOneUnitIn": "在 {{account}} 減少一單位",
     "accountTotal": "合計",
     "exportNote": "備註",
-    "setupScope_one": "目標按 {{count}} 個帳戶衡量",
-    "setupScope_other": "目標按 {{count}} 個帳戶衡量",
-    "planningCurrency": "規劃貨幣 {{currency}}",
+    "setupScope_one": "按全部 {{count}} 個帳戶計算",
+    "setupScope_other": "按全部 {{count}} 個帳戶計算",
     "summaryLabel": "摘要",
     "blockedTitle": "計算之前",
     "selectedAccountCount": "已選 {{selected}} / {{total}}",

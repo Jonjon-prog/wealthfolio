@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import { generateCalculatedAdjustments as generateTauriCalculatedAdjustments } from "./tauri";
+import {
+  calculateAllocationWorksheet,
+  generateCalculatedAdjustments as generateTauriCalculatedAdjustments,
+} from "./tauri";
 import { COMMANDS, invoke } from "./web/core";
 
 const { platformInvokeMock } = vi.hoisted(() => ({
@@ -121,6 +124,40 @@ function collectNamedReexports(
 }
 
 describe("calculated worksheet transport", () => {
+  it("previews a position total without assigning an account in either runtime", async () => {
+    const mock = stubFetch({});
+    platformInvokeMock
+      .mockReset()
+      .mockImplementation((command: string, payload?: Record<string, unknown>) =>
+        invoke(command, payload),
+      );
+    await calculateAllocationWorksheet(
+      "target-1",
+      { trackedCashToUse: 1000, externalContribution: {} },
+      [
+        {
+          lineId: "position:vti:preview",
+          assetId: "vti",
+          direction: "increase",
+          inputMode: "amount",
+          value: 1000,
+        },
+      ],
+      ["acc-1", "acc-2"],
+      { type: "all" },
+    );
+    const { body } = lastCall(mock);
+    const request = JSON.parse(body as string) as { lines: unknown[] };
+    expect(request.lines).toEqual([
+      {
+        lineId: "position:vti:preview",
+        assetId: "vti",
+        direction: "increase",
+        inputMode: "amount",
+        value: 1000,
+      },
+    ]);
+  });
   it("keeps an empty eligible selection instead of dropping it", async () => {
     // §4.1: selecting no eligible security is a valid state. Dropping the empty
     // list would silently turn it into "every recorded security".

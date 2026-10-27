@@ -49,7 +49,7 @@
     "noneOutsideRange": "目標範囲外のカテゴリはありません。",
     "moreOutsideTarget_one": "他{{count}}件が目標の範囲外",
     "moreOutsideTarget_other": "他{{count}}件が目標の範囲外",
-    "openWorksheet": "リバランス・ワークシートを開く →"
+    "openWorksheet": "リバランスを開く →"
   },
   "overview": {
     "allInsideTarget": "すべての{{categories}}が目標の範囲内",
@@ -184,6 +184,12 @@
     "allAccountsProtected": "すべての口座が保護されています"
   },
   "worksheet": {
+    "categoriesOutsideTarget_other": "{{count}}カテゴリが目標範囲外",
+    "withinTargetRange": "すべてのカテゴリが目標範囲内",
+    "unresolvedAmountShort": "{{amount}} 未割り当て",
+    "viewUnresolvedAmounts": "未割り当ての金額を表示",
+    "calculationDetails": "計算の詳細",
+    "positionDetails": "{{symbol}}の詳細",
     "account": "口座",
     "accountAllocation": "口座別の配分",
     "accountAmountLabel": "{{account}}の金額",
@@ -244,6 +250,7 @@
     "noQuoteShort": "価格が必要",
     "outsideRangeImpact": "範囲外のカテゴリ {{before}} → {{after}}",
     "overAllocatedBy": "調整額より{{amount}}多い",
+    "indicativePreview": "推定される影響：口座への配分が未完了",
     "portfolioImpact": "ポートフォリオへの影響",
     "position": "ポジション",
     "positionErrorGeneric": "プレビューを計算できませんでした",
@@ -362,8 +369,7 @@
     "removeOneUnitIn": "{{account}}で1単位減らす",
     "accountTotal": "合計",
     "exportNote": "注記",
-    "setupScope_other": "{{count}} 口座で測定するターゲット",
-    "planningCurrency": "計画通貨 {{currency}}",
+    "setupScope_other": "全{{count}}口座で集計",
     "summaryLabel": "概要",
     "blockedTitle": "計算の前に",
     "selectedAccountCount": "{{total}} 件中 {{selected}} 件を選択",

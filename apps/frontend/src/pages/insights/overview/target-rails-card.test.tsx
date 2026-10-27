@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AllocationTarget, DriftReport, DriftRow } from "@/lib/types";
 import { render, screen, within } from "@/test/render";
+import { DirectionProvider } from "@wealthfolio/ui";
 
 import { TargetRailsCard } from "./target-rails-card";
 
@@ -75,4 +76,34 @@ describe("TargetRailsCard", () => {
     expect(lineFor("Fixed Income")).toHaveTextContent(/1\.2K below target$/);
     expect(section).not.toHaveTextContent(/\b(add|trim)\b/i);
   });
+
+  it.each(["ltr", "rtl"] as const)(
+    "keeps the selected pill visible without moving focus in %s",
+    (direction) => {
+      const other = { ...target, id: "target-2", name: "Income" };
+      const props = { selectedTargetId: target.id, onTargetChange: vi.fn(), driftReport: report };
+      const { rerender } = render(
+        <DirectionProvider direction={direction}>
+          <TargetRailsCard {...props} targets={[target, other]} />
+        </DirectionProvider>,
+      );
+      const selector = screen.getByRole("group", { name: "Select target" });
+      selector.scrollLeft = direction === "rtl" ? -200 : 200;
+      const button = within(selector).getByRole("button", { name: "Income" });
+      button.focus();
+      rerender(
+        <DirectionProvider direction={direction}>
+          <TargetRailsCard {...props} selectedTargetId={other.id} targets={[other, target]} />
+        </DirectionProvider>,
+      );
+      expect(selector.scrollLeft).toBe(0);
+      expect(within(selector).getAllByRole("button")[0]).toBe(button);
+      expect(button).toHaveFocus();
+      expect(button).toHaveAttribute("aria-pressed", "true");
+      expect(within(selector).getByRole("button", { name: "Global" })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    },
+  );
 });

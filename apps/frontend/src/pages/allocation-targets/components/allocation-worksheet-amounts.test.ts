@@ -86,6 +86,14 @@ describe("Amounts highlight", () => {
 });
 
 describe("stepping by units", () => {
+  it("counts whole units with the same quote-precision rounding as core", () => {
+    const price = 39.849998474;
+    expect(unitsFor(119.549995, price, true)).toBe(3);
+    expect(unitsFor(119.54, price, true)).toBe(2);
+    expect(unitsFor(1, 100, true)).toBe(0);
+    expect(unitsFor(0.3, 0.1, true)).toBe(3);
+  });
+
   it("adds one whole unit as an exact amount the core floors back to the same units", () => {
     // 3 units at 59.31 typed as 177.93, then one more.
     const next = stepByUnits(177.93, 59.31, 1, true, 2);

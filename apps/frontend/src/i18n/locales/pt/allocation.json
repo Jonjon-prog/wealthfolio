@@ -50,7 +50,7 @@
     "moreOutsideTarget_one": "{{count}} mais fora da meta",
     "moreOutsideTarget_other": "{{count}} mais fora da meta",
     "moreOutsideTarget_many": "{{count}} mais fora da meta",
-    "openWorksheet": "Abrir a planilha de rebalanceamento →"
+    "openWorksheet": "Abrir o rebalanceamento →"
   },
   "overview": {
     "allInsideTarget": "Todas as {{categories}} dentro da meta",
@@ -192,6 +192,14 @@
     "allAccountsProtected": "Todas as contas estão protegidas"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "{{count}} categoria ainda fora da meta",
+    "categoriesOutsideTarget_many": "{{count}} categorias ainda fora da meta",
+    "categoriesOutsideTarget_other": "{{count}} categorias ainda fora da meta",
+    "withinTargetRange": "Todas as categorias dentro do intervalo da meta",
+    "unresolvedAmountShort": "{{amount}} não alocado",
+    "viewUnresolvedAmounts": "Ver valores não alocados",
+    "calculationDetails": "Detalhes do cálculo",
+    "positionDetails": "Detalhes de {{symbol}}",
     "account": "Conta",
     "accountAllocation": "Distribuição por conta",
     "accountAmountLabel": "Valor para {{account}}",
@@ -258,6 +266,7 @@
     "noQuoteShort": "Preço necessário",
     "outsideRangeImpact": "{{before}} → {{after}} categorias fora do intervalo",
     "overAllocatedBy": "{{amount}} a mais que o ajuste",
+    "indicativePreview": "Impacto estimado: alocação às contas incompleta",
     "portfolioImpact": "Impacto na carteira",
     "position": "Posição",
     "positionErrorGeneric": "Não foi possível calcular a prévia",
@@ -384,10 +393,9 @@
     "removeOneUnitIn": "Remover uma unidade em {{account}}",
     "accountTotal": "Total",
     "exportNote": "Nota",
-    "setupScope_one": "Alvo medido em {{count}} conta",
-    "setupScope_many": "Alvo medido em {{count}} contas",
-    "setupScope_other": "Alvo medido em {{count}} contas",
-    "planningCurrency": "Moeda de planejamento {{currency}}",
+    "setupScope_one": "Em {{count}} conta",
+    "setupScope_many": "Em todas as {{count}} contas",
+    "setupScope_other": "Em todas as {{count}} contas",
     "summaryLabel": "Resumo",
     "blockedTitle": "Antes de calcular",
     "selectedAccountCount": "{{selected}} de {{total}} selecionadas",

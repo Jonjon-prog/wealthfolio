@@ -13,8 +13,9 @@ import {
   hasVisibleAllocation,
   isOutOfBand,
 } from "@/pages/allocation-targets/components/drift-row-utils";
-import { Button, Card, Icons, Skeleton, useAmountFormatting } from "@wealthfolio/ui";
+import { Button, Card, Icons, Skeleton, useAmountFormatting, useDirection } from "@wealthfolio/ui";
 import { useTranslation } from "react-i18next";
+import { useLayoutEffect, useRef } from "react";
 import { formatCompact } from "./allocation-derivations";
 
 interface TargetRailsCardProps {
@@ -46,6 +47,13 @@ export function TargetRailsCard({
   const formatting = useAmountFormatting();
   const { t } = useTranslation();
   const { isBalanceHidden } = useBalancePrivacy();
+  const direction = useDirection();
+  const selectorRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    // The selected pill moves first. Zero is the inline start in both LTR and RTL;
+    // scroll only the selector so the page and its swipe container stay put.
+    if (selectorRef.current) selectorRef.current.scrollLeft = 0;
+  }, [selectedTargetId, direction]);
   const selectedTarget = targets.find((target) => target.id === selectedTargetId) ?? null;
   const { data: taxonomy } = useTaxonomy(selectedTarget?.taxonomyId ?? null);
   const resolvedDriftReport = driftReport
@@ -125,12 +133,18 @@ export function TargetRailsCard({
 
       {/* Target selector — pill carousel */}
       {targets.length > 0 && (
-        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={selectorRef}
+          role="group"
+          aria-label={t("allocation:header.selectTarget")}
+          className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {targets.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => onTargetChange(p.id)}
+              aria-pressed={p.id === selectedTargetId}
               className={cn(
                 "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors",
                 p.id === selectedTargetId

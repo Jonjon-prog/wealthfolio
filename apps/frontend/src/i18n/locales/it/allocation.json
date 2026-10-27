@@ -50,7 +50,7 @@
     "moreOutsideTarget_one": "{{count}} altro fuori dall'obiettivo",
     "moreOutsideTarget_many": "{{count}} altri fuori dall'obiettivo",
     "moreOutsideTarget_other": "{{count}} altri fuori dall'obiettivo",
-    "openWorksheet": "Apri il foglio di ribilanciamento →"
+    "openWorksheet": "Apri il ribilanciamento →"
   },
   "overview": {
     "allInsideTarget": "Tutte le {{categories}} sono nell'obiettivo",
@@ -192,6 +192,14 @@
     "allAccountsProtected": "Tutti i conti sono protetti"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "{{count}} categoria ancora fuori obiettivo",
+    "categoriesOutsideTarget_many": "{{count}} categorie ancora fuori obiettivo",
+    "categoriesOutsideTarget_other": "{{count}} categorie ancora fuori obiettivo",
+    "withinTargetRange": "Tutte le categorie nell’intervallo obiettivo",
+    "unresolvedAmountShort": "{{amount}} non assegnato",
+    "viewUnresolvedAmounts": "Mostra importi non assegnati",
+    "calculationDetails": "Dettagli del calcolo",
+    "positionDetails": "Dettagli di {{symbol}}",
     "account": "Conto",
     "accountAllocation": "Ripartizione per conto",
     "accountAmountLabel": "Importo per {{account}}",
@@ -258,6 +266,7 @@
     "noQuoteShort": "Prezzo richiesto",
     "outsideRangeImpact": "{{before}} → {{after}} categorie fuori intervallo",
     "overAllocatedBy": "{{amount}} oltre la rettifica",
+    "indicativePreview": "Impatto stimato: assegnazione ai conti incompleta",
     "portfolioImpact": "Impatto sul portafoglio",
     "position": "Posizione",
     "positionErrorGeneric": "Impossibile calcolare l'anteprima",
@@ -384,10 +393,9 @@
     "removeOneUnitIn": "Rimuovi una quota in {{account}}",
     "accountTotal": "Totale",
     "exportNote": "Nota",
-    "setupScope_one": "Obiettivo misurato su {{count}} conto",
-    "setupScope_many": "Obiettivo misurato su {{count}} conti",
-    "setupScope_other": "Obiettivo misurato su {{count}} conti",
-    "planningCurrency": "Valuta di pianificazione {{currency}}",
+    "setupScope_one": "Su {{count}} conto",
+    "setupScope_many": "Su tutti i {{count}} conti",
+    "setupScope_other": "Su tutti i {{count}} conti",
     "summaryLabel": "Riepilogo",
     "blockedTitle": "Prima di calcolare",
     "selectedAccountCount": "{{selected}} di {{total}} selezionati",

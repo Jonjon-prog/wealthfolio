@@ -50,7 +50,7 @@
     "moreOutsideTarget_one": "{{count}} autre hors cible",
     "moreOutsideTarget_other": "{{count}} autres hors cible",
     "moreOutsideTarget_many": "{{count}} autres hors cible",
-    "openWorksheet": "Ouvrir la feuille de rééquilibrage →"
+    "openWorksheet": "Ouvrir le rééquilibrage →"
   },
   "overview": {
     "allInsideTarget": "Toutes les {{categories}} dans la cible",
@@ -192,6 +192,14 @@
     "allAccountsProtected": "Tous les comptes sont protégés"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "{{count}} catégorie encore hors cible",
+    "categoriesOutsideTarget_many": "{{count}} catégories encore hors cible",
+    "categoriesOutsideTarget_other": "{{count}} catégories encore hors cible",
+    "withinTargetRange": "Toutes les catégories dans la plage cible",
+    "unresolvedAmountShort": "{{amount}} non affecté",
+    "viewUnresolvedAmounts": "Voir les montants non affectés",
+    "calculationDetails": "Détails du calcul",
+    "positionDetails": "Détails de {{symbol}}",
     "account": "Compte",
     "accountAllocation": "Répartition par compte",
     "accountAmountLabel": "Montant pour {{account}}",
@@ -258,6 +266,7 @@
     "noQuoteShort": "Prix requis",
     "outsideRangeImpact": "{{before}} → {{after}} catégories hors plage",
     "overAllocatedBy": "{{amount}} de plus que l'ajustement",
+    "indicativePreview": "Impact estimé : répartition entre comptes incomplète",
     "portfolioImpact": "Impact sur le portefeuille",
     "position": "Position",
     "positionErrorGeneric": "L'aperçu n'a pas pu être calculé",
@@ -384,10 +393,9 @@
     "removeOneUnitIn": "Retirer une part dans {{account}}",
     "accountTotal": "Total",
     "exportNote": "Note",
-    "setupScope_one": "Cible mesurée sur {{count}} compte",
-    "setupScope_many": "Cible mesurée sur {{count}} comptes",
-    "setupScope_other": "Cible mesurée sur {{count}} comptes",
-    "planningCurrency": "Devise de planification {{currency}}",
+    "setupScope_one": "Sur {{count}} compte",
+    "setupScope_many": "Sur l’ensemble des {{count}} comptes",
+    "setupScope_other": "Sur l’ensemble des {{count}} comptes",
     "summaryLabel": "Résumé",
     "blockedTitle": "Avant de calculer",
     "selectedAccountCount": "{{selected}} sur {{total}} sélectionnés",

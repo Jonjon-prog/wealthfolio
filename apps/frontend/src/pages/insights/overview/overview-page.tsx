@@ -38,7 +38,7 @@ import { PortfolioComposition } from "@/pages/holdings/components/composition-ch
 import { DrillableAccountChart } from "@/pages/holdings/components/drillable-account-chart";
 import { DrillableDonutChart } from "@/pages/holdings/components/drillable-donut-chart";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useEffectOnChange } from "@/hooks/use-effect-on-change";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useTranslation } from "react-i18next";
 import { computeValueStrip, valueStripFromCurrentSummary } from "./allocation-derivations";
 import { PortfolioExplorer } from "./portfolio-explorer";
@@ -55,6 +55,8 @@ interface OverviewPageProps {
 
 type WorkspaceView = "current" | "details" | "targets" | "worksheet";
 type TargetEditorMode = "create" | "edit";
+
+const SELECTED_TARGETS_STORAGE_KEY = "insights-selected-targets";
 
 export function OverviewPage({
   filter: filterProp,
@@ -83,26 +85,36 @@ export function OverviewPage({
   const { data: portfolios = [] } = usePortfolios();
   const { targets, isLoading: targetsLoading } = useAllocationTargets();
 
-  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [selectedTargetIds, setSelectedTargetIds] = usePersistentState<Record<string, string>>(
+    SELECTED_TARGETS_STORAGE_KEY,
+    {},
+  );
+  const storedTargetId = selectedTargetIds?.[selectedAccountScopeKey];
+  const selectedTargetId = typeof storedTargetId === "string" ? storedTargetId : null;
+  const setSelectedTargetId = useCallback(
+    (targetId: string, scopeKey = selectedAccountScopeKey) => {
+      setSelectedTargetIds((current) => ({
+        ...(current && typeof current === "object" && !Array.isArray(current) ? current : {}),
+        [scopeKey]: targetId,
+      }));
+    },
+    [selectedAccountScopeKey, setSelectedTargetIds],
+  );
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("current");
   const [targetEditorMode, setTargetEditorMode] = useState<TargetEditorMode>("edit");
   const [targetEditorDirty, setTargetEditorDirty] = useState(false);
   const [pendingWorkspaceView, setPendingWorkspaceView] = useState<WorkspaceView | null>(null);
   const [pendingTargetId, setPendingTargetId] = useState<string | null>(null);
 
-  // Another account scope has other targets; showing the page again keeps the pick.
-  useEffectOnChange(() => {
-    setSelectedTargetId(null);
-  }, [selectedAccountScopeKey]);
-
   const scopedTargets = useMemo(
     () => filterTargetsByScope(targets, accountFilter),
     [targets, accountFilter],
   );
-  const scopedLiveTargets = useMemo(
-    () => scopedTargets.filter((p) => !p.archivedAt),
-    [scopedTargets],
-  );
+  const scopedLiveTargets = useMemo(() => {
+    const live = scopedTargets.filter((target) => !target.archivedAt);
+    const selected = live.find((target) => target.id === selectedTargetId);
+    return selected ? [selected, ...live.filter((target) => target.id !== selected.id)] : live;
+  }, [scopedTargets, selectedTargetId]);
   const isCreatingTarget = workspaceView === "targets" && targetEditorMode === "create";
   const effectiveTargetId =
     !isCreatingTarget &&
@@ -200,7 +212,7 @@ export function OverviewPage({
       setTargetEditorMode("edit");
       setSelectedTargetId(targetId);
     },
-    [targetEditorDirty],
+    [targetEditorDirty, setSelectedTargetId],
   );
 
   function backTo(view: WorkspaceView) {
@@ -247,7 +259,10 @@ export function OverviewPage({
     }
     setTargetEditorDirty(false);
     setTargetEditorMode("edit");
-    setSelectedTargetId(target.id);
+    setSelectedTargetId(
+      target.id,
+      savedScope ? accountScopeKey(savedScope) : selectedAccountScopeKey,
+    );
     setWorkspaceView("details");
   }
 
@@ -339,8 +354,8 @@ export function OverviewPage({
 
   if (workspaceView === "worksheet") {
     return (
-      <div>
-        <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <AllocationWorksheetTab
+        backAction={
           <Button
             variant="ghost"
             size="sm"
@@ -350,19 +365,18 @@ export function OverviewPage({
             <Icons.ArrowLeft className="me-1.5 h-4 w-4 rtl:rotate-180" />
             {t("insights:insights.back_to_overview")}
           </Button>
-          <span className="bg-border hidden h-5 w-px sm:block" />
+        }
+        heading={
           <h2 className="text-foreground min-w-0 text-base font-semibold">
             {t("allocation:worksheet.title")}
           </h2>
-        </div>
-        <AllocationWorksheetTab
-          profile={effectiveTarget ?? null}
-          driftReport={driftReport ?? null}
-          accountScope={accountFilter}
-          sourceVersion={worksheetSourceVersion}
-          isSourceLoading={holdingsLoading || driftLoading || !driftReport}
-        />
-      </div>
+        }
+        profile={effectiveTarget ?? null}
+        driftReport={driftReport ?? null}
+        accountScope={accountFilter}
+        sourceVersion={worksheetSourceVersion}
+        isSourceLoading={holdingsLoading || driftLoading || !driftReport}
+      />
     );
   }
 

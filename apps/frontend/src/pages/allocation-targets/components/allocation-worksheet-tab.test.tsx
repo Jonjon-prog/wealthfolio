@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
+import { chartSliceColor } from "@wealthfolio/ui";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,12 +10,14 @@ import type {
   Account,
   AllocationTarget,
   AllocationTargetConstraint,
+  AllocationWorksheetLineInput,
   AllocationWorksheetResult,
   CalculatedAdjustments,
   DriftReport,
   Holding,
 } from "@/lib/types";
 import { cleanup, render, screen, waitFor, within } from "@/test/render";
+import type { AllocationWorksheetRequest } from "../hooks/use-allocation-worksheet";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
 
@@ -29,7 +32,7 @@ const {
   constraintsRef,
 } = vi.hoisted(() => ({
   generateMock: vi.fn(),
-  previewMock: vi.fn(),
+  previewMock: vi.fn<(request: AllocationWorksheetRequest) => Promise<AllocationWorksheetResult>>(),
   saveFileMock: vi.fn(() => Promise.resolve(true)),
   // Called once per render of the worksheet, which is how the tests count them.
   useAccountsMock: vi.fn(),
@@ -375,7 +378,13 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     const input = screen.getByLabelText("Adjustment for VTI");
     await user.clear(input);
     await user.type(input, "5");
-    await user.click(screen.getByRole("button", { name: /Reset to calculated adjustments/ }));
+    expect(
+      screen.queryByRole("menuitem", { name: /Reset to calculated adjustments/ }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Actions$/ }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Reset to calculated adjustments/ }),
+    );
 
     expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("1200.00");
     expect(generateMock).toHaveBeenCalledTimes(1);
@@ -397,7 +406,8 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     const user = await renderWorksheet();
 
     await calculateFromTarget(user);
-    // The notes read as one paragraph.
+    expect(screen.getByText(coverage, { exact: false })).not.toBeVisible();
+    await user.click(screen.getByText("Calculation details", { exact: true }));
     expect(screen.getByText(coverage, { exact: false })).toBeInTheDocument();
     expect(
       screen.getByText("Less than one whole unit, so nothing was placed on: VXUS.", {
@@ -416,6 +426,44 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
     );
     await user.click(screen.getByRole("button", { name: "Copy for spreadsheet" }));
     expect(await navigator.clipboard.readText()).toContain(coverage);
+  });
+
+  it("keeps unplaced amounts visible while calculation notes are folded below positions", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      remainingCash: 50,
+      belowOneUnit: [{ assetId: "btc", symbol: "BTC", amount: 50 }],
+      unresolved: [
+        {
+          categoryId: "bond",
+          categoryName: "Fixed Income",
+          amount: 200,
+          reason: "no_recorded_security",
+        },
+      ],
+    });
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    const notice = screen.getByRole("note", { name: "Unresolved amounts" });
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent("Fixed Income");
+    expect(notice).toHaveTextContent("+$200.00");
+    expect(notice).toHaveTextContent("no security recorded in this category");
+    const details = document.querySelector("[data-calculation-details]")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(
+      screen.getByText(/Less than one whole unit, so nothing was placed on: BTC/),
+    ).not.toBeVisible();
+    expect(
+      screen.getByLabelText("Adjustment for VTI").compareDocumentPosition(details) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await user.click(screen.getByText("Calculation details", { exact: true }));
+    expect(
+      screen.getByText(/Less than one whole unit, so nothing was placed on: BTC/),
+    ).toBeVisible();
+    expect(screen.getByText(/cash is left over and not redistributed/)).toBeVisible();
+    expect(generateMock).toHaveBeenCalledTimes(1);
   });
 
   it("rounds the units in Review as Adjust positions does", async () => {
@@ -662,6 +710,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
   });
 
   afterEach(() => {
+    holdingsRef.current = null;
     vi.unstubAllGlobals();
   });
 
@@ -684,9 +733,213 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(within(allocation).getByText("$1,200.00 remaining")).toBeInTheDocument();
     expect(within(allocation).getByLabelText("Amount for Brokerage")).toHaveValue("");
     expect(within(allocation).getByLabelText("Amount for Retirement")).toHaveValue("");
-    // Wait past the preview debounce, or the check below cannot fail.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(previewMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(previewMock.mock.lastCall?.[0].lines).toEqual([
+        expect.objectContaining({ assetId: "vti", value: 1200 }),
+      ]),
+    );
+    expect(previewMock.mock.lastCall?.[0].lines[0].accountId).toBeUndefined();
+  });
+
+  it("updates portfolio impact from totals while another position still needs accounts", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const vti1 = holdingsFor("acc-1");
+    const vti2 = holdingsFor("acc-2");
+    holdingsRef.current = {
+      "acc-1": [
+        ...vti1,
+        {
+          ...vti1[0],
+          id: "acc-1-vxus",
+          instrument: { ...vti1[0].instrument!, id: "vxus", symbol: "VXUS" },
+        },
+      ],
+      "acc-2": vti2,
+    };
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [
+        ...calculated.adjustments,
+        {
+          ...calculated.adjustments[0],
+          lineId: "calc:vxus:acc-1",
+          assetId: "vxus",
+          symbol: "VXUS",
+          accountId: "acc-1",
+          amount: 500,
+        },
+      ],
+    });
+    previewMock.mockImplementation((request) =>
+      Promise.resolve({
+        ...previewResult,
+        lines: request.lines.map((line: AllocationWorksheetLineInput) =>
+          previewLine({
+            lineId: line.lineId,
+            assetId: line.assetId,
+            direction: line.direction,
+            accountId: line.accountId ?? null,
+            inputValue: line.value,
+            estimatedAmount: line.value,
+          }),
+        ),
+        categories: [
+          {
+            categoryId: "equity",
+            categoryName: "Equity",
+            color: "#123456",
+            targetBps: 7500,
+            currentValue: 6000,
+            projectedValue: 7000,
+            currentBps: 6000,
+            projectedBps: 7000,
+            currentDifferenceBps: -1500,
+            projectedDifferenceBps: -500,
+            isCash: false,
+            isUnclassified: false,
+          },
+        ],
+      }),
+    );
+    const user = await renderWorksheet();
+    await calculateFromTarget(user);
+    await user.clear(screen.getByLabelText("Adjustment for VXUS"));
+    await user.type(screen.getByLabelText("Adjustment for VXUS"), "700");
+    await waitFor(() =>
+      expect(previewMock.mock.lastCall?.[0].lines).toEqual([
+        expect.objectContaining({ assetId: "vti", value: 1200 }),
+        expect.objectContaining({ assetId: "vxus", value: 700 }),
+      ]),
+    );
+    expect(
+      previewMock.mock.lastCall?.[0].lines.every(
+        (line: { accountId?: string }) => line.accountId === undefined,
+      ),
+    ).toBe(true);
+    expect(screen.getByText("Estimated impact: account allocation incomplete")).toBeInTheDocument();
+    const rail = document.querySelector('[data-impact-class="equity"]')!;
+    expect(rail).toHaveTextContent("60.0 → 70.0 / 75.0");
+    expect(rail.querySelector<HTMLElement>("[data-current-marker]")!.style.left).not.toBe(
+      rail.querySelector<HTMLElement>("[data-projected-marker]")!.style.left,
+    );
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    await goTo(user, "Review");
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+  });
+
+  it("keeps a full-sale quantity while previewing an unplaced increase", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    const held = holdingsFor("acc-1")[0];
+    holdingsRef.current = {
+      "acc-1": [
+        held,
+        {
+          ...held,
+          id: "acc-1-vxus",
+          quantity: 30,
+          instrument: { ...held.instrument!, id: "vxus", symbol: "VXUS" },
+          marketValue: { local: 3000, base: 3000 },
+        },
+      ],
+      "acc-2": holdingsFor("acc-2"),
+    };
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [
+        ...calculated.adjustments,
+        {
+          ...calculated.adjustments[0],
+          lineId: "calc:vxus:acc-1",
+          assetId: "vxus",
+          symbol: "VXUS",
+          accountId: "acc-1",
+          amount: -3000,
+        },
+      ],
+    });
+    previewMock.mockImplementation((request) => {
+      const sale = request.lines.find((line) => line.assetId === "vxus");
+      // The recorded valuation is $100/unit, while core now resolves $99.
+      if (sale?.inputMode === "amount" && sale.value / 99 > 30) {
+        return Promise.reject(
+          new Error(
+            `Worksheet line ${sale.lineId}: reduction exceeds the 30 units currently held in this account`,
+          ),
+        );
+      }
+      const increase = request.lines.find((line) => line.assetId === "vti");
+      return Promise.resolve({
+        ...previewResult,
+        categories: [
+          {
+            categoryId: "equity",
+            categoryName: "Equity",
+            color: "#123456",
+            currentValue: 6000,
+            projectedValue: 6000 + (increase?.value ?? 0),
+            currentBps: 6000,
+            projectedBps: 6000 + (increase?.value ?? 0),
+            targetBps: 7500,
+            currentDifferenceBps: -1500,
+            projectedDifferenceBps: -300,
+            isCash: false,
+            isUnclassified: false,
+          },
+        ],
+      });
+    });
+    const user = await renderWorksheet();
+    await user.click(screen.getByRole("checkbox", { name: "Rebalance" }));
+    await calculateFromTarget(user);
+    const increase = screen.getByLabelText("Adjustment for VTI");
+    await user.clear(increase);
+    await user.type(increase, "1400");
+    await waitFor(() =>
+      expect(previewMock.mock.lastCall?.[0].lines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ assetId: "vti", inputMode: "amount", value: 1400 }),
+          expect.objectContaining({ assetId: "vxus", inputMode: "quantity", value: 30 }),
+        ]),
+      ),
+    );
+    await waitFor(() =>
+      expect(document.querySelector('[data-impact-class="equity"]')).toHaveTextContent(
+        "60.0 → 74.0 / 75.0",
+      ),
+    );
+    expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps currency precision on focus without changing the stored calculation", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1"];
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1", amount: 1200.123456 }],
+    });
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next: Adjust positions" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Next: Adjust positions" }));
+    const total = await screen.findByLabelText("Adjustment for VTI");
+    expect(total).toHaveValue("1200.12");
+    await waitFor(() => expect(previewMock.mock.lastCall?.[0].lines[0]?.value).toBe(1200.123456));
+    await user.click(total);
+    expect(total).toHaveValue("1200.12");
+    await user.tab();
+    await user.click(screen.getByRole("button", { name: "Brokerage", expanded: false }));
+    const accountAmount = screen.getByLabelText("Amount for Brokerage");
+    await user.click(accountAmount);
+    expect(accountAmount).toHaveValue("1200.12");
+    await user.tab();
+    expect(previewMock.mock.lastCall?.[0].lines[0]?.value).toBe(1200.123456);
+    await user.clear(total);
+    await user.type(total, "1300.25");
+    await waitFor(() => expect(previewMock.mock.lastCall?.[0].lines[0]?.value).toBe(1300.25));
+    expect(generateMock).toHaveBeenCalledTimes(1);
   });
 
   it("states what each account can fund while the change waits to be placed", async () => {
@@ -695,7 +948,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const user = await renderWorksheet();
     await calculateFromTarget(user);
 
-    // The change blocks the preview, yet each account's cash is known from Setup.
+    // The change is indicative, and each account's cash is known from Setup.
     await user.click(screen.getByRole("button", { name: "Choose accounts" }));
     const allocation = screen
       .getByText("Account allocation")
@@ -799,6 +1052,67 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     expect(screen.getByRole("button", { name: "Choose accounts" })).toBeInTheDocument();
   });
 
+  it.each([
+    { requested: "200", amounts: ["100"], status: "$100.00 left to allocate" },
+    { requested: "50", amounts: ["1"], status: "Choose accounts" },
+    { requested: "100", amounts: ["50", "50"], status: "Choose accounts" },
+    { requested: "200", amounts: ["150", "50"], status: "$100.00 left to allocate" },
+    { requested: "20000", amounts: ["19900"], status: "$100.00 left to allocate" },
+  ])(
+    "blocks whole-share export for $requested placed as $amounts",
+    async ({ requested, amounts, status }) => {
+      accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+      heldAccountIds.current = ["acc-1", "acc-2"];
+      const user = await renderWorksheet(driftReport, { ...profile, wholeSharesOnly: true });
+      await calculateFromTarget(user);
+      const total = screen.getByLabelText("Adjustment for VTI");
+      await user.clear(total);
+      await user.type(total, requested);
+      await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+      const allocation = screen
+        .getByText("Account allocation")
+        .closest<HTMLElement>("[data-account-allocation]")!;
+      for (const [index, amount] of amounts.entries()) {
+        await user.type(
+          within(allocation).getByLabelText(
+            `Amount for ${index === 0 ? "Brokerage" : "Retirement"}`,
+          ),
+          amount,
+        );
+      }
+      expect(screen.getByRole("button", { name: status })).toBeInTheDocument();
+      expect(
+        screen.getByText("Estimated impact: account allocation incomplete"),
+      ).toBeInTheDocument();
+      await goTo(user, "Review");
+      expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    },
+  );
+
+  it.each(["300", "350"])(
+    "accepts a whole-share split covering the units in $%s",
+    async (requested) => {
+      accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+      heldAccountIds.current = ["acc-1", "acc-2"];
+      const user = await renderWorksheet(driftReport, { ...profile, wholeSharesOnly: true });
+      await calculateFromTarget(user);
+      const total = screen.getByLabelText("Adjustment for VTI");
+      await user.clear(total);
+      await user.type(total, requested);
+      await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+      const allocation = screen
+        .getByText("Account allocation")
+        .closest<HTMLElement>("[data-account-allocation]")!;
+      await user.type(within(allocation).getByLabelText("Amount for Brokerage"), "100");
+      await user.type(within(allocation).getByLabelText("Amount for Retirement"), "200");
+      expect(
+        screen.queryByRole("button", { name: /left to allocate|Choose accounts/ }),
+      ).not.toBeInTheDocument();
+      await goTo(user, "Review");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+    },
+  );
+
   it("lets the adjustment follow what the accounts hold, in one click", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
     heldAccountIds.current = ["acc-1", "acc-2"];
@@ -878,9 +1192,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     const user = await renderWorksheet();
     await calculateFromTarget(user);
     const previewedValues = () =>
-      previewMock.mock.calls
-        .at(-1)?.[0]
-        .lines.map((line: { accountId: string; value: number }) => [line.accountId, line.value]);
+      previewMock.mock.calls.at(-1)?.[0].lines.map((line) => [line.accountId, line.value]);
 
     // Typed: the preview gets the new total, not the calculated one.
     const total = screen.getByLabelText("Adjustment for VTI");
@@ -1111,12 +1423,13 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await waitFor(() => expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("-500.00"));
 
     // Only Brokerage records VTI, so the reduction comes from there: a fact the
-    // row states, with no allocation to open.
+    // row states; its details remain available.
     const vti = document.querySelector<HTMLElement>('[data-amounts-row="vti"]')!;
     expect(within(vti).getByText("Brokerage")).toBeInTheDocument();
-    expect(
-      within(vti).queryByRole("button", { name: "Edit account allocation" }),
-    ).not.toBeInTheDocument();
+    expect(within(vti).getByRole("button", { name: "Details for VTI" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("opens the account allocation from anywhere on the row, and closes it the same way", async () => {
@@ -1126,7 +1439,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await calculateFromTarget(user);
     const vti = document.querySelector<HTMLElement>('[data-amounts-row="vti"]')!;
 
-    await user.click(within(vti).getByText("Total market"));
+    await user.click(within(vti).getByText("VTI", { exact: true }));
     expect(within(vti).getByText("Account allocation")).toBeInTheDocument();
     // The open row is the selected one, so its classes stay lit.
     expect(vti).toHaveAttribute("aria-current", "true");
@@ -1135,7 +1448,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     await user.click(within(vti).getByText("Account allocation"));
     expect(within(vti).getByText("Account allocation")).toBeInTheDocument();
 
-    await user.click(within(vti).getByText("Total market"));
+    await user.click(within(vti).getByText("VTI", { exact: true }));
     expect(within(vti).queryByText("Account allocation")).not.toBeInTheDocument();
     expect(vti).not.toHaveAttribute("aria-current");
   });
@@ -1161,7 +1474,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
     // The status reports the warning, so it no longer names the account.
     expect(await screen.findByText("1 warning", {}, { timeout: 2000 })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit account allocation" }));
+    await user.click(screen.getByRole("button", { name: "Details for VTI" }));
 
     const allocation = screen
       .getByText("Account allocation")
@@ -1206,8 +1519,8 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
 
     await goTo(user, "Review");
 
-    const brokerage = await waitFor(
-      () => document.querySelector<HTMLElement>('[data-review-account="acc-1"]')!,
+    const brokerage = await waitFor(() =>
+      document.querySelector<HTMLElement>('[data-review-account="acc-1"]')!,
     );
     expect(brokerage).toHaveTextContent("Brokerage · 1 entry");
     // The account's figures close its group, like a sum under its lines.
@@ -1383,7 +1696,7 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
     // Held nowhere and not sized yet: it still stays in view to be sized.
     await user.type(await screen.findByLabelText("Adjustment for VXUS"), "500");
     const added = document.querySelector<HTMLElement>('[data-amounts-row="vxus"]')!;
-    await user.click(within(added).getByRole("button", { name: "Edit account allocation" }));
+    await user.click(within(added).getByRole("button", { name: "Details for VXUS" }));
 
     // No account holds it, so every account is offered at once.
     const allocation = within(added)
@@ -1800,9 +2113,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     // VTI has a change; IAU has none but is how the Gold amount gets resolved.
     expect(rowOrder()).toEqual(["vti", "iau"]);
     expect(collapsedLine()).toHaveTextContent("2 securities with no adjustment");
-    expect(railClass("gold")).toHaveTextContent(
-      "+$50.00 unresolved: no eligible security selected",
-    );
+    expect(railClass("gold")).toHaveTextContent("+$50.00 unresolved");
   });
 
   it("puts each step's one way forward under the impact summary", async () => {
@@ -1881,9 +2192,7 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     await user.hover(row("vti"));
     await waitFor(() => expect(railClass("us")).toHaveTextContent("VTI:"));
     expect(detailLines()).toEqual(resting);
-    expect(railClass("gold")).toHaveTextContent(
-      "+$50.00 unresolved: no eligible security selected",
-    );
+    expect(railClass("gold")).toHaveTextContent("+$50.00 unresolved");
 
     await user.unhover(row("vti"));
     expect(detailLines()).toEqual(resting);
@@ -1915,10 +2224,16 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     expect(railClass("gold")).toHaveAttribute("data-emphasis", "none");
   });
 
-  it("steps a row one unit at a time, with the price in view", async () => {
+  it("opens price and unit details for a single-account position, without changing its amount", async () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Adjust positions");
     // BND: 10 units recorded at 300, so 30 a unit.
+    expect(row("bnd")).not.toHaveTextContent("$30.00 per unit");
+    const details = within(row("bnd")).getByRole("button", { name: "Details for BND" });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await user.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Adjustment for BND")).toHaveValue("");
     expect(row("bnd")).toHaveTextContent("$30.00 per unit");
 
     await user.click(within(row("bnd")).getByRole("button", { name: "Add one unit of BND" }));
@@ -1964,13 +2279,92 @@ describe("AllocationWorksheetTab Amounts panel", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    [0, "All categories within target range"],
+    [1, "1 category still outside target"],
+    [2, "2 categories still outside target"],
+  ] as const)(
+    "summarizes %s categories outside range without extra metrics",
+    async (count, headline) => {
+      previewMock.mockResolvedValue({
+        ...preview,
+        categories: preview.categories.map((category, index) => ({
+          ...category,
+          projectedBps: category.targetBps + (index < count ? 1000 : 0),
+          projectedDifferenceBps: index < count ? 1000 : 0,
+        })),
+      });
+      const user = await renderWorksheet(report);
+      await goTo(user, "Adjust positions");
+      await waitFor(() =>
+        expect(document.querySelector("[data-impact-summary]")).toHaveTextContent(headline),
+      );
+      const rail = document.querySelector<HTMLElement>("[data-impact-rail]")!;
+      expect(rail).not.toHaveTextContent("Largest difference");
+      expect(within(rail).queryByText(/ adjusted$/)).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows net change only for the active category and preserves its detail line", async () => {
+    previewMock.mockResolvedValue({
+      ...preview,
+      categories: preview.categories.map((category) => ({
+        ...category,
+        projectedValue: category.currentValue + 200,
+      })),
+    });
+    const user = await renderWorksheet(report);
+    await goTo(user, "Adjust positions");
+    await waitFor(() => expect(previewMock).toHaveBeenCalled());
+    expect(screen.queryByText("Net change")).not.toBeInTheDocument();
+    const detail = railClass("us").querySelector("[data-class-detail]");
+    await user.hover(railClass("us"));
+    expect(within(railClass("us")).getByText("Net change")).toBeInTheDocument();
+    expect(railClass("us")).toHaveTextContent("+$200.00");
+    expect(railClass("bond")).not.toHaveTextContent("Net change");
+    expect(railClass("us").querySelector("[data-class-detail]")).toBe(detail);
+    await user.unhover(railClass("us"));
+    expect(screen.queryByText("Net change")).not.toBeInTheDocument();
+    await user.click(railClass("us"));
+    await user.unhover(railClass("us"));
+    expect(railClass("us")).toHaveTextContent("Net change");
+  });
+
+  it("shows the total adjusted in Review", async () => {
+    previewMock.mockResolvedValue({ ...preview, increaseTotal: 200, reductionTotal: 100 });
+    const user = await renderWorksheet(report);
+    await goTo(user, "Adjust positions");
+    expect(screen.queryByText("$300.00 adjusted")).not.toBeInTheDocument();
+    await goTo(user, "Review");
+    expect(await screen.findByText("$300.00 adjusted")).toBeInTheDocument();
+  });
+
+  it("links the short unresolved notice back to the full explanation above positions", async () => {
+    generateMock.mockResolvedValue({
+      ...calculated,
+      adjustments: [{ ...calculated.adjustments[0], accountId: "acc-1" }],
+      unresolved: [
+        { categoryId: "gold", categoryName: "Gold", amount: 50, reason: "no_eligible_security" },
+      ],
+    });
+    const user = await renderWorksheet(report);
+    await calculateFromTarget(user);
+    expect(railClass("gold")).toHaveTextContent("+$50.00 unresolved");
+    expect(railClass("gold")).not.toHaveTextContent("no eligible security selected");
+    await goTo(user, "Review");
+    await user.click(screen.getByRole("button", { name: "View unplaced amounts" }));
+    expect(screen.getByLabelText("Adjustment for VTI")).toBeVisible();
+    expect(screen.getByRole("note", { name: "Unresolved amounts" })).toHaveTextContent(
+      "no eligible security selected",
+    );
+  });
+
   it("names the marks on the class tracks", async () => {
     const user = await renderWorksheet(report);
     await goTo(user, "Adjust positions");
 
     const legend = document.querySelector<HTMLElement>("[data-track-legend]")!;
-    expect(legend).toHaveTextContent("Current → Projected");
-    expect(legend).toHaveTextContent("Target");
+    expect(legend).toHaveTextContent("Current → Projected / Target");
     // The range no longer moves the calculation, so it is not drawn.
     expect(legend).not.toHaveTextContent("Range");
   });
@@ -2164,6 +2558,25 @@ describe("AllocationWorksheetTab Setup", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps the gap measured across all accounts when only some are selected", async () => {
+    accountsRef.current = [
+      account("acc-1", "Brokerage"),
+      account("acc-2", "Retirement"),
+      account("acc-3", "Joint"),
+    ];
+    const user = await renderWorksheet(report);
+    expect(screen.getByText("Across all 3 accounts")).toBeVisible();
+    const header = document.querySelector("[data-worksheet-header]")!;
+    expect(header).not.toHaveTextContent("Target measured");
+    expect(header).not.toHaveTextContent("Planning currency");
+    expect(header).not.toHaveTextContent("Across all");
+    await user.click(screen.getByRole("checkbox", { name: /^Retirement\b/ }));
+    expect(screen.getByText("2 of 3 selected")).toBeVisible();
+    expect(screen.getByText("Across all 3 accounts")).toBeVisible();
+    await goTo(user, "Adjust positions");
+    expect(screen.queryByText("Across all 3 accounts")).not.toBeInTheDocument();
+  });
+
   it("moves an account taken out of the worksheet below the ones in it", async () => {
     accountsRef.current = [
       account("acc-1", "Brokerage"),
@@ -2194,9 +2607,9 @@ describe("AllocationWorksheetTab Setup", () => {
     expect(gapNote("bond")).toHaveTextContent(/30\.0%\s*→\s*40\.0%/);
     expect(gapNote("bond")).toHaveTextContent("+$300");
     expect(gapNote("us")).toHaveTextContent("−$300");
-    // Coloured as on the allocation page: equity forest, then the palette's next.
+    // Matches the allocation page's palette order, including theme changes.
     expect(gapNote("us").querySelector("span[style]")).toHaveStyle({
-      backgroundColor: "rgb(53, 92, 76)",
+      background: chartSliceColor(0),
     });
     // Adding comes first, then reducing.
     expect(

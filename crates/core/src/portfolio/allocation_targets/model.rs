@@ -606,7 +606,8 @@ pub struct AllocationWorksheetLineInput {
     pub line_id: String,
     pub direction: WorksheetDirection,
     pub asset_id: String,
-    pub account_id: String,
+    /// None previews the position before the user places it in an account.
+    pub account_id: Option<String>,
     pub input_mode: WorksheetInputMode,
     pub value: Decimal,
 }
@@ -724,7 +725,7 @@ pub struct AllocationWorksheetLineResult {
     pub line_id: String,
     pub direction: WorksheetDirection,
     pub asset_id: String,
-    pub account_id: String,
+    pub account_id: Option<String>,
     pub symbol: String,
     pub name: String,
     pub input_mode: WorksheetInputMode,

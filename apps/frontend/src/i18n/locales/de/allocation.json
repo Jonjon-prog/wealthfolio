@@ -49,7 +49,7 @@
     "noneOutsideRange": "Keine Kategorie liegt außerhalb ihres Zielbereichs.",
     "moreOutsideTarget_one": "{{count}} weitere außerhalb des Ziels",
     "moreOutsideTarget_other": "{{count}} weitere außerhalb des Ziels",
-    "openWorksheet": "Arbeitsblatt öffnen →"
+    "openWorksheet": "Rebalancing öffnen →"
   },
   "overview": {
     "allInsideTarget": "Alle {{categories}} innerhalb des Ziels",
@@ -187,6 +187,13 @@
     "allAccountsProtected": "Alle Konten sind geschützt"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "{{count}} Kategorie weiterhin außerhalb des Ziels",
+    "categoriesOutsideTarget_other": "{{count}} Kategorien weiterhin außerhalb des Ziels",
+    "withinTargetRange": "Alle Kategorien im Zielbereich",
+    "unresolvedAmountShort": "{{amount}} nicht zugeordnet",
+    "viewUnresolvedAmounts": "Nicht zugeordnete Beträge ansehen",
+    "calculationDetails": "Berechnungsdetails",
+    "positionDetails": "Details zu {{symbol}}",
     "account": "Konto",
     "accountAllocation": "Aufteilung nach Konto",
     "accountAmountLabel": "Betrag für {{account}}",
@@ -250,6 +257,7 @@
     "noQuoteShort": "Preis erforderlich",
     "outsideRangeImpact": "{{before}} → {{after}} Kategorien außerhalb des Bereichs",
     "overAllocatedBy": "{{amount}} mehr als die Anpassung",
+    "indicativePreview": "Geschätzte Auswirkung: Kontozuordnung unvollständig",
     "portfolioImpact": "Auswirkung auf das Portfolio",
     "position": "Position",
     "positionErrorGeneric": "Die Vorschau konnte nicht berechnet werden",
@@ -372,9 +380,8 @@
     "removeOneUnitIn": "Einen Anteil in {{account}} entfernen",
     "accountTotal": "Gesamt",
     "exportNote": "Hinweis",
-    "setupScope_one": "Ziel gemessen über {{count}} Konto",
-    "setupScope_other": "Ziel gemessen über {{count}} Konten",
-    "planningCurrency": "Planungswährung {{currency}}",
+    "setupScope_one": "Über {{count}} Konto",
+    "setupScope_other": "Über alle {{count}} Konten",
     "summaryLabel": "Übersicht",
     "blockedTitle": "Vor der Berechnung",
     "selectedAccountCount": "{{selected}} von {{total}} ausgewählt",

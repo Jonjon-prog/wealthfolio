@@ -123,8 +123,9 @@ export function displayUnits(units: number): number {
 
 export function unitsFor(amount: number, unitPrice: number, wholeUnits: boolean): number {
   const units = Math.abs(amount) / unitPrice;
-  // Tolerates the float residue of an amount that is an exact multiple.
-  return wholeUnits ? Math.floor(units + 1e-9) : units;
+  // Match core's resolved_quantity_and_amount: round to six decimal places
+  // before flooring so quote precision does not drop a whole unit.
+  return wholeUnits ? Math.floor(Math.round(units * 1e6) / 1e6) : units;
 }
 
 /**

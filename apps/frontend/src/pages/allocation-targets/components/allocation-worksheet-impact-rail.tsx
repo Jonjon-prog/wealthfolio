@@ -23,7 +23,6 @@ import {
   AMOUNT_EPSILON,
   formatSignedAmount,
   UNCLASSIFIED_CATEGORY_ID,
-  UNRESOLVED_REASON_KEYS,
   type ImpactClass,
   type PositionCategoryExposure,
 } from "./allocation-worksheet-utils";
@@ -44,6 +43,7 @@ interface ImpactRailProps {
   report: DriftReport;
   result: AllocationWorksheetResult | null;
   isStale: boolean;
+  isIndicative: boolean;
   classes: readonly ImpactClass[];
   rows: readonly ImpactRailRow[];
   unresolved: readonly UnresolvedAmount[];
@@ -96,6 +96,7 @@ export function ImpactRail({
   report,
   result,
   isStale,
+  isIndicative,
   classes,
   rows,
   unresolved,
@@ -117,8 +118,6 @@ export function ImpactRail({
   const outsideRangeCount = classes.filter(
     (item) => Math.abs(item.projectedDifferenceBps) > item.effectiveBandBps,
   ).length;
-  const largestDifference = result?.maxDifferenceBpsAfter ?? report.maxDriftBps;
-  const totalMoved = result ? result.increaseTotal + result.reductionTotal : 0;
 
   const rowById = new Map(rows.map((row) => [row.assetId, row]));
   const activeRow =
@@ -146,7 +145,7 @@ export function ImpactRail({
   const halfWindow = trackHalfWindowBps(classes);
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden" data-impact-rail>
       <CardContent className="p-0">
         {selectedLabel && (
           <div className="bg-background flex items-center justify-between gap-2 border-b px-5 py-2 text-xs sm:px-6">
@@ -172,7 +171,7 @@ export function ImpactRail({
           aria-busy={isCalculating}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-muted-foreground text-2xs font-mono uppercase tracking-[0.16em]">
+            <p className="text-muted-foreground text-2xs font-mono tracking-[0.16em] uppercase">
               {t("allocation:worksheet.portfolioImpact")}
             </p>
             {/* Updating is routine; an out-of-date preview is amber, as everywhere else. */}
@@ -192,32 +191,25 @@ export function ImpactRail({
             )}
           </div>
 
-          <p className="mt-4 font-mono text-xl font-semibold leading-tight">
-            {t("allocation:worksheet.outsideRangeImpact", {
-              before: report.outOfBandCount,
-              after: outsideRangeCount,
-            })}
+          {isIndicative && (
+            <p className="text-muted-foreground mt-2 text-xs" role="status">
+              {t("allocation:worksheet.indicativePreview")}
+            </p>
+          )}
+
+          <p className="mt-4 font-mono text-xl leading-tight font-semibold" data-impact-summary>
+            {outsideRangeCount === 0
+              ? t("allocation:worksheet.withinTargetRange")
+              : t("allocation:worksheet.categoriesOutsideTarget", { count: outsideRangeCount })}
           </p>
-          <div className="text-muted-foreground mt-2 space-y-1 font-mono text-xs">
-            {/* Pointing at a row never adds a line: what part of it has no
-                category takes this line's place, so the classes stay put. */}
-            {activeRow && unclassifiedBps > 0 ? (
-              <p className="text-warning-subtle-foreground truncate" title={unclassifiedNote}>
+          {/* Keep the tracks in place when a security needs a classification hint. */}
+          <div className="mt-2 h-4">
+            {activeRow && unclassifiedBps > 0 && (
+              <p
+                className="text-warning-subtle-foreground truncate font-mono text-xs"
+                title={unclassifiedNote}
+              >
                 {unclassifiedNote}
-              </p>
-            ) : (
-              <p>
-                {/* In %, like every other difference on the allocation pages. */}
-                {t("allocation:worksheet.largestDifference", {
-                  amount: `${(largestDifference / 100).toFixed(1)}%`,
-                })}
-              </p>
-            )}
-            {result && (
-              <p>
-                {t("allocation:worksheet.totalAdjusted", {
-                  amount: formatAmount(totalMoved, report.baseCurrency),
-                })}
               </p>
             )}
           </div>
@@ -237,13 +229,14 @@ export function ImpactRail({
           >
             <span className="inline-flex items-center gap-1">
               <span className="inline-flex items-center">
-                <span className="border-muted-foreground h-2 w-2 rounded-full border" />
+                <span className="border-muted-foreground h-3 w-3 rounded-full border-2" />
                 <span className="bg-muted-foreground h-px w-2.5" />
                 <span className="bg-muted-foreground h-2 w-2 rounded-full" />
               </span>
               {t("allocation:worksheet.legendCurrent")} →{" "}
               {t("allocation:worksheet.legendProjected")}
             </span>
+            <span aria-hidden="true">{" / "}</span>
             <span className="inline-flex items-center gap-1">
               <span className="bg-foreground h-3 w-0.5" />
               {t("allocation:worksheet.legendTarget")}
@@ -294,13 +287,12 @@ export function ImpactRail({
                 }
                 note={
                   unresolvedAmount
-                    ? t("allocation:worksheet.unresolvedInClass", {
+                    ? t("allocation:worksheet.unresolvedAmountShort", {
                         amount: formatSignedAmount(
                           unresolvedAmount.amount,
                           report.baseCurrency,
                           formatAmount,
                         ),
-                        reason: t(UNRESOLVED_REASON_KEYS[unresolvedAmount.reason]),
                       })
                     : undefined
                 }
@@ -335,7 +327,7 @@ export function ImpactRail({
           )}
           {/* What to fix is a line with its way there; the step's one primary
               action sits under this card. */}
-          {issueMessage && (
+          {(issueMessage || (unresolved.length > 0 && !calculationError)) && (
             <p className="text-warning-subtle-foreground flex items-start gap-2 text-xs leading-relaxed">
               <Icons.AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span>
@@ -346,13 +338,15 @@ export function ImpactRail({
                   onClick={onReviewIssue}
                   className="font-medium underline underline-offset-2 disabled:opacity-50"
                 >
-                  {t("allocation:worksheet.goToIssue")}
+                  {issueMessage
+                    ? t("allocation:worksheet.goToIssue")
+                    : t("allocation:worksheet.viewUnresolvedAmounts")}
                 </button>
               </span>
             </p>
           )}
 
-          {isCalculating && !issueMessage && (
+          {isCalculating && !issueMessage && unresolved.length === 0 && (
             <p className="text-muted-foreground flex items-center text-xs">
               <Icons.Spinner className="me-1.5 h-3.5 w-3.5 animate-spin" />
               {t("allocation:worksheet.updatingFromSources")}
@@ -470,10 +464,10 @@ function ImpactClassRow({
         </span>
       </span>
       <span className="relative mt-1.5 block h-3" aria-hidden>
-        <span className="bg-border/60 absolute end-0 start-0 top-[0.34375rem] h-px" />
+        <span className="bg-border/60 absolute start-0 end-0 top-[0.34375rem] h-px" />
         {/* The move, in the class's colour, so no legend is needed to read it. */}
         <span
-          className="top-1.25 absolute h-0.5"
+          className="absolute top-1.25 h-0.5"
           style={{
             left: `${Math.min(currentAt, projectedAt)}%`,
             width: `${Math.abs(projectedAt - currentAt)}%`,
@@ -483,20 +477,20 @@ function ImpactClassRow({
         {/* The one fixed mark in the column, taller than the dots. */}
         <span className="bg-foreground absolute -top-0.5 left-1/2 h-4 w-0.5 -translate-x-1/2" />
         <span
-          className="border-muted-foreground bg-background absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full border"
+          data-current-marker
+          className="border-muted-foreground bg-background absolute top-0 h-3 w-3 -translate-x-1/2 rounded-full border-2"
           style={{ left: `${currentAt}%` }}
         />
         {/* A plain dot in its class colour, which links it to the rows; the amber
             projected figure says when it stays outside its range. */}
         <span
-          className="absolute top-[2px] h-2 w-2 -translate-x-1/2 rounded-full"
+          data-projected-marker
+          className="absolute top-[0.1875rem] h-1.5 w-1.5 -translate-x-1/2 rounded-full"
           style={{ left: `${projectedAt}%`, background: item.color }}
         />
       </span>
-      {/* One line, always there, so pointing at a row never changes a class's
-          height and the column never shifts under the pointer: the pointed
-          row's share of the class, else what stays unresolved in it, else how
-          much it moves. */}
+      {/* Reserve the detail line so pointing never shifts the chart. Keep
+          unresolved amounts visible; other details follow the active item. */}
       <span
         data-class-detail
         title={shareText ?? note ?? undefined}
@@ -509,7 +503,7 @@ function ImpactClassRow({
           </>
         ) : note ? (
           <span className="text-warning-subtle-foreground truncate">{note}</span>
-        ) : netChange ? (
+        ) : netChange && (emphasis === "active" || isSelected) ? (
           <>
             <span className="text-muted-foreground truncate">
               {t("allocation:worksheet.classNetChange")}

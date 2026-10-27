@@ -155,6 +155,9 @@ export function worksheetExportRows(
   labels: WorksheetExportLabels,
 ): ExportCell[][] {
   const { result, calculated } = input;
+  if (result.lines.some((line) => !line.accountId)) {
+    throw new Error("Place every adjustment in an account before exporting the worksheet.");
+  }
   const currency = result.baseCurrency;
   const accountName = (accountId: string) =>
     input.accountNames.get(accountId) ?? labels.unknownAccount;
@@ -166,11 +169,15 @@ export function worksheetExportRows(
       input.describeWarning(warning),
     ]);
   }
-  const lines = [...result.lines].sort(
-    (left, right) =>
-      accountName(left.accountId).localeCompare(accountName(right.accountId)) ||
-      left.symbol.localeCompare(right.symbol),
-  );
+  const lines = result.lines
+    .filter(
+      (line): line is AllocationWorksheetLineResult & { accountId: string } => !!line.accountId,
+    )
+    .sort(
+      (left, right) =>
+        accountName(left.accountId).localeCompare(accountName(right.accountId)) ||
+        left.symbol.localeCompare(right.symbol),
+    );
 
   // Calculated or edited, when there is a calculation to compare with.
   const statusOf = (line: AllocationWorksheetLineResult) =>

@@ -140,6 +140,7 @@ export function WorksheetSetup(props: WorksheetSetupProps) {
         <CashToDeploy {...props} />
         <GapToTarget
           report={props.driftReport}
+          accountCount={props.accounts.length}
           currency={currency}
           mode={props.mode}
           reach={props.reach}
@@ -331,7 +332,7 @@ function AccountsLedger({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("allocation:worksheet.findAccount")}
               aria-label={t("allocation:worksheet.findAccount")}
-              className="border-input bg-background text-foreground focus-visible:ring-ring h-7 w-full rounded-md border pe-2 ps-7 text-xs font-normal outline-none focus-visible:ring-1"
+              className="border-input bg-background text-foreground focus-visible:ring-ring h-7 w-full rounded-md border ps-7 pe-2 text-xs font-normal outline-none focus-visible:ring-1"
             />
           </div>
         ) : (
@@ -739,11 +740,13 @@ function AmountField({
  */
 function GapToTarget({
   report,
+  accountCount,
   currency,
   mode,
   reach,
 }: {
   report: DriftReport;
+  accountCount: number;
   currency: string;
   mode: WorksheetMode;
   reach: ReadonlyMap<string, CategoryReach>;
@@ -831,6 +834,9 @@ function GapToTarget({
           </span>
         )}
       </div>
+      <p className="text-muted-foreground mt-1 text-xs" data-gap-scope>
+        {t("allocation:worksheet.setupScope", { count: accountCount })}
+      </p>
       <ul className="mt-3 space-y-3">
         {ordered.map((row) => (
           <GapRow

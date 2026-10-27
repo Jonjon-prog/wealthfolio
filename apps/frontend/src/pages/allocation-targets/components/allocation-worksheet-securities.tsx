@@ -316,13 +316,13 @@ export function SecuritiesCard({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("allocation:worksheet.securitiesSearch")}
               aria-label={t("allocation:worksheet.securitiesSearch")}
-              className="border-input bg-background focus-visible:ring-ring h-8 w-full rounded-md border pe-2.5 ps-8 text-sm outline-none focus-visible:ring-1"
+              className="border-input bg-background focus-visible:ring-ring h-8 w-full rounded-md border ps-8 pe-2.5 text-sm outline-none focus-visible:ring-1"
             />
           </div>
 
           {addables.length > 0 && (
             <div className="mx-4 mt-2 rounded-lg border">
-              <p className="text-muted-foreground text-2xs px-3 pt-2 font-medium uppercase tracking-wide">
+              <p className="text-muted-foreground text-2xs px-3 pt-2 font-medium tracking-wide uppercase">
                 {t("allocation:worksheet.securitiesNotHeld")}
               </p>
               {addables.map((asset) => (

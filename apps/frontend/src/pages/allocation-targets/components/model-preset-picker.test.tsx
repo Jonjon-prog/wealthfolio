@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CategoryAllocation } from "@/lib/types";
 import { render, screen } from "@/test/render";
 
+import { buildAllocationTargetColorMap } from "./allocation-target-colors";
 import { ModelPresetPicker } from "./model-preset-picker";
 
 function category(
@@ -14,15 +15,19 @@ function category(
 }
 
 function renderPicker() {
+  const categories = [
+    category("EQUITY", "Equity", 70),
+    category("FIXED_INCOME", "Fixed Income", 30),
+  ];
   render(
     <ModelPresetPicker
       taxonomyId="asset_classes"
       selected={null}
       onSelect={vi.fn()}
-      currentCategories={[
-        category("EQUITY", "Equity", 70),
-        category("FIXED_INCOME", "Fixed Income", 30),
-      ]}
+      currentCategories={categories}
+      colorByCategory={buildAllocationTargetColorMap(
+        categories.map((item) => ({ categoryId: item.categoryId, currentValue: item.value })),
+      )}
     />,
   );
   return screen.getAllByRole("button").map((button) => button.textContent ?? "");

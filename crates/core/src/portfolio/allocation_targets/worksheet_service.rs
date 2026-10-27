@@ -1196,13 +1196,23 @@ impl AllocationWorksheetService {
         Self::validate_cash(&input.cash, &account_ids)?;
 
         let mut line_ids = HashSet::new();
+        let indicative = input.lines.iter().any(|line| line.account_id.is_none());
+        if indicative && input.lines.iter().any(|line| line.account_id.is_some()) {
+            return Err(Self::invalid(
+                "Preview position totals without accounts, or place every line in an account",
+            ));
+        }
         for line in &input.lines {
             if line.line_id.trim().is_empty() || !line_ids.insert(line.line_id.as_str()) {
                 return Err(Self::invalid(
                     "Every worksheet line must have a unique lineId",
                 ));
             }
-            if !account_ids.contains(&line.account_id) {
+            if line
+                .account_id
+                .as_ref()
+                .is_some_and(|account_id| !account_ids.contains(account_id))
+            {
                 return Err(Self::line_invalid(
                     &line.line_id,
                     "the account is not one this worksheet may change",
@@ -1293,7 +1303,7 @@ impl AllocationWorksheetService {
 
         let min_line_amount = Self::min_line_amount(target);
         let mut results = Vec::with_capacity(input.lines.len());
-        let mut reduction_qty_by_position = HashMap::<(String, String), Decimal>::new();
+        let mut reduction_qty_by_position = HashMap::<(Option<String>, String), Decimal>::new();
         let mut used_fx_rates = HashMap::<String, ExchangeRate>::new();
 
         for line in &input.lines {
@@ -1306,9 +1316,13 @@ impl AllocationWorksheetService {
                     "selected asset is not an active tracked investment security",
                 ));
             }
-            if matches!(line.direction, WorksheetDirection::Increase) {
+            if let Some(account_id) = line
+                .account_id
+                .as_ref()
+                .filter(|_| matches!(line.direction, WorksheetDirection::Increase))
+            {
                 let holds = holdings_by_account
-                    .get(&line.account_id)
+                    .get(account_id)
                     .into_iter()
                     .flatten()
                     .any(|holding| {
@@ -1319,7 +1333,7 @@ impl AllocationWorksheetService {
                     .accounts
                     .iter()
                     .map(|source| &source.account)
-                    .find(|account| account.id == line.account_id);
+                    .find(|account| account.id == *account_id);
                 if !holds && account.is_some_and(|account| !Self::can_receive(account, asset)) {
                     return Err(Self::line_invalid(
                         &line.line_id,
@@ -1346,12 +1360,58 @@ impl AllocationWorksheetService {
                 .unwrap_or(&[]);
             let exposures =
                 Self::category_exposures(line, amount, line_assignments, &category_names)?;
+            let exposed_categories = exposures
+                .iter()
+                .map(|exposure| exposure.category_id.clone())
+                .collect::<Vec<_>>();
+
+            if indicative {
+                let can_place = sources.accounts.iter().any(|source| {
+                    let holds = source.holdings.iter().any(|holding| {
+                        holding.holding_type != HoldingType::Cash
+                            && Self::asset_key(holding) == line.asset_id
+                            && holding.quantity > Decimal::ZERO
+                    });
+                    let permitted = match line.direction {
+                        WorksheetDirection::Increase => {
+                            holds || Self::can_receive(&source.account, asset)
+                        }
+                        WorksheetDirection::Reduce => holds,
+                    };
+                    permitted
+                        && !Self::is_blocked(
+                            &sources.constraints,
+                            &line.direction,
+                            &line.asset_id,
+                            Some(&source.account.id),
+                            &exposed_categories,
+                        )
+                });
+                if !can_place {
+                    return Err(Self::line_invalid(
+                        &line.line_id,
+                        "no selected account permits this change",
+                    ));
+                }
+            }
 
             if matches!(line.direction, WorksheetDirection::Reduce) {
                 let owned = holdings_by_account
-                    .get(&line.account_id)
-                    .into_iter()
-                    .flatten()
+                    .iter()
+                    .filter(|(account_id, _)| {
+                        line.account_id
+                            .as_ref()
+                            .is_none_or(|selected| selected == *account_id)
+                            && (!indicative
+                                || !Self::is_blocked(
+                                    &sources.constraints,
+                                    &line.direction,
+                                    &line.asset_id,
+                                    Some(account_id),
+                                    &exposed_categories,
+                                ))
+                    })
+                    .flat_map(|(_, holdings)| holdings)
                     .filter(|holding| {
                         holding.holding_type != HoldingType::Cash
                             && Self::asset_key(holding) == line.asset_id
@@ -1371,16 +1431,12 @@ impl AllocationWorksheetService {
                 }
             }
 
-            let exposed_categories = exposures
-                .iter()
-                .map(|exposure| exposure.category_id.clone())
-                .collect::<Vec<_>>();
             for constraint in sources.constraints.iter().filter(|constraint| {
                 Self::constraint_matches(
                     constraint,
                     &line.direction,
                     &line.asset_id,
-                    Some(&line.account_id),
+                    line.account_id.as_deref(),
                     &exposed_categories,
                 )
             }) {
@@ -1571,7 +1627,7 @@ impl AllocationWorksheetService {
             .iter()
             .map(|line| AssignedLine {
                 asset_id: line.asset_id.clone(),
-                account_id: Some(line.account_id.clone()),
+                account_id: line.account_id.clone(),
                 amount: match line.direction {
                     WorksheetDirection::Increase => line.estimated_amount,
                     WorksheetDirection::Reduce => -line.estimated_amount,
@@ -1582,12 +1638,16 @@ impl AllocationWorksheetService {
                     && line.estimated_amount < min_line_amount,
             })
             .collect::<Vec<_>>();
-        let account_funding = account_funding(
-            &assigned,
-            &account_ids,
-            &cash_by_account,
-            &input.cash.external_contribution,
-        );
+        let account_funding = if indicative {
+            Vec::new()
+        } else {
+            account_funding(
+                &assigned,
+                &account_ids,
+                &cash_by_account,
+                &input.cash.external_contribution,
+            )
+        };
         for shortfall in account_funding
             .iter()
             .filter(|funding| falls_short(funding.remaining))
@@ -2730,10 +2790,7 @@ mod tests {
                 line_id: adjustment.line_id.clone(),
                 direction: adjustment.direction.clone(),
                 asset_id: adjustment.asset_id.clone(),
-                account_id: adjustment
-                    .account_id
-                    .clone()
-                    .expect("a single-account worksheet places every line"),
+                account_id: adjustment.account_id.clone(),
                 input_mode: WorksheetInputMode::Amount,
                 value: adjustment.amount.abs(),
             })
@@ -2779,6 +2836,89 @@ mod tests {
     }
 
     // ── Generation to preview ───────────────────────────────────────────────
+
+    #[test]
+    fn an_unplaced_position_projects_the_same_impact_without_assigning_funding() {
+        let portfolio = brokerage(7000, 3000, 0);
+        let mut increase = line(WorksheetInputMode::Amount, dec!(1000));
+        let placed = portfolio
+            .preview(tracked(dec!(1000)), vec![increase.clone()])
+            .unwrap();
+        increase.account_id = None;
+        let unplaced = portfolio
+            .preview(tracked(dec!(1000)), vec![increase])
+            .unwrap();
+
+        assert_eq!(projected_bps(&unplaced, "EQUITY"), 7000);
+        assert_eq!(
+            projected_bps(&unplaced, "EQUITY"),
+            projected_bps(&placed, "EQUITY")
+        );
+        assert_eq!(
+            projected_bps(&unplaced, "CASH"),
+            projected_bps(&placed, "CASH")
+        );
+        assert_eq!(unplaced.lines[0].unit_price, placed.lines[0].unit_price);
+        assert!(unplaced.lines[0].account_id.is_none());
+        assert!(unplaced.account_funding.is_empty());
+    }
+
+    #[test]
+    fn an_unplaced_position_keeps_funding_warnings_and_whole_unit_rounding() {
+        let portfolio = brokerage(7000, 3000, 0);
+        let mut target = portfolio.target();
+        target.whole_shares_only = true;
+        let mut increase = line(WorksheetInputMode::Amount, dec!(1250));
+        increase.account_id = None;
+        let result = AllocationWorksheetService::preview(
+            &CalculateAllocationWorksheetInput {
+                lines: vec![increase],
+                cash: tracked(dec!(1000)),
+                ..request()
+            },
+            &PreviewSources {
+                target,
+                drift: portfolio.drift(),
+                weights: portfolio.weights(),
+                taxonomy: portfolio.taxonomy(),
+                accounts: portfolio.accounts(),
+                constraints: vec![],
+                assets_by_id: portfolio.assets_by_id(),
+                quote_snapshots: portfolio.quotes(),
+                assignments: portfolio.assignments(),
+                fx_rates: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.lines[0].input_value, dec!(1250));
+        assert_eq!(result.lines[0].quantity, dec!(12));
+        assert_eq!(result.increase_total, dec!(1200));
+        assert!(has_warning(
+            &result,
+            WorksheetWarningKind::InsufficientFunding
+        ));
+        assert!(result.account_funding.is_empty());
+    }
+
+    #[test]
+    fn an_unplaced_reduction_cannot_exceed_selected_holdings_or_mix_with_account_lines() {
+        let portfolio = brokerage(7000, 3000, 0);
+        let mut reduction = line(WorksheetInputMode::Amount, dec!(7000));
+        reduction.direction = WorksheetDirection::Reduce;
+        reduction.account_id = None;
+        assert!(portfolio
+            .preview(tracked(dec!(0)), vec![reduction.clone()])
+            .is_err());
+        reduction.value = dec!(1000);
+        let result = portfolio
+            .preview(tracked(dec!(0)), vec![reduction.clone()])
+            .unwrap();
+        assert_eq!(projected_bps(&result, "EQUITY"), 5000);
+        let placed = line(WorksheetInputMode::Amount, dec!(100));
+        assert!(portfolio
+            .preview(tracked(dec!(0)), vec![reduction, placed])
+            .is_err());
+    }
 
     /// Commodities held through a security classified as Gold, two levels down:
     /// the drift report measures Commodities, and the preview has to as well.
@@ -2834,7 +2974,7 @@ mod tests {
                     line_id: "line-gold".to_string(),
                     direction: WorksheetDirection::Increase,
                     asset_id: "gold".to_string(),
-                    account_id: "acc-1".to_string(),
+                    account_id: Some("acc-1".to_string()),
                     input_mode: WorksheetInputMode::Amount,
                     value: dec!(1000),
                 }],
@@ -3110,7 +3250,7 @@ mod tests {
                     line_id: "vti-acc-2".to_string(),
                     direction: WorksheetDirection::Increase,
                     asset_id: "vti".to_string(),
-                    account_id: "acc-2".to_string(),
+                    account_id: Some("acc-2".to_string()),
                     input_mode: WorksheetInputMode::Amount,
                     value: dec!(800),
                 }],
@@ -3184,7 +3324,7 @@ mod tests {
                     line_id: "vti-acc-1".to_string(),
                     direction: WorksheetDirection::Increase,
                     asset_id: "vti".to_string(),
-                    account_id: "acc-1".to_string(),
+                    account_id: Some("acc-1".to_string()),
                     input_mode: WorksheetInputMode::Amount,
                     value: dec!(600),
                 }],
@@ -3539,7 +3679,7 @@ mod tests {
             line_id: format!("vti-{account_id}"),
             direction: WorksheetDirection::Increase,
             asset_id: "vti".to_string(),
-            account_id: account_id.to_string(),
+            account_id: Some(account_id.to_string()),
             input_mode: WorksheetInputMode::Amount,
             value: dec!(100),
         };
@@ -3660,7 +3800,7 @@ mod tests {
             line_id: "vti-acc-1".to_string(),
             direction: WorksheetDirection::Increase,
             asset_id: "vti".to_string(),
-            account_id: "acc-1".to_string(),
+            account_id: Some("acc-1".to_string()),
             input_mode: WorksheetInputMode::Amount,
             value,
         };
@@ -3802,7 +3942,7 @@ mod tests {
             line_id: "line-1".to_string(),
             direction: WorksheetDirection::Increase,
             asset_id: "vti".to_string(),
-            account_id: "acc-1".to_string(),
+            account_id: Some("acc-1".to_string()),
             input_mode: mode,
             value,
         }
