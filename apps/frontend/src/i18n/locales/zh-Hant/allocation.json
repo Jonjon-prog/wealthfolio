@@ -187,6 +187,7 @@
     "allAccountsProtected": "所有帳戶均受保護"
   },
   "worksheet": {
+    "categoriesOutsideTarget_one": "仍有 {{count}} 個類別偏離目標",
     "categoriesOutsideTarget_other": "仍有 {{count}} 個類別偏離目標",
     "withinTargetRange": "所有類別均在目標範圍內",
     "unresolvedAmountShort": "{{amount}} 未分配",
