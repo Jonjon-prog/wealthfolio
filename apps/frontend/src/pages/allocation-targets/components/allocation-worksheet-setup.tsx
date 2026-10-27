@@ -922,7 +922,7 @@ function GapRow({
         {bandTo > bandFrom && (
           <span
             className="bg-muted-foreground/20 absolute inset-y-0 rounded-full"
-            style={{ left: `${bandFrom}%`, width: `${bandTo - bandFrom}%` }}
+            style={{ insetInlineStart: `${bandFrom}%`, width: `${bandTo - bandFrom}%` }}
           />
         )}
         <span
@@ -931,7 +931,7 @@ function GapRow({
         />
         <span
           className="bg-foreground absolute -top-1 h-4 w-[2.5px] rounded-sm"
-          style={{ left: `calc(${barPercent(row.targetBps)}% - 1px)` }}
+          style={{ insetInlineStart: `calc(${barPercent(row.targetBps)}% - 1px)` }}
         />
       </span>
       {note && (

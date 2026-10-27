@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HoldingType } from "@/lib/constants";
+import { AccountType, HoldingType } from "@/lib/constants";
 import type {
   Account,
   AllocationTarget,
@@ -16,7 +16,8 @@ import type {
   DriftReport,
   Holding,
 } from "@/lib/types";
-import { cleanup, render, screen, waitFor, within } from "@/test/render";
+import { act, cleanup, render, screen, waitFor, within } from "@/test/render";
+import { clearProfilePreferences } from "@/hooks/use-persistent-state";
 import type { AllocationWorksheetRequest } from "../hooks/use-allocation-worksheet";
 
 import { AllocationWorksheetTab } from "./allocation-worksheet-tab";
@@ -30,6 +31,7 @@ const {
   heldAccountIds,
   holdingsRef,
   constraintsRef,
+  selectedProfileRef,
 } = vi.hoisted(() => ({
   generateMock: vi.fn(),
   previewMock: vi.fn<(request: AllocationWorksheetRequest) => Promise<AllocationWorksheetResult>>(),
@@ -43,7 +45,17 @@ const {
   heldAccountIds: { current: ["acc-1"] as string[] },
   /** The target's standing rules (#1177). */
   constraintsRef: { current: [] as AllocationTargetConstraint[] },
+  selectedProfileRef: { current: "worksheet-test-profile" },
 }));
+
+vi.mock("@/features/profiles/session", async (importActual) => ({
+  ...(await importActual<typeof import("@/features/profiles/session")>()),
+  selectedProfileId: () => selectedProfileRef.current,
+}));
+
+afterEach(() => {
+  selectedProfileRef.current = "worksheet-test-profile";
+});
 
 vi.mock("../hooks/use-calculated-adjustments", () => ({
   useCalculatedAdjustments: () => ({ mutateAsync: generateMock, isPending: false }),
@@ -136,16 +148,25 @@ function holdingsFor(accountId: string): Holding[] {
 /** An in-memory stand-in: the test environment's storage has no `clear`. */
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
-  return {
-    get length() {
-      return values.size;
+  return new Proxy(
+    {
+      get length() {
+        return values.size;
+      },
+      clear: () => values.clear(),
+      getItem: (key) => values.get(key) ?? null,
+      key: (index) => [...values.keys()][index] ?? null,
+      removeItem: (key) => void values.delete(key),
+      setItem: (key: string, value: string) => void values.set(key, String(value)),
+    } as Storage,
+    {
+      ownKeys: () => [...values.keys()],
+      getOwnPropertyDescriptor: (_target, key) =>
+        values.has(String(key))
+          ? { configurable: true, enumerable: true, value: values.get(String(key)) }
+          : undefined,
     },
-    clear: () => values.clear(),
-    getItem: (key) => values.get(key) ?? null,
-    key: (index) => [...values.keys()][index] ?? null,
-    removeItem: (key) => void values.delete(key),
-    setItem: (key, value) => void values.set(key, String(value)),
-  };
+  );
 }
 
 function acknowledgeDisclosure() {
@@ -356,6 +377,107 @@ describe("AllocationWorksheetTab regeneration (§5)", () => {
       selectedAccountIds: ["acc-1"],
       eligibleAssetIds: undefined,
     });
+  });
+
+  it("does not replace edits made while a calculation is in flight", async () => {
+    let finish!: (value: CalculatedAdjustments) => void;
+    generateMock.mockImplementationOnce(
+      () =>
+        new Promise<CalculatedAdjustments>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next: Adjust positions" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Next: Adjust positions" }));
+    await goTo(user, "Adjust positions");
+    await user.type(screen.getByLabelText("Adjustment for VTI"), "500");
+
+    await act(async () => finish(calculated));
+    await user.tab();
+
+    expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("500.00");
+  });
+
+  it("ignores a calculation when its Setup inputs changed while it was running", async () => {
+    let finish!: (value: CalculatedAdjustments) => void;
+    generateMock.mockImplementationOnce(
+      () =>
+        new Promise<CalculatedAdjustments>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next: Adjust positions" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Next: Adjust positions" }));
+    await user.click(screen.getByRole("checkbox", { name: "Rebalance" }));
+
+    await act(async () => finish(calculated));
+    await goTo(user, "Adjust positions");
+
+    expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("");
+  });
+
+  it("isolates worksheet drafts by profile and removes them with profile preferences", async () => {
+    const user = await renderWorksheet();
+    await goTo(user, "Adjust positions");
+    await user.type(screen.getByLabelText("Adjustment for VTI"), "500");
+    const draftKeys = () =>
+      Object.keys(
+        Object.fromEntries(
+          Array.from({ length: localStorage.length }, (_, index) => [
+            localStorage.key(index)!,
+            true,
+          ]),
+        ),
+      ).filter((key) => key.includes("rebalancing-worksheet-draft"));
+    await waitFor(() =>
+      expect(draftKeys()).toEqual([expect.stringMatching(/^profile:worksheet-test-profile:/)]),
+    );
+    cleanup();
+
+    selectedProfileRef.current = "another-profile";
+    const otherUser = await renderWorksheet();
+    await goTo(otherUser, "Adjust positions");
+    expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("");
+    cleanup();
+
+    selectedProfileRef.current = "worksheet-test-profile";
+    const returningUser = await renderWorksheet();
+    await goTo(returningUser, "Adjust positions");
+    expect(screen.getByLabelText("Adjustment for VTI")).toHaveValue("500.00");
+    cleanup();
+    clearProfilePreferences("worksheet-test-profile");
+    expect(draftKeys().some((key) => key.startsWith("profile:worksheet-test-profile:"))).toBe(
+      false,
+    );
+  });
+
+  it("shows an ineligible row issue without sending it as an estimated preview", async () => {
+    accountsRef.current = [
+      { ...account("acc-1", "Crypto"), accountType: AccountType.CRYPTOCURRENCY },
+    ];
+    const user = await renderWorksheet();
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Cash to deploy" })).toHaveValue("2,000.00"),
+    );
+    await goTo(user, "Adjust positions");
+    await user.click(screen.getByRole("button", { name: "Add position" }));
+    await user.click(await screen.findByRole("option", { name: /VXUS/ }));
+    await user.type(screen.getByLabelText("Adjustment for VXUS"), "100");
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(
+      previewMock.mock.calls.every(([request]) =>
+        request.lines.every((line) => line.assetId !== "vxus"),
+      ),
+    ).toBe(true);
+    await goTo(user, "Review");
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
   });
 
   it("previews an edited line without calculating adjustments again", async () => {
@@ -1112,6 +1234,43 @@ describe("AllocationWorksheetTab account allocation (§6)", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
     },
   );
+
+  it("validates whole-unit placement at the same resolved price the controls use", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    heldAccountIds.current = ["acc-1", "acc-2"];
+    previewMock.mockImplementation(async (request) => ({
+      ...previewResult,
+      lines: request.lines.map((line) =>
+        previewLine({
+          ...line,
+          accountId: line.accountId ?? null,
+          unitPrice: 99,
+          estimatedAmount: Math.floor(line.value / 99) * 99,
+          quantity: Math.floor(line.value / 99),
+        }),
+      ),
+    }));
+    const user = await renderWorksheet(driftReport, { ...profile, wholeSharesOnly: true });
+    await calculateFromTarget(user);
+    await waitFor(() => expect(previewMock.mock.lastCall?.[0].lines.length).toBeGreaterThan(0), {
+      timeout: 2000,
+    });
+    const total = screen.getByLabelText("Adjustment for VTI");
+    await user.clear(total);
+    await user.type(total, "297");
+    await user.click(screen.getByRole("button", { name: "Choose accounts" }));
+    const allocation = screen
+      .getByText("Account allocation")
+      .closest<HTMLElement>("[data-account-allocation]")!;
+    await user.type(within(allocation).getByLabelText("Amount for Brokerage"), "99");
+    await user.type(within(allocation).getByLabelText("Amount for Retirement"), "198");
+
+    expect(
+      screen.queryByRole("button", { name: /left to allocate|Choose accounts/ }),
+    ).not.toBeInTheDocument();
+    await goTo(user, "Review");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+  });
 
   it("lets the adjustment follow what the accounts hold, in one click", async () => {
     accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
@@ -2758,6 +2917,33 @@ describe("AllocationWorksheetTab Setup", () => {
     expect(screen.getByText("Protected on the target: never reduced")).toBeInTheDocument();
     // A rule against reducing leaves increases to the user.
     expect(screen.getByRole("checkbox", { name: "Increase BND" })).toBeChecked();
+  });
+
+  it("keeps protected accounts out of reduction placement and the full-sale shortcut", async () => {
+    accountsRef.current = [account("acc-1", "Brokerage"), account("acc-2", "Retirement")];
+    holdingsRef.current = {
+      "acc-1": [holding("vti", "VTI", 1000)],
+      "acc-2": [{ ...holding("vti", "VTI", 1000), accountId: "acc-2", id: "acc-2-vti" }],
+    };
+    constraintsRef.current = [neverReduced("account", "acc-2")];
+    const user = await renderWorksheet(report);
+    await waitFor(() => expect(screen.getByText("never reduced")).toBeInTheDocument());
+    await user.click(screen.getByRole("checkbox", { name: "Rebalance" }));
+    await goTo(user, "Adjust positions");
+    const input = screen.getByLabelText("Adjustment for VTI");
+    await user.click(input);
+    const positionRow = document.getElementById("worksheet-position-vti")!;
+    expect(
+      within(positionRow).queryByRole("button", { name: "Reduce to zero" }),
+    ).not.toBeInTheDocument();
+    await user.type(input, "-1000");
+    await waitFor(
+      () =>
+        expect(previewMock.mock.lastCall?.[0].lines).toEqual([
+          expect.objectContaining({ accountId: "acc-1", direction: "reduce", value: 10 }),
+        ]),
+      { timeout: 2000 },
+    );
   });
 
   it("says on an account's row that the target never reduces its holdings", async () => {

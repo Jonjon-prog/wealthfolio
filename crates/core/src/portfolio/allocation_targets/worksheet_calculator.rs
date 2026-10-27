@@ -882,9 +882,9 @@ fn apportion(
 ///
 /// A reduction is drawn from the accounts that actually hold the security,
 /// which is a fact rather than an assignment. An increase is auto-assigned only
-/// when exactly one account is eligible; when several are, the line arrives
-/// unallocated and the user places it. No default, no tiebreak, no
-/// largest-position heuristic.
+/// when exactly one account is eligible or exactly one eligible account already
+/// holds the security. Otherwise the line arrives unallocated and the user
+/// places it. No tiebreak or largest-position heuristic.
 ///
 /// `eligible_accounts` maps an asset to the accounts permitted to receive it:
 /// in scope, and not blocked by a constraint. Account type, tax wrapper and

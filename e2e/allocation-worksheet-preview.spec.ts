@@ -1,8 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { BASE_URL, completeOnboardingIfNeeded } from "./helpers";
+import { BASE_URL } from "./helpers";
+
+let requestHeaders: Record<string, string> = {};
 
 async function post<T>(page: Page, path: string, data?: unknown): Promise<T> {
-  const response = await page.request.post(`${BASE_URL}/api/v1${path}`, { data });
+  const response = await page.request.post(`${BASE_URL}/api/v1${path}`, {
+    data,
+    headers: requestHeaders,
+  });
   expect(response.ok(), `${path}: ${await response.text()}`).toBe(true);
   return response.json() as Promise<T>;
 }
@@ -19,7 +24,21 @@ test("whole-share edits update impact and require account placement, in LTR and 
 }) => {
   test.setTimeout(180000);
   page.setDefaultTimeout(15000);
-  await completeOnboardingIfNeeded(page);
+  // Give this spec its own profile so other specs' accounts and targets cannot leak in.
+  const profile = await post<{ id: string }>(page, "/profiles/create_profile", {
+    name: "Worksheet preview",
+    avatarId: "clay-bot-animated",
+  });
+  const session = await post<{ scopeId: string }>(page, "/profiles/unlock_profile", {
+    profileId: profile.id,
+  });
+  requestHeaders = { "x-wf-profile-scope": session.scopeId };
+  const settings = await page.request.put(`${BASE_URL}/api/v1/settings`, {
+    headers: requestHeaders,
+    data: { onboardingCompleted: true, language: "en", timezone: "UTC", baseCurrency: "USD" },
+  });
+  expect(settings.ok(), await settings.text()).toBe(true);
+
   let assetId = "";
   const assetIds = new Set<string>();
   for (const name of ["Preview brokerage", "Preview retirement"]) {
@@ -68,6 +87,7 @@ test("whole-share edits update impact and require account placement, in LTR and 
     const assignment = await page.request.put(
       `${BASE_URL}/api/v1/taxonomies/assignments/asset/${classifiedAssetId}/taxonomy/asset_classes`,
       {
+        headers: requestHeaders,
         data: [
           {
             assetId: classifiedAssetId,
@@ -106,7 +126,9 @@ test("whole-share edits update impact and require account placement, in LTR and 
       ],
     },
   );
-  const recalculate = await page.request.post(`${BASE_URL}/api/v1/portfolio/recalculate`);
+  const recalculate = await page.request.post(`${BASE_URL}/api/v1/portfolio/recalculate`, {
+    headers: requestHeaders,
+  });
   expect(recalculate.status()).toBe(202);
   await expect
     .poll(
@@ -137,6 +159,30 @@ test("whole-share edits update impact and require account placement, in LTR and 
     await disclosure.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("Across all 2 accounts", { exact: true })).toBeVisible();
     await page.getByRole("checkbox", { name: "Rebalance", exact: true }).click();
+    // Every mark on Setup's percentage bars uses the same logical origin.
+    const gapBars = await page.locator("[data-gap-category]").evaluateAll((rows) =>
+      rows.map((row) => {
+        const track = row.querySelector<HTMLElement>(":scope > span[aria-hidden]")!;
+        const marks = [...track.children] as HTMLElement[];
+        const bounds = track.getBoundingClientRect();
+        const marker = marks[marks.length - 1].getBoundingClientRect();
+        const current = marks[marks.length - 2].getBoundingClientRect();
+        const rtl = getComputedStyle(track).direction === "rtl";
+        return {
+          width: bounds.width,
+          markerOffset: rtl ? bounds.right - marker.right : marker.left - bounds.left,
+          fillOffset: rtl ? bounds.right - current.right : current.left - bounds.left,
+          target: Number.parseFloat(
+            marks[marks.length - 1].style.insetInlineStart.match(/[\d.]+/)?.[0] ?? "NaN",
+          ),
+        };
+      }),
+    );
+    expect(gapBars.length).toBeGreaterThan(0);
+    for (const bar of gapBars) {
+      expect(bar.fillOffset).toBeCloseTo(0, 0);
+      expect(bar.markerOffset).toBeCloseTo((bar.width * bar.target) / 100 - 1, 0);
+    }
     await page.getByRole("button", { name: "Next: Adjust positions" }).click();
     const heading = page.getByRole("heading", { name: "Rebalancing worksheet", exact: true });
     const steps = page.getByRole("navigation", { name: "Rebalancing worksheet" });

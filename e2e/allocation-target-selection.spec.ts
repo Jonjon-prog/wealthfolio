@@ -1,8 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
-import { BASE_URL, completeOnboardingIfNeeded } from "./helpers";
+import { BASE_URL } from "./helpers";
+
+let requestHeaders: Record<string, string> = {};
 
 async function post<T>(page: Page, path: string, data?: unknown): Promise<T> {
-  const response = await page.request.post(`${BASE_URL}/api/v1${path}`, { data });
+  const response = await page.request.post(`${BASE_URL}/api/v1${path}`, {
+    data,
+    headers: requestHeaders,
+  });
   expect(response.ok(), `${path}: ${await response.text()}`).toBe(true);
   return response.json() as Promise<T>;
 }
@@ -77,7 +82,21 @@ test("remembers the selected target per scope and puts it first after reload, in
   page,
 }) => {
   test.setTimeout(180000);
-  await completeOnboardingIfNeeded(page);
+  // Give this spec its own profile so other specs' accounts and targets cannot leak in.
+  const profile = await post<{ id: string }>(page, "/profiles/create_profile", {
+    name: "Target preferences",
+    avatarId: "clay-bot-animated",
+  });
+  const session = await post<{ scopeId: string }>(page, "/profiles/unlock_profile", {
+    profileId: profile.id,
+  });
+  requestHeaders = { "x-wf-profile-scope": session.scopeId };
+  const settings = await page.request.put(`${BASE_URL}/api/v1/settings`, {
+    headers: requestHeaders,
+    data: { onboardingCompleted: true, language: "en", timezone: "UTC", baseCurrency: "USD" },
+  });
+  expect(settings.ok(), await settings.text()).toBe(true);
+
   const account = await post<{ id: string }>(page, "/accounts", {
     name: "Preference brokerage",
     accountType: "SECURITIES",
@@ -100,7 +119,9 @@ test("remembers the selected target per scope and puts it first after reload, in
   const allC = await createTarget(page, "Global preference C: cash allocation");
   await createTarget(page, "Account preference A", account.id);
   const accountB = await createTarget(page, "Account preference B", account.id);
-  const recalculate = await page.request.post(`${BASE_URL}/api/v1/portfolio/recalculate`);
+  const recalculate = await page.request.post(`${BASE_URL}/api/v1/portfolio/recalculate`, {
+    headers: requestHeaders,
+  });
   expect(recalculate.status()).toBe(202);
 
   let originalOrder: string[] = [];
@@ -152,7 +173,9 @@ test("remembers the selected target per scope and puts it first after reload, in
   await phone.screenshot({ path: "test-results/target-selection-phone-rtl.png", fullPage: true });
   await phone.close();
 
-  const deleted = await page.request.delete(`${BASE_URL}/api/v1/allocation-targets/${allC.id}`);
+  const deleted = await page.request.delete(`${BASE_URL}/api/v1/allocation-targets/${allC.id}`, {
+    headers: requestHeaders,
+  });
   expect(deleted.ok()).toBe(true);
   await page.reload();
   await expect(picker(page).getByRole("button", { name: allC.name, exact: true })).toHaveCount(0);
@@ -161,6 +184,7 @@ test("remembers the selected target per scope and puts it first after reload, in
   await expectSelectedFirst(page, allA.name);
   const archived = await page.request.post(
     `${BASE_URL}/api/v1/allocation-targets/${allA.id}/archive`,
+    { headers: requestHeaders },
   );
   expect(archived.ok()).toBe(true);
   await page.reload();

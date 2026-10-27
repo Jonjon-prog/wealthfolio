@@ -38,6 +38,7 @@ import {
 /** One security's line in the Amounts panel, as the worksheet resolves it. */
 export interface AmountsRowModel {
   position: WorksheetPosition;
+  canReduceToZero: boolean;
   adjustment: PositionAdjustment | undefined;
   displayInput: string;
   /** The entered change, or zero while it cannot be read. */
@@ -338,7 +339,8 @@ function AmountRow({
   const fractionDigits = currencyFractionDigits(currency);
   // A rare action, offered on the row being worked on rather than on every row.
   const isActive = emphasis === "active" || isSelected || isExpanded;
-  const canReduceToZero = !position.isAdded && position.value > AMOUNT_EPSILON && allowSells;
+  const canReduceToZero =
+    model.canReduceToZero && !position.isAdded && position.value > AMOUNT_EPSILON && allowSells;
   // One unit at a time, on the amount: amounts stay primary (§4.6.5).
   const canStep = editMode === "amount" && unitPrice !== undefined && unitPrice > 0;
   const downTo = canStep

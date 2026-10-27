@@ -37,6 +37,7 @@ import { toast } from "sonner";
 
 import { getAssetTaxonomyAssignments, getHoldingsList, openFileSaveDialog } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
+import { profilePreferenceKey } from "@/hooks/use-persistent-state";
 import { usePortfolios } from "@/hooks/use-portfolios";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
@@ -203,7 +204,7 @@ function errorMessage(error: unknown): string {
 }
 
 function worksheetDraftStorageKey(targetId: string, scope: AccountScope): string {
-  return `${DRAFT_STORAGE_PREFIX}:${targetId}:${accountScopeKey(scope)}`;
+  return profilePreferenceKey(`${DRAFT_STORAGE_PREFIX}:${targetId}:${accountScopeKey(scope)}`);
 }
 
 function isPositionAdjustment(value: unknown): value is PositionAdjustment {
@@ -805,6 +806,7 @@ export function AllocationWorksheetTab({
   // Read by the list and the rail only: pointing never renders the worksheet.
   const [highlightStore] = useState(createHighlightStore);
   const calculationVersionRef = useRef(0);
+  const generationInputsKeyRef = useRef("");
   const calculateRef = useRef<(() => Promise<void>) | null>(null);
   const autoCalculateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedScopeRef = useRef("");
@@ -1208,12 +1210,14 @@ export function AllocationWorksheetTab({
     // Invest cash never reduces, so what it may reduce is no input there.
     sellableAssetIds: mode === "rebalance" ? sellability.eligibleAssetIds : undefined,
   };
+  const currentGenerationInputsKey = generationInputsKey(generationInputs);
+  generationInputsKeyRef.current = currentGenerationInputsKey;
   // The cash the accounts record comes back with the first preview, after the
   // worksheet opens. Until then what each account spends is unknown rather
   // than zero, and an unknown input has not changed.
   const cashKnown = cash.isKnown;
   const inputsChanged = Boolean(
-    generated && cashKnown && generated.inputsKey !== generationInputsKey(generationInputs),
+    generated && cashKnown && generated.inputsKey !== currentGenerationInputsKey,
   );
   // A calculated line whose price moved by more than PRICE_MOVE_THRESHOLD no
   // longer matches what was calculated. An addition to §5's list of inputs;
@@ -1268,9 +1272,21 @@ export function AllocationWorksheetTab({
         isCrypto || accountById.get(accountId)?.accountType !== AccountType.CRYPTOCURRENCY,
     ).flatMap((accountId) => {
       const account = accountById.get(accountId);
-      return account ? [account] : [];
+      const protectedReduction =
+        changeAmount < 0 &&
+        rules.blocksReduce(
+          position.assetId,
+          accountId,
+          position.categoryExposures.map((exposure) => exposure.categoryId),
+        );
+      return account && !protectedReduction ? [account] : [];
     });
   }
+
+  // Reuse core's resolved price for both placement validation and its controls.
+  const resolvedPriceByAsset = new Map(
+    (result?.lines ?? []).map((line) => [line.assetId, line.unitPrice]),
+  );
 
   // Reductions follow Rebalance, which the target's own setting may withhold:
   // Invest cash only adds, in the calculation and by hand alike.
@@ -1317,11 +1333,21 @@ export function AllocationWorksheetTab({
         });
         continue;
       }
-      if (changeAmount < 0 && Math.abs(changeAmount) > position.value + AMOUNT_EPSILON) {
+      const reducibleValue = position.accountHoldings
+        .filter(
+          (holding) =>
+            !rules.blocksReduce(
+              position.assetId,
+              holding.accountId,
+              position.categoryExposures.map((exposure) => exposure.categoryId),
+            ),
+        )
+        .reduce((total, holding) => total + holding.value, 0);
+      if (changeAmount < 0 && Math.abs(changeAmount) > reducibleValue + AMOUNT_EPSILON) {
         flag({
           message: t("allocation:worksheet.reductionExceedsPositionIssue", {
             symbol: position.symbol,
-            amount: formatAmount(position.value, currency),
+            amount: formatAmount(reducibleValue, currency),
           }),
           kind: "position",
           assetId: position.assetId,
@@ -1406,7 +1432,8 @@ export function AllocationWorksheetTab({
       // fractions of a cent while each account takes whole cents, and a few
       // dollars on a large change move nothing that matters. More than that
       // still blocks, so a change left half placed is not missed.
-      const positionUnitPrice = unitPriceFor(position);
+      const positionUnitPrice =
+        resolvedPriceByAsset.get(position.assetId) ?? unitPriceFor(position);
       const slack = placementSlack(
         requestedAmount,
         allocatedAmount,
@@ -1491,7 +1518,9 @@ export function AllocationWorksheetTab({
   })();
   const isIndicative =
     prepared.issue?.kind === "allocation" &&
-    [...prepared.rowIssues.values()].every((issue) => issue.kind === "allocation");
+    [...prepared.rowIssues.values()].every(
+      (issue) => issue.kind === "allocation" && issue.placement?.reason !== "no_account",
+    );
   const isPreviewUpdating =
     worksheet.isPending ||
     (isResultStale && (!prepared.issue || isIndicative) && calculationError === null);
@@ -1524,11 +1553,6 @@ export function AllocationWorksheetTab({
     if (assetId)
       warningsByAsset.set(assetId, [...(warningsByAsset.get(assetId) ?? []), wordWarning(warning)]);
   }
-  // The price the core resolved a line at, when the preview has one: the unit
-  // a step adds is then the unit the core places.
-  const resolvedPriceByAsset = new Map(
-    (result?.lines ?? []).map((line) => [line.assetId, line.unitPrice]),
-  );
   // What each chosen account brings to its own changes (§6), once its cash is
   // read: the cash it deploys and its contribution.
   const fundingBase: Record<string, number> | undefined = cash.isKnown
@@ -1568,6 +1592,14 @@ export function AllocationWorksheetTab({
     );
     return {
       position,
+      canReduceToZero: position.accountHoldings.every(
+        (holding) =>
+          !rules.blocksReduce(
+            position.assetId,
+            holding.accountId,
+            position.categoryExposures.map((exposure) => exposure.categoryId),
+          ),
+      ),
       adjustment,
       displayInput: adjustment
         ? adjustment.inputValue
@@ -1786,6 +1818,14 @@ export function AllocationWorksheetTab({
   async function recalculateFromTarget() {
     if (generationIssue) return;
     setGenerateError(null);
+    // Reuse the preview's version guard: a late calculation cannot overwrite
+    // newer edits, sources or another target. Mode and eligibility also matter
+    // to generation, even though they do not invalidate edited previews.
+    const calculationVersion = calculationVersionRef.current;
+    const inputsKey = currentGenerationInputsKey;
+    const isCurrent = () =>
+      calculationVersion === calculationVersionRef.current &&
+      inputsKey === generationInputsKeyRef.current;
     try {
       const calculated = await calculator.mutateAsync({
         targetId: generationInputs.targetId,
@@ -1797,9 +1837,11 @@ export function AllocationWorksheetTab({
         eligibleAssetIds: generationInputs.eligibleAssetIds,
         sellableAssetIds: generationInputs.sellableAssetIds,
       });
-      setGenerated({ calculated, inputsKey: generationInputsKey(generationInputs) });
+      if (!isCurrent()) return;
+      setGenerated({ calculated, inputsKey });
       applyCalculated(calculated);
     } catch (error) {
+      if (!isCurrent()) return;
       setGenerateError(errorMessage(error).replace(/^.*?Invalid input:\s*/i, "") || null);
     }
   }
